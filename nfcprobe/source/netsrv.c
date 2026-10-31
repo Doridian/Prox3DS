@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "mfc.h"
+#include "isodep.h"
 #include "mfu.h"
 #include "nfchw.h"
 #include "probe.h"
@@ -75,6 +76,8 @@ enum {
 	// More card ops:
 	OP_MFU_CLONE   = 0x22, // Ultralight / NTAG dump (pm3 .bin) -> empty ok (read back); on failure
 	                       // payload = reason (mfuCloneToGtu). WRITES THE CARD AND ITS CONFIG
+	OP_ISODEP      = 0x23, // activate u8, [INF (an APDU)] -> with activate: ATS (TL first), then the
+	                       // answer; on failure payload = reason (isodep.c)
 };
 
 #define OUT_MAX 0x2000
@@ -354,6 +357,27 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		if (r == 1) return 0;
 		*outLen = strlen(mfuWhy());
 		memcpy(out, mfuWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_ISODEP: {
+		if (inLen < 1 || inLen - 1 > OUT_MAX - 64) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		u32 o = 0;
+		int r = 1;
+		if (in[0]) {
+			r = isoDepActivate(out, 32);
+			o = r > 0 ? out[0] : 0;
+		}
+		if (r > 0 && inLen > 1) {
+			r = isoDepTx(in + 1, inLen - 1, out + o, OUT_MAX - o);
+			o += r > 0 ? r : 0;
+		}
+		if (r > 0) {
+			*outLen = o;
+			return 0;
+		}
+		*outLen = strlen(isoDepWhy());
+		memcpy(out, isoDepWhy(), *outLen);
 		return r < 0 ? -1 : 1;
 	}
 	case OP_MF_NESTED: {

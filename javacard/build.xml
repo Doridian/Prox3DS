@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!-- Builds dspm-test.cap for Java Card 3.0.4 (JCOP3) with ant-javacard: the 3.2 SDK (runs on JDK 17)
+     targeting its bundled 3.0.4 API. Tools in ~/Applications/javacard:
+     git clone https://github.com/martinpaljak/oracle_javacard_sdks sdks
+     curl -LO https://github.com/martinpaljak/ant-javacard/releases/latest/download/ant-javacard.jar
+     JAVA_HOME=/usr/lib/jvm/java-17-openjdk ant -->
+<project name="dspm-test" default="cap">
+  <property name="jc.tools" value="${user.home}/Applications/javacard"/>
+  <property name="jc.home" value="${jc.tools}/sdks/jc320v26.0_kit"/>
+  <property name="jc.target" value="3.0.4"/>
+  <taskdef name="javacard" classname="pro.javacard.ant.JavaCard" classpath="${jc.tools}/ant-javacard.jar"/>
+  <target name="cap">
+    <javacard jckit="${jc.home}">
+      <cap targetsdk="${jc.target}" aid="F0334453504D" output="dspm-test.cap" sources="src" version="1.0">
+        <applet class="dspm.TestApplet" aid="F0334453504D01"/>
+      </cap>
+    </javacard>
+  </target>
+</project>

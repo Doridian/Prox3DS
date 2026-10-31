@@ -717,3 +717,21 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   ATS 0578777102 (FSC 256, FWI 7, CID ok, no historical bytes). Native GetVersion 60 -> 67 00 (ISO7816
   wrong length): screen shows the ATS + "status 67". pm3: CPLC fabricator 4790 / type 0503 / OS 8211
   (release date 6351), Card Recognition Data GP 2.2.1, SCP03, ISD AID A000000151000000.
+
+## JavaCard test applet, ISO-DEP TX chaining + WTX (javacard/) -- 2026-10-31
+- The J3H145's GP keys are the default 404142..4F (key version FF, SCP03 i=00): checked offline from
+  the INITIALIZE UPDATE card cryptogram before any EXTERNAL AUTHENTICATE (the counted step). ISD state
+  07 (INITIALIZED), no applets; ROM packages A0000001515350 + D276000098... (NXP eID/eSign/PKI/EAC).
+- No PC/SC reader here, so javacard/gpload.py does GlobalPlatform through the pm3's embedded Python
+  (`proxmark3 -y gpload.py -- list|install CAP|delete AID`): SCP03 C-MAC, INSTALL [for load], LOAD
+  240-byte blocks, INSTALL [for install]. EXTERNAL AUTHENTICATE only after the card cryptogram matches.
+- Build: javacard/build.xml, ant-javacard + the JC 3.2 SDK on JDK 17 targeting its bundled 3.0.4 API
+  (the old jc304_kit needs javac 8; only a JRE 8 is installed, and the 3.2 verifier rejects the
+  jc304_kit export files). `JAVACMD=/usr/lib/jvm/java-17-openjdk/bin/java ant`.
+- TestApplet F0334453504D01: 00 01 echo, 00 02 Le bytes 00.., 00 03 P1 busy (~4.4 s per P1 on the
+  J3H145, not the 100 ms planned), 00 04 name. pm3 and 3DS agree on all.
+- isodep.c now chains commands too (29-byte pieces, PCB bit 4, the card's R(ACK) per piece) and
+  listens WTXM x longer after an S(WTX). From the 3DS (nfcnet.py apdu): 256-byte answer (9 blocks),
+  200-byte echo (7 pieces out, 7 blocks back), 4.4 s command (~110 S(WTX) F2 01 echoed) all exact.
+  The WTX cap was 50 at first: legitimate WTX every FWT (39 ms) exceeds that in 2 s; now 2000.
+- Net op 0x23 OP_ISODEP (activate u8, APDU) -> [ATS] + answer; nfcnet.py HOST apdu [-a] HEX...

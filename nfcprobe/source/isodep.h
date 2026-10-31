@@ -3,10 +3,10 @@
 
 // ISO14443-4 (ISO-DEP) over the raw framer (mfc.h data mode: HW parity and CRC). Our own RATS asks for
 // FSD 32, so every card frame fits a capture ring slot (MonFrame.data, 36 bytes); longer answers come
-// chained (R(ACK) per block). S(WTX) is answered. No CID, no NAD, no TX chaining: a command's INF fits one
-// frame (ISO_DEP_MAX_INF).
+// chained (R(ACK) per block), and so do longer commands (pieces of ISO_DEP_MAX_INF bytes, which every
+// card's FSC takes). S(WTX) is answered. No CID, no NAD.
 
-#define ISO_DEP_MAX_INF 29 // FSD 32 - PCB - CRC
+#define ISO_DEP_MAX_INF 29 // FSD 32 - PCB - CRC; also our TX piece size
 
 const char *isoDepWhy(void);
 // S(DESELECT) (the ROM activates layer 4 itself when it maps ISO-DEP), reselect, RATS. The ATS (TL
