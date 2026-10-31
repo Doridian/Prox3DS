@@ -581,3 +581,30 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   for the PWD page; EV1 04A0A0A0A0A001 cloned from the UI (saved dumps) -> identical, factory config,
   FFFFFFFF auths (PACK 0000). Classic clone of the GTU's own 1K backup switched it back (config ==
   original), blocks 64-255 restored from the backup: all 256 blocks + config == before.
+
+## NFC-V / iClass feasibility (issue #9) -- 2026-10-31
+- Card: HID iClass 2k, CSN 01020304F7FF12E0, config 12FFFFFFE97FFF3C, fuses: application mode, coding
+  "ISO 14443-2 B / 15693", secured page (pm3 `hf iclass info` through the 3DS/card/pm3 stack). The
+  user has a full pm3 dump with Kd / Kc (~/Downloads/icls/, not in the repo).
+- The ROM knows ISO15693: CORE_INIT lists interface 83; RF_DISCOVER_MAP `83 01 83` (Broadcom 15693
+  protocol -> 15693 interface) is accepted (`83 01 01` = frame interface is rejected, status 01), and so
+  is `06 01 xx`. RF_DISCOVER poll types 76 (Broadcom) and 06 (NCI 2.0 V) are both accepted.
+- Frame log (0x380A0/1 = 1) during a 76 or 06 poll: TX `24 01 00` (ISO15693 INVENTORY, low data rate,
+  1 slot) in RF mode 0x89. A poll = mode 0x85 (`26` REQA), B poll = mode 0x86 (`05 00 08` REQB). The
+  iClass answers neither (it needs its own ACTALL / IDENTIFY), as expected.
+- ROM: 0x1116 maps 0x5C584 bits 0-2 to the frame-log mode: 0 -> 85 (A), 1/2 -> 87 (F), 3 -> 86 (B),
+  4 -> 89 (V), else 8C. 0x1140(slot, val) sets 3-bit fields in 0x5C548 / 0x5C54C. Frame log NTF
+  builder 0x4D22 (callers 0x44C0, 0x4780 RX, 0x6368 TX; TX mode from 0x5618 or 0x1116).
+- Register snapshots during polls read all zeros (field only on for ms per ~1.4 s cycle). Capture on
+  BEFORE RF_DISCOVER stalls the ROM, but 0x5C540-0x5C5BC are then identical for A, B and V polls
+  (08 10 0 23 ... 11 ... 10 ... 1C 3): the stall happens before the tech setup, so no V config seen yet.
+- pm3 `hf 15 sim` stacked under the card: no activation from a 76/06 poll (sim may not hear / answer
+  through the stack; unclear which side fails). The sim then kept running with the client gone and
+  ignored USB until the pm3 button was pressed.
+- pm3 `hf 15 sniff` during 76 polls: a reader frame every ~1.4 s, ~4.9 ms per byte = 1-out-of-256
+  coding (the slow ISO15693 reader mode), decoded with bit errors (`25 02`, `25 25 25 ..`, bad CRCs).
+  iClass readers use 1-out-of-4. So the TX path exists, but iClass needs (1) the coding switched to
+  1-of-4, (2) raw V-mode TX / RX through our monitor, (3) the RX side shown to work at all.
+- Next: find the ROM's per-tech framer setup (likely table-driven, e.g. the store sequence around
+  0xE62C writing 0x5C550 / 0x5C674 from a struct), hook it or call it from the monitor with tech 4, then
+  sniff our own frames with pm3 `hf iclass sniff` and look for the card's SOF answer to ACTALL (0A).
