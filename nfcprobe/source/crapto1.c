@@ -38,6 +38,8 @@ typedef struct {
 	uint32_t odd, even;
 } C1;
 
+static int c1_bitx(C1 *c, int in, int fb);
+
 static void c1_init(C1 *c, uint64_t key)
 {
 	c->odd = c->even = 0;
@@ -49,8 +51,14 @@ static void c1_init(C1 *c, uint64_t key)
 
 static int c1_bit(C1 *c, int in)
 {
+	return c1_bitx(c, in, 0);
+}
+
+// fb: feed the keystream bit back too (encrypted input, as when decrypting a nested nonce)
+static int c1_bitx(C1 *c, int in, int fb)
+{
 	int ret = filter(c->odd);
-	uint32_t feed = (in ? 1 : 0) ^ (LF_POLY_ODD & c->odd) ^ (LF_POLY_EVEN & c->even);
+	uint32_t feed = ((in ? 1 : 0) ^ (fb ? ret : 0)) ^ (LF_POLY_ODD & c->odd) ^ (LF_POLY_EVEN & c->even);
 	c->even = ((c->even << 1) | par(feed)) & 0xFFFFFF;
 	uint32_t t = c->odd;
 	c->odd = c->even;
@@ -269,6 +277,43 @@ int crapto1_recover(uint32_t uid, uint32_t nt, uint32_t ks, uint64_t *out, int m
 		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
 		rollback_word(s, inn, 0);
 		out[cnt++] = get_lfsr(s[0], s[1]);
+	}
+	free(sv.a);
+	return cnt;
+}
+
+uint32_t crapto1_nt_decrypt(uint64_t key, uint32_t uid, uint32_t ntEnc)
+{
+	C1 c;
+	c1_init(&c, key);
+	uint32_t in = uid ^ ntEnc, ks = 0;
+	for (int i = 0; i < 32; i++)
+		ks |= (uint32_t)c1_bitx(&c, (in >> (i ^ 24)) & 1, 1) << (i ^ 24);
+	return ntEnc ^ ks;
+}
+
+static int oddpar8(uint32_t b)
+{
+	return !par(b & 0xFF);
+}
+
+int crapto1_static(uint32_t uid, uint32_t nt, uint32_t ntEnc, int parEnc, uint64_t *out, int max)
+{
+	SVec sv = {0};
+	uint32_t inn = uid ^ nt;
+	lfsr_recovery32(nt ^ ntEnc, inn, &sv);
+	int want = oddpar8(nt) ^ (parEnc & 1), cnt = 0;
+	for (size_t i = 0; i < sv.n && cnt < max; i++) {
+		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
+		rollback_word(s, inn, 0);
+		uint64_t key = get_lfsr(s[0], s[1]);
+		// The last nonce byte's parity bit is encrypted with the first keystream bit after nt.
+		C1 c;
+		c1_init(&c, key);
+		for (int b = 0; b < 32; b++)
+			c1_bit(&c, (inn >> (b ^ 24)) & 1);
+		if (filter(c.odd) == want)
+			out[cnt++] = key;
 	}
 	free(sv.a);
 	return cnt;

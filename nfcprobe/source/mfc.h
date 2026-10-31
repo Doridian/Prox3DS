@@ -42,6 +42,19 @@ int mfReadBlock(Crypto1 *c, u8 block, u8 out[16]);
 // nonces, crapto1). 1 = recovered (keyOut set), 0 = no answer / not recovered, -1 = monitor error.
 int mfNestedRecover(u8 knownBlock, const u8 knownKey[6], bool knownKeyB, u8 targetBlock,
 	bool targetKeyB, u8 keyOut[6]);
+// FM11RF08S-family static encrypted nonce (NOTES.md). The nested nonce is static; the backdoor
+// AUTH (0x64/0x65 with a vendor key) reveals it in clear, a normal nested AUTH gives it encrypted
+// under the real key. A key fits a sector iff it decrypts ntEnc to nt -- checked offline.
+typedef struct {
+	u32 nt, ntEnc;
+	u8 par; // raw encrypted parity bits of ntEnc, bit 3 = first byte
+} MfStatic;
+extern const u8 mfBackdoorKeys[][6];
+extern const int mfNumBackdoorKeys;
+int mfBackdoorKey(u8 keyOut[6]); // 1 = a backdoor key auths (keyOut set), 0 = none, -1 = monitor
+int mfStaticNonce(u8 block, bool keyB, const u8 bdKey[6], MfStatic *st); // 1 ok, 0 no answer, -1 mon
+bool mfStaticMatch(const MfStatic *st, const u8 key[6]);
+
 // Encrypted WRITE in an authenticated session (mixed-parity data frame, NOTES.md). 1 = ACKed,
 // 0 = NAK / no answer, -1 = monitor error, 2 = this keystream has no usable parity pair (nothing
 // sent; re-auth and try again). WRITES THE CARD.

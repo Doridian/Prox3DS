@@ -328,3 +328,43 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
   `mfdump` drives it.
 - On-device: full 1K dumped from ONLY key FF -- sector 1 B c1c1c1000003 (nested), sectors 2-14 both
   c1c1c1000002 (recovered once, then reused via the pivot dictionary), all 64 blocks read.
+
+## FM11RF08S static encrypted nonce (hf mf sen) -- 2026-10-30
+Card: Fudan FM11RF08S 0490 (dormakaba Saflok), UID 5A5A0001, SAK 08. PRNG weak, STATIC ENC NONCE.
+Backdoor key A396EFA4E24F (FM11RF08: A31667A8CEC1; FM11RF32N: 518B3354E760). Ground-truth keys from
+pm3 `hf mf sen` (7 s): sec0 A 5A5A5A000001, sec1 A 2A2C13CC242A, sec2 A/B FF, sec3-15 A 5A5A5A000001,
+all B FF; hidden sec32 (blocks 128+) A 5A5A5A000003 B 5A5A5A000004. (saved ~/hf-mf-5A5A0001-*)
+
+Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools staticnested_1nt.c):
+- The NESTED nonce is STATIC (constant per sector/key). First (non-nested) nonce is still weak-random.
+- Backdoor auth command = normal auth | 0x04, i.e. 0x64 (key A) / 0x65 (key B), with the backdoor key.
+- Per sector/keytype, two captures from a backdoor AUTH_FIRST session:
+  1. AUTH_FIRST(0x64/65, backdoor key) then NESTED(0x64/65) -> nt_enc under BACKDOOR key; decrypt with
+     the backdoor key -> CLEAR static nt:  nt = nt_enc ^ crypto1_word(key, nt_enc^uid, encrypted).
+  2. re-auth, then NESTED(0x60/61 normal) -> SAME static nonce encrypted under the REAL key -> nt_enc
+     + 4 raw parity bits. (par_err in the json = raw_par ^ oddparity8(nt_enc byte); raw par is what we
+     read straight off the framer, so the 3DS needs no par_err step.)
+- Candidate keys (staticnested_1nt): ks1 = nt ^ nt_enc; lfsr_recovery32(ks1, nt^uid); rollback_word;
+  get_lfsr; keep if oddparity8(nt&0xFF) == ((last raw enc parity bit) ^ ((ks2>>24)&1)) where
+  ks2 = 2nd keystream word after feeding nt^uid. ~20k-70k candidates per nonce.
+- Disambiguate to the unique key by KEY REUSE across sectors + verifying candidates against the card
+  (pm3 fchk); a reused key is in several sectors' candidate lists.
+
+- Validation tools: tools/staticnested.py candidates() (port of staticnested_1nt; counts match pm3
+  exactly: sec0 A 27955, sec1 A 20607, sec3 A 34994) and tools/collect_rf08s.py (3DS backdoor
+  collection over the passthrough via OP_NESTED with auth cmd 0x64 -- no firmware change needed).
+  The static-nonce card flakes on a cold auth: retry + reselect.
+
+## FM11RF08S native in the dump -- 2026-10-30
+- crapto1.c: crapto1_static (candidates with the parity filter; 0.15 s on the PC vs ~20 s in Python)
+  and crapto1_nt_decrypt (clear nested nonce under a known key). Host-tested against pm3 vectors.
+- mfc.c: mfBackdoorKey (tries A396EFA4E24F / A31667A8CEC1 / 518B3354E760 with cmd 0x64),
+  mfStaticNonce (the two captures), mfStaticMatch. mfDumpCard runs staticPass first when a backdoor
+  auths: collect every sector's static nonce, then solve OFFLINE -- a key fits a cell iff it decrypts
+  ntEnc to nt (32-bit filter), so dictionary keys and reuse cost no RF; only matches get an auth. A
+  candidate of one cell that fits another open cell is a reused key. Single-use keys stay open (tens
+  of thousands of candidates, too many for RF). Remaining blocks are read through the backdoor.
+  Cells covered skip the plain nested sweep (it can't work on static nonces).
+- On-device: `mfdump` with no keys recovered 31/32 keys in 1:51 (5A5A5A000001 by reuse across
+  sectors 0,3-15; FF by dictionary). Only sector 1 A (2A2C13CC242A, used nowhere else) is open. All 64
+  blocks match the pm3 dump except block 7 (that trailer's key A field, the open key).

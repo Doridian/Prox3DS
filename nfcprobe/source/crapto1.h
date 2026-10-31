@@ -11,6 +11,14 @@ int crapto1_recover(uint32_t uid, uint32_t nt, uint32_t ks, uint64_t *out, int m
 // first and keeps the one consistent with the second. Returns the 48-bit key, or 0 if none.
 uint64_t crapto1_nested(uint32_t uid, uint32_t nt1, uint32_t ks1, uint32_t nt2, uint32_t ks2);
 
+// FM11RF08S static encrypted nonce (NOTES.md): candidates from the clear static nonce nt, its
+// encryption ntEnc under the unknown key, and the 4 raw encrypted parity bits (bit 0 = last byte,
+// the only one that filters). Returns the count written to out (capped at max).
+int crapto1_static(uint32_t uid, uint32_t nt, uint32_t ntEnc, int parEnc, uint64_t *out, int max);
+
+// Clear nonce of a nested auth under a known key: ntEnc ^ the keystream with ntEnc fed back.
+uint32_t crapto1_nt_decrypt(uint64_t key, uint32_t uid, uint32_t ntEnc);
+
 // Forward keystream word: Crypto1(key) fed `in` (= uid ^ nt), as crypto1.py's word(). For checking
 // a candidate against another nonce, or verifying a recovered key.
 uint32_t crapto1_ks32(uint64_t key, uint32_t in);

