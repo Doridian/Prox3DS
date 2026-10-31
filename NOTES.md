@@ -499,3 +499,12 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   trailer with ACL 0F00FF (trailer bits 011, key B writes) cloned, key dump == file; real freeze
   (778F08, trailer bits 110) refused; original cloned back in 1:49 (sector 2 keys recovered by
   nested first, sector 3 written with key B) == backup. Bad BCC and broken ACL dumps refused.
+
+## Nested: verify the key, keep the calibrated distance -- 2026-10-31
+- On the Gen2 card (5A11E21B) distance 160 is wrong, yet crapto1_nested at 160 still returned a key
+  (63D70E080617 for real 4B3A29180716): a wrong distance can leave a false key in both candidate
+  sets. mfNestedRecover never checked it. Now keyAuths() auths the target with the key (3 tries) before
+  accepting it; on failure it calibrates and retries, and a calibrated distance that gives a working
+  key is kept for the card (per UID) and used first for its next keys.
+- Gen2, sector 2 keys 4B3A29180716 / 7C6D5E4F3021: A 48.8 s (160 refused, calibrated), B 28.1 s and
+  A again 26.1 s (remembered distance), all correct. Card restored == backup.

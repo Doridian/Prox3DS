@@ -612,15 +612,36 @@ static int calibrate(u8 kb, const u8 key[6], bool knownB, bool twice, u32 *dist)
 	return 1;
 }
 
+// 1 = the key auths the block (a few tries: cold auths can flake), 0 = no key / refused, -1 = monitor.
+static int keyAuths(u64 k, u8 block, bool keyB)
+{
+	u8 key[6];
+	Crypto1 c;
+	if (!k) return 0;
+	keyBytes(k, key);
+	for (int t = 0; t < 3; t++) {
+		int r = mfAuth(block, key, keyB, &c);
+		if (r) return r;
+	}
+	return 0;
+}
+
+// Distance that last gave a key on this card (a calibrated one sticks for the card's other keys).
+static u32 nestedDist = NESTED_DIST, nestedDistUid;
+
 int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 keyOut[6])
 {
 	u32 nt0, nt0b, enc1, enc, uid = cardUid();
+	if (uid != nestedDistUid) {
+		nestedDist = NESTED_DIST;
+		nestedDistUid = uid;
+	}
 	int r = nestedNonce(kb, key, knownB, tb, tgtB, &nt0, &enc1);
 	if (r <= 0) return r;
-	u32 ntTa = prngSuccessor(nt0, NESTED_DIST), ks1 = enc1 ^ ntTa;
+	u32 ntTa = prngSuccessor(nt0, nestedDist), ks1 = enc1 ^ ntTa;
 	r = nestedNonce(kb, key, knownB, tb, tgtB, &nt0b, &enc);
 	if (r <= 0) return r;
-	u32 ntTb = prngSuccessor(nt0b, NESTED_DIST), ks2 = enc ^ ntTb;
+	u32 ntTb = prngSuccessor(nt0b, nestedDist), ks2 = enc ^ ntTb;
 	if (nt0b == nt0) { // static first nonce: the two captures are the same; see nestedNonce2
 		u32 d1, d2;
 		if ((r = calibrate(kb, key, knownB, false, &d1)) <= 0) return r;
@@ -633,17 +654,21 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 		ks2 = enc ^ ntTb;
 	}
 	u64 k = crapto1_nested(uid, ntTa, ks1, ntTb, ks2);
-	if (!k && nt0b != nt0) { // a PRNG that steps differently (emulated ones: GTU): measure, like pm3
+	// A wrong distance can still leave a (wrong) key in both candidate sets: only an auth proves it.
+	if ((r = keyAuths(k, tb, tgtB)) < 0) return -1;
+	if (!r && nt0b != nt0) { // a PRNG that steps differently: measure the distance, like pm3
 		u32 d;
 		if ((r = calibrate(kb, key, knownB, false, &d)) <= 0) return r;
-		logp("  nested: no key at distance %d, calibrated %lu\n", NESTED_DIST, d);
+		logp("  nested: no key at distance %lu, calibrated %lu\n", nestedDist, d);
 		ntTa = prngSuccessor(nt0, d);
 		ntTb = prngSuccessor(nt0b, d);
 		k = crapto1_nested(uid, ntTa, enc1 ^ ntTa, ntTb, enc ^ ntTb);
-		if (!k) FAIL(0, "no key (calibrated distance %lu)", d);
+		if ((r = keyAuths(k, tb, tgtB)) < 0) return -1;
+		if (!r) FAIL(0, "no key (calibrated distance %lu)", d);
+		nestedDist = d;
 	}
-	if (!k) FAIL(0, "no key (wrong distance?)");
-	for (int i = 0; i < 6; i++) keyOut[i] = k >> (40 - 8 * i);
+	if (!r) FAIL(0, "no key (wrong distance?)");
+	keyBytes(k, keyOut);
 	return 1;
 }
 
