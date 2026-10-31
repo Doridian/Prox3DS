@@ -417,5 +417,21 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   without keys". Keyless key pickup proven: sector 5 re-keyed through the backdoor to 4B3A29180716 /
   7C6D5E4F3021 (in no dictionary), mfdump with no keys -> both keys in 3.3 s (no nested). Restored;
   card identical to before.
-- Not done: GTU config writes (CF pwd F0/F1, mode changes) on purpose -- easy to make a GTU hard to
-  recover.
+- Config write (pm3 doc/magic_cards_notes.md): CF pwd F0 config[30] -> 90 00. NEVER F1 (same, but
+  fuses the config for good) or FE (new password). Layout: 0 UL protocol, 1 UID length, 2-5
+  password, 6 shadow mode, 7 ATS length (0 = off), 8-23 ATS, 24-25 ATQA (swapped), 26 SAK, 27 UL
+  mode, 28 max R/W sectors, 29 unknown. mfGen4SetConfig sends F0 only, refuses (unsent) any change
+  outside bytes 6-26 (our SELECT is 4-byte UID only; a lost password is a lost card), reads back.
+  Net op 0x1B OP_GEN4_CONFIG, nfcnet.py g4config [HEX60] [PWD] (read + decode, or write).
+- TX FIFO: data-mode frames go out whole up to at least 60 bytes (TXSCHED busy = 84.4 ticks/byte,
+  linear for 4..60 zero bytes), so the 36-byte F0 frame is safe.
+- pm3 as sniffer between 3DS and card (3DS screen / card / pm3 on top) works: `pm3 -c "hf 14a sniff
+  -i; hf 14a list"` in the background, user presses the pm3 button. Non-interactive sniff records
+  nothing (the client exiting ends it). Seen on air: F0 frame complete (36 bytes + CRC ok); reply
+  latency F0 6.2 ms, CD 12.3 ms, CE 0.65 ms.
+- Staged config tests on the GTU, all VERIFIED: (1) identical config rewrite; (2) ATS content byte
+  with ATS off, restored; (3) SAK 08 -> 18: rescan shows SAK 18, restored to 08. Guard refused
+  password and UID-length changes. Card dump identical to pm3 gview afterwards.
+- Dump fix: a single failed confirm auth of a trailer key sent the sector to nested ("sector 10 A:
+  nested..." after the magic read, pm3 stacked on the card). magicPass now confirms the trailer keys
+  itself with readSectorRetry. (Built, not yet run on-device.)

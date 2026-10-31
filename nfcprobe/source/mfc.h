@@ -38,6 +38,11 @@ extern const u8 mfGen4DefaultPwd[4];
 int mfGen4Read(const u8 pwd[4], u8 block, u8 out[16]);
 int mfGen4Write(const u8 pwd[4], u8 block, const u8 data[16]); // WRITES THE CARD
 int mfGen4Config(const u8 pwd[4], u8 *out, u32 max);
+// Writes the 30-byte config (F0, never the fusing F1) and reads it back. Only shadow mode, ATS and
+// ATQA/SAK (bytes 6-26) may differ from the current config; anything else is refused unsent.
+// WRITES THE CARD CONFIG.
+#define MF_GEN4_CFG 30
+int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG]);
 
 // Magic card detection. Gen2 (CUID) is only tested when asked: it rewrites block 0 with its own
 // contents through a normal authenticated WRITE (a default key A for sector 0 must work).

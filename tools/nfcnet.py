@@ -16,6 +16,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                    Gen2 by rewriting block 0 with its own data (WRITES)
        nfcnet.py HOST g4read BLOCK [N] [PWD]       Gen4 GTU read without keys (PWD default 00000000)
        nfcnet.py HOST g4write BLOCK HEX32 [PWD]    Gen4 GTU write + read-back (WRITES THE CARD)
+       nfcnet.py HOST g4config [HEX60] [PWD]       Gen4 GTU config: read and decode; with HEX60 write it
+                                                   (only shadow/ATS/ATQA/SAK may change; WRITES CONFIG)
 """
 import socket
 import struct
@@ -25,7 +27,7 @@ PORT = 8020
 OP_PING, OP_TAKEOVER, OP_POWER, OP_WRITE, OP_READ, OP_XFER, OP_GPIO, OP_RELEASE = range(8)
 (OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
- OP_GEN4_WRITE) = range(0x10, 0x1B)
+ OP_GEN4_WRITE, OP_GEN4_CONFIG) = range(0x10, 0x1C)
 GEN4_PWD = bytes(4)
 NO_CARD = 1  # card op result: no card / auth refused
 
@@ -151,6 +153,12 @@ class Nfc:
         if len(data) != 16:
             raise ValueError("data must be 16 bytes")
         return self.card_call(OP_GEN4_WRITE, bytes(pwd) + bytes([block]) + bytes(data), 30) is not None
+
+    def gen4_config(self, cfg=None, pwd=GEN4_PWD):
+        """Read the Gen4 GTU config (bytes, None if no answer: reason in self.why), or with cfg
+        (30 bytes) write it and read it back: True if verified. WRITES THE CARD CONFIG."""
+        p = self.card_call(OP_GEN4_CONFIG, bytes(pwd) + bytes(cfg or b""), 30)
+        return p if cfg is None or p is None else True
 
     def takeover(self):
         self.call(OP_TAKEOVER)
@@ -320,6 +328,19 @@ def main():
         blk, data = int(args[0]), bytes.fromhex(args[1])
         ok = nfc.gen4_write(blk, data, bytes.fromhex(args[2]) if len(args) > 2 else GEN4_PWD)
         print("VERIFIED" if ok else f"write failed: {nfc.why}")
+    elif what == "g4config":
+        cfg = next((bytes.fromhex(a) for a in args if len(a) == 60), None)
+        pwd = next((bytes.fromhex(a) for a in args if len(a) == 8), GEN4_PWD)
+        if cfg is not None:
+            print("VERIFIED" if nfc.gen4_config(cfg, pwd) else f"config write failed: {nfc.why}")
+        c = nfc.gen4_config(None, pwd)
+        if c is None:
+            sys.exit(f"no config: {nfc.why}")
+        print(f"config ({len(c)} bytes): {c.hex()}")
+        if len(c) >= 27:
+            print(f"  protocol {c[0]:02X}  UID length {c[1]:02X}  password {c[2:6].hex()}  shadow {c[6]:02X}")
+            print(f"  ATS {c[8:8 + c[7]].hex() if c[7] else '(off)'}  ATQA {c[25]:02X}{c[24]:02X}  SAK {c[26]:02X}")
+            print(f"  rest {c[27:].hex()}")
     else:
         sys.exit(__doc__)
 

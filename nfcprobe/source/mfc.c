@@ -201,7 +201,7 @@ const u8 mfGen4DefaultPwd[4] = { 0, 0, 0, 0 };
 static int gen4Cmd(const u8 pwd[4], const u8 *cmd, u32 len, u8 *out, u32 outMax)
 {
 	MonFrame f[2];
-	u8 buf[0x20] = { 0xCF }, crc[2];
+	u8 buf[0x30] = { 0xCF }, crc[2];
 	if (5 + len > sizeof(buf)) return 0;
 	memcpy(buf + 1, pwd, 4);
 	memcpy(buf + 5, cmd, len);
@@ -213,7 +213,7 @@ static int gen4Cmd(const u8 pwd[4], const u8 *cmd, u32 len, u8 *out, u32 outMax)
 			if (sak < 0) FAIL(0, "card mute (wrong password? rescan)");
 		}
 		if (monFrames(f, 2) < 0 || !monTxraw(buf, 5 + len, 0, 0, 0, 0x88)) FAIL(-1, "CF tx");
-		int n = waitFramesN(f, 2, cmd[0] == 0xCD ? 25 : 4);
+		int n = waitFramesN(f, 2, cmd[0] == 0xCD || cmd[0] == 0xF0 ? 25 : 4);
 		if (n < 0) FAIL(-1, "CF rx");
 		if (!n) continue;
 		const MonFrame *a = &f[n - 1];
@@ -254,6 +254,33 @@ int mfGen4Config(const u8 pwd[4], u8 *out, u32 max)
 {
 	u8 cmd = 0xC6;
 	return gen4Cmd(pwd, &cmd, 1, out, max);
+}
+
+// Config bytes a write may change: 6 shadow mode, 7 ATS length, 8-23 ATS, 24-25 ATQA (swapped), 26
+// SAK. The rest (protocol, UID length, password, UL mode, max sectors) must stay, so a write can't
+// lock us out: our SELECT only does 4-byte UIDs, and a lost password is a lost card.
+static bool gen4CfgChangeable(int i)
+{
+	return i >= 6 && i <= 26;
+}
+
+int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG])
+{
+	u8 cur[32], cmd[1 + MF_GEN4_CFG] = { 0xF0 }, ans[4];
+	int n = mfGen4Config(pwd, cur, sizeof(cur));
+	if (n <= 0) return n;
+	if (n != MF_GEN4_CFG) FAIL(0, "config is %d bytes, not %d", n, MF_GEN4_CFG);
+	for (int i = 0; i < MF_GEN4_CFG; i++)
+		if (cfg[i] != cur[i] && !gen4CfgChangeable(i)) FAIL(0, "config byte %d may not change", i);
+	if (cfg[6] > 4) FAIL(0, "shadow mode %02X", cfg[6]);
+	if (cfg[7] > 16) FAIL(0, "ATS length %d", cfg[7]);
+	// F0 only: F1 would fuse the config for good.
+	memcpy(cmd + 1, cfg, MF_GEN4_CFG);
+	if ((n = gen4Cmd(pwd, cmd, sizeof(cmd), ans, sizeof(ans))) <= 0) return n;
+	if (n != 2 || ans[0] != 0x90 || ans[1] != 0x00) FAIL(0, "config write: nak");
+	if ((n = mfGen4Config(pwd, cur, sizeof(cur))) <= 0) return n;
+	if (n != MF_GEN4_CFG || memcmp(cur, cfg, MF_GEN4_CFG)) FAIL(0, "verify mismatch");
+	return 1;
 }
 
 u32 mfPack(const u8 *data, u32 len, const u8 *par, u8 *out, u8 *code)
@@ -875,11 +902,18 @@ static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 		}
 		d->valid[b] = r == 1;
 	}
+	// The trailer keys are known to be right: confirm them with retries, so one flaky auth doesn't
+	// send a sector to the nested attack.
 	for (int sec = 0; sec < sectors; sec++) {
 		int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
 		if (!d->valid[t]) continue;
-		*ndict = addKey(dict, *ndict, MF_MAX_KEYS, d->data[t]);
-		*ndict = addKey(dict, *ndict, MF_MAX_KEYS, d->data[t] + 10);
+		u8 keys[2][6];
+		memcpy(keys[0], d->data[t], 6);
+		memcpy(keys[1], d->data[t] + 10, 6);
+		for (int kb = 0; kb < 2; kb++) {
+			*ndict = addKey(dict, *ndict, MF_MAX_KEYS, keys[kb]);
+			if (readSectorRetry(d, sec, keys[kb], kb) < 0) return -1;
+		}
 	}
 	return 1;
 }

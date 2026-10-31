@@ -49,6 +49,9 @@ enum {
 	OP_GEN4_READ  = 0x19, // pwd[4], block u8, count u8 -> per block: ok u8, data[16]
 	OP_GEN4_WRITE = 0x1A, // pwd[4], block u8, data[16] -> empty ok (read back); on failure payload
 	                      // = reason. WRITES THE CARD
+	OP_GEN4_CONFIG = 0x1B, // pwd[4], [config[30]] -> config read; with config: write it (F0, only
+	                       // shadow mode / ATS / ATQA / SAK may change), read back; on failure payload
+	                       // = reason. WRITES THE CARD CONFIG
 };
 
 #define OUT_MAX 0x2000
@@ -224,6 +227,19 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		if (!card.active && !iso14aStart()) return 1;
 		int r = mfGen4Write(in, in[4], in + 5);
 		if (r == 1) return 0; // verified
+		*outLen = strlen(mfWhy());
+		memcpy(out, mfWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_GEN4_CONFIG: {
+		if (inLen != 4 && inLen != 4 + MF_GEN4_CFG) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		int r = inLen == 4 ? mfGen4Config(in, out, 32) : mfGen4SetConfig(in, in + 4);
+		if (inLen == 4 && r > 0) {
+			*outLen = r;
+			return 0;
+		}
+		if (inLen != 4 && r == 1) return 0; // written and verified
 		*outLen = strlen(mfWhy());
 		memcpy(out, mfWhy(), *outLen);
 		return r < 0 ? -1 : 1;
