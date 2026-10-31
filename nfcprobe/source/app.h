@@ -2,13 +2,19 @@
 #include <3ds.h>
 
 #include "mfc.h"
+#include "ui.h"
 
-// The app's screens, dialogs and the card job worker (app.c), and the dump editor (editor.c).
+// The app shell (app.c): a stack of screens, dialogs, the card job worker, and the root menu with a
+// generic scan that identifies the card and hands it to its family (Proxmark style: "hf search", then
+// "hf mf ..."). Families: MIFARE Classic (mfui.c, editor.c).
 
-enum { SCR_MENU, SCR_CARD, SCR_GEN4, SCR_FILES, SCR_EDIT, SCR_LOG };
-void appScreen(int scr); // remembers where it came from
-void appBack(void);      // to the screen this one was entered from
-void toast(const char *fmt, ...); // a short note at the bottom of the screen
+typedef struct {
+	void (*show)(void); // whenever it becomes the top screen (entered, or returned to); may be NULL
+	void (*input)(u32 kDown, u32 kRepeat);
+	void (*draw)(void);
+} Screen;
+void appScreen(const Screen *s); // push (nothing if it is on top already)
+void appBack(void);              // pop to the screen it was entered from
 
 void appRun(void);       // UI loop, returns on exit
 void appShutdown(void);  // cancels a running job and waits for it a while
@@ -21,15 +27,41 @@ typedef struct {
 	void (*fn)(void);
 } MenuItem;
 void popup(const char *title, const MenuItem *items, int n);
+void toast(const char *fmt, ...); // a short note at the bottom of the screen
 
-// Runs run() on the worker with the chip ours and hwLock held, then done() on the UI thread.
-// A cancellable job gets B for mfCancel.
+// Runs run() on the worker with hwLock held, then done() on the UI thread. A cancellable job gets B
+// for mfCancel.
 void jobStart(const char *title, void (*run)(void), void (*done)(void), bool cancellable);
-bool cardWait(void); // in a job: poll until a card is activated (or cancelled); logs the card
+bool cardWait(void); // in a job: take the chip, poll until a card is activated (or cancelled)
+
+// A menu screen: entries on the left, the selected one's help on the right, status lines below.
+typedef struct {
+	const char *label, *help;
+	void (*fn)(void);
+} MenuEntry;
+typedef struct {
+	const char *title;
+	const MenuEntry *entries;
+	int n;
+	void (*extra)(float y); // draws status lines under the menu; may be NULL
+	UiList l;
+} Menu;
+void menuInput(Menu *m, u32 kDown, u32 kRepeat);
+void menuDraw(Menu *m);
+
+// A card family: what the generic scan hands a card to.
+typedef struct {
+	const char *name, *help;
+	bool (*match)(const Card *c); // from the activation (ATQA, SAK, UID)
+	int (*probe)(void);           // in the job, card active: family detection. 1 ok, 0 lost, -1 chip error
+	void (*show)(void);           // UI thread: push its card screen
+	void (*menu)(void);           // UI thread: push its menu
+} CardFamily;
+extern const CardFamily mfcFamily;
+
+const char *cardTypeName(const Card *c); // best guess from ATQA / SAK, any ISO14443-A card
+void uidHex(const Card *c, char *out, const char *sep); // out: up to 30 chars
+
+// MIFARE Classic
 void cloneStart(const MfDump *d, bool force); // write a dump onto the magic card on the reader
-
 void editorOpen(const MfDump *d, const char *path);
-void editorInput(u32 kDown, u32 kRepeat);
-void editorDraw(void);
-
-const char *cardTypeName(u8 sak); // from the SAK

@@ -96,6 +96,30 @@ void uiTextCenter(float cx, float y, float scale, u32 color, const char *fmt, ..
 	va_end(va);
 }
 
+float uiTextWrap(float x, float y, float w, float scale, u32 color, const char *text)
+{
+	char line[256] = "", cand[256];
+	float lh = scale / S_SMALL * SMALL_H;
+	for (const char *p = text; *p;) {
+		const char *e = strchr(p, ' ');
+		int n = e ? e - p : (int)strlen(p);
+		snprintf(cand, sizeof(cand), "%s%s%.*s", line, *line ? " " : "", n, p);
+		C2D_Text t;
+		C2D_TextParse(&t, frameBuf, cand);
+		if (*line && t.width * scale > w) {
+			uiText(x, y, scale, color, "%s", line);
+			y += lh;
+			snprintf(line, sizeof(line), "%.*s", n, p);
+		} else {
+			snprintf(line, sizeof(line), "%s", cand);
+		}
+		p += n;
+		while (*p == ' ') p++;
+	}
+	if (*line) uiText(x, y, scale, color, "%s", line), y += lh;
+	return y;
+}
+
 void uiMonoS(float x, float y, float scale, float cell, u32 color, const char *s)
 {
 	for (; *s; s++, x += cell) {

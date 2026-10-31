@@ -14,8 +14,14 @@ generates the whole patch (header, a 4-instruction AON thunk into ROM, our SRAM 
 The UI is on the top screen and driven by buttons only: a card on the reader covers the whole
 bottom screen, which just mirrors the log (`sdmc:/nfcprobe.log`; SELECT shows it on top). Card
 operations ask for confirmation before writing anything and can be stopped with B.
-- Scan card: type, UID, ATQA/SAK, magic generation (Gen1a, Gen4 GTU, USCUID) and the GTU / USCUID
-  config. Y edits the GTU config (UID length, card type, shadow mode; guarded, see `mfc.h`).
+
+Like the Proxmark's `hf search` / `hf mf`, the root menu's Scan card identifies any ISO14443-A card
+and opens it in its card type's tools; unsupported types get a generic info screen. Each card type
+is a `CardFamily` (`source/app.h`: match on ATQA/SAK, probe, card screen, menu) listed in
+`families[]` in `source/app.c`, with its screens in its own file. MIFARE Classic (`source/mfui.c`,
+`source/editor.c`):
+- Scan card (assumes Classic): type, UID, ATQA/SAK, magic generation (Gen1a, Gen4 GTU, USCUID)
+  and the GTU / USCUID config. Y edits the GTU config (UID length, card type, shadow mode; guarded, see `mfc.h`).
 - Read card: dictionary (defaults + `sdmc:/nfcprobe/keys.txt`, one hex key per line), magic
   backdoors, FM11RF08S static-nonce and nested key recovery. Saved as
   `sdmc:/nfcprobe/dumps/<UID>.bin` + `.keys.txt` (never overwritten: `<UID>-2.bin` and so on) and

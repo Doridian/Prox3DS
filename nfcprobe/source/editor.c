@@ -58,6 +58,9 @@ static const char *baseName(void)
 	return s ? s + 1 : path;
 }
 
+static void editorInput(u32 kDown, u32 kRepeat);
+static void editorDraw(void);
+
 void editorOpen(const MfDump *src, const char *p)
 {
 	d = *src;
@@ -65,7 +68,8 @@ void editorOpen(const MfDump *src, const char *p)
 	snprintf(path, sizeof(path), "%s", p);
 	sec = row = col = top = 0;
 	editing = acl.on = false;
-	appScreen(SCR_EDIT);
+	static const Screen editorScreen = { NULL, editorInput, editorDraw };
+	appScreen(&editorScreen);
 }
 
 // --- access conditions (NXP MF1S50 tables), C1 C2 C3 as bits 2..0 ---
@@ -341,7 +345,7 @@ static void setNibble(int dv)
 	*p = (*p & ~(0xF << sh)) | v << sh;
 }
 
-void editorInput(u32 kDown, u32 kRepeat)
+static void editorInput(u32 kDown, u32 kRepeat)
 {
 	if (acl.on) {
 		if (kRepeat & KEY_UP) acl.sel = (acl.sel + 3) % 4;
@@ -498,7 +502,7 @@ static void drawAclEditor(void)
 	uiText(x + 8, y + 16, S_SMALL, uiCol[COL_DIM], BTN_UD " select   " BTN_LR " change   " BTN_A " apply   " BTN_B " cancel");
 }
 
-void editorDraw(void)
+static void editorDraw(void)
 {
 	char title[176], right[48];
 	snprintf(title, sizeof(title), "%s%s", baseName(), dirty() ? " *" : "");
