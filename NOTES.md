@@ -412,6 +412,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - Separate Gen2 (CUID) card, UID 5A11E21B (ATQA 0004, SAK 08, all keys FF): `magic` -> none (no
   Gen1a/Gen4 answer); mfdump 32/32 keys + 64 blocks in 3 s; `magic gen2` -> gen2 (block 0 rewrite
   ACKed and verified); rescan + mfread block 0 unchanged (5A11E21B B2 08 0400 6263...69).
+- Gen1a card UID F5F7BF02 (keys FF): `magic` -> gen1a; mfdump 32/32 + 64 blocks in 2.4 s, identical
+  to an independent backdoor dump (tools/rawa.py gen1a-dump).
 - Not done: GTU config writes (CF pwd F0/F1, mode changes) on purpose -- easy to make a GTU hard to
-  recover. Gen1a dump through magicPass is untested on-device since the change (the Gen1a card was not
-  on the 3DS).
+  recover.
