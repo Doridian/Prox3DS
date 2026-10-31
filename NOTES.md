@@ -434,4 +434,14 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   password and UID-length changes. Card dump identical to pm3 gview afterwards.
 - Dump fix: a single failed confirm auth of a trailer key sent the sector to nested ("sector 10 A:
   nested..." after the magic read, pm3 stacked on the card). magicPass now confirms the trailer keys
-  itself with readSectorRetry. (Built, not yet run on-device.)
+  itself with readSectorRetry. With the pm3 still stacked: 3 dumps, 32/32 keys each, 4.9 / 3.0 / 3.0 s.
+
+## Self-update over the network (debugging) -- 2026-10-31
+- `nfcnet.py HOST update [FILE]` (default nfcprobe/nfcprobe.3dsx): OP_UPDATE (offset u32, data; 28 KB
+  chunks; request buffer now 32 KB) writes <app>.new, OP_UPDATE_DONE (size u32) checks the size,
+  swaps it over the app (argv[0], default sdmc:/3ds/nfcprobe.3dsx) and asks the main loop to exit.
+  The normal exit path hands the chip back, then relaunchSelf(): Rosalina hb:ldr SetTarget (cmd 2,
+  SD-relative path, static buffer 0) + SetArgv (cmd 3, argc u32 + strings, static buffer 1), like
+  the Homebrew Menu does, and aptSetChainloaderToSelf() -> soft reset into the new build.
+- Verified: 197 KB sent in < 1 s, app back on port 8020 within ~2 s, start screen shows the new
+  build stamp (the banner now carries __DATE__ __TIME__). No FTP round trip needed any more.

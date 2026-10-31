@@ -451,16 +451,49 @@ static void jobThread(void *arg)
 	jobRunning = false;
 }
 
+char appPath[256] = "sdmc:/3ds/nfcprobe.3dsx"; // argv[0] when the loader gives one
+volatile bool restartRequested;
+
+// Relaunch the (updated) .3dsx the way the Homebrew Menu starts one under Luma: tell Rosalina's
+// hb:ldr the target and its argv, then soft-reset into it. Without hb:ldr this is a plain exit.
+static void relaunchSelf(void)
+{
+	Handle hbldr;
+	if (R_FAILED(svcConnectToPort(&hbldr, "hb:ldr"))) return;
+	const char *path = strncmp(appPath, "sdmc:/", 6) ? appPath : appPath + 5; // SD-relative
+	static u32 args[0x400 / 4]; // argc, then the NUL-separated strings
+	args[0] = 1;
+	strcpy((char *)(args + 1), appPath);
+	u32 *cmd = getThreadCommandBuffer();
+	cmd[0] = IPC_MakeHeader(2, 0, 2); // SetTarget
+	cmd[1] = IPC_Desc_StaticBuffer(strlen(path) + 1, 0);
+	cmd[2] = (u32)path;
+	Result rc = svcSendSyncRequest(hbldr);
+	if (R_SUCCEEDED(rc)) rc = cmd[1];
+	if (R_SUCCEEDED(rc)) {
+		cmd[0] = IPC_MakeHeader(3, 0, 2); // SetArgv
+		cmd[1] = IPC_Desc_StaticBuffer(sizeof(args), 1);
+		cmd[2] = (u32)args;
+		rc = svcSendSyncRequest(hbldr);
+		if (R_SUCCEEDED(rc)) rc = cmd[1];
+	}
+	svcCloseHandle(hbldr);
+	if (R_SUCCEEDED(rc)) aptSetChainloaderToSelf();
+}
+
 int main(int argc, char *argv[])
 {
+	if (argc > 0 && argv[0] && !strncmp(argv[0], "sdmc:/", 6))
+		snprintf(appPath, sizeof(appPath), "%s", argv[0]);
 	gfxInitDefault();
 	consoleInit(GFX_TOP, NULL);
 
-	printf("nfcprobe - BCM20791B5\n");
+	printf("nfcprobe - BCM20791B5 (built " __DATE__ " " __TIME__ ")\n");
 	printf("HOME/sleep are off while running; exit with START.\n\n");
 	printf("A: scan card\n");
 	printf("X: dump Mifare Classic (keys: defaults + %s)\n", MF_KEYS);
 	printf("L+A: chip probe   START: exit\n");
+	printf("app: %s (net update restarts it)\n", appPath);
 	printf("log: %s\n\n", LOG_PATH);
 
 	LightLock_Init(&hwLock);
@@ -476,7 +509,7 @@ int main(int argc, char *argv[])
 		hidScanInput();
 		if (aptCheckHomePressRejected()) printf("HOME is off while NFC is ours: START to exit\n");
 		u32 kDown = hidKeysDown();
-		if (kDown & KEY_START) break;
+		if ((kDown & KEY_START) || restartRequested) break;
 		if (jobRunning) continue;
 		int job = -1;
 		if (hidKeysHeld() & KEY_L)
@@ -507,5 +540,6 @@ int main(int argc, char *argv[])
 	aptSetHomeAllowed(true);
 	aptSetSleepAllowed(true);
 	gfxExit();
+	if (restartRequested) relaunchSelf();
 	return 0;
 }

@@ -5,6 +5,7 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST spd FILE.ncd       power cycle, download an SPD patch, show the version
        nfcnet.py HOST send HEX [HEX...]  send raw I2C packets (HCIT included), print the replies
        nfcnet.py HOST release            power off and give the pins back
+       nfcnet.py HOST update [FILE]      send a new nfcprobe.3dsx (default: the build), app restarts into it
   Card ops implemented in the app (nfcprobe mfc.c):
        nfcnet.py HOST scan                         activate a card, show ATQA/SAK/UID
        nfcnet.py HOST mfread BLOCK KEY [b] [N]     Mifare Classic auth + read N blocks
@@ -19,12 +20,15 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST g4config [HEX60] [PWD]       Gen4 GTU config: read and decode; with HEX60 write it
                                                    (only shadow/ATS/ATQA/SAK may change; WRITES CONFIG)
 """
+import os
 import socket
 import struct
 import sys
 
 PORT = 8020
-OP_PING, OP_TAKEOVER, OP_POWER, OP_WRITE, OP_READ, OP_XFER, OP_GPIO, OP_RELEASE = range(8)
+(OP_PING, OP_TAKEOVER, OP_POWER, OP_WRITE, OP_READ, OP_XFER, OP_GPIO, OP_RELEASE, OP_UPDATE,
+ OP_UPDATE_DONE) = range(10)
+UPDATE_CHUNK = 0x7000
 (OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
  OP_GEN4_WRITE, OP_GEN4_CONFIG) = range(0x10, 0x1C)
@@ -160,6 +164,13 @@ class Nfc:
         p = self.card_call(OP_GEN4_CONFIG, bytes(pwd) + bytes(cfg or b""), 30)
         return p if cfg is None or p is None else True
 
+    def update(self, data, log=print):
+        """Upload a new .3dsx; the app swaps it in, exits and relaunches itself."""
+        for o in range(0, len(data), UPDATE_CHUNK):
+            self.call(OP_UPDATE, struct.pack("<I", o) + data[o:o + UPDATE_CHUNK])
+            log(f"  {min(o + UPDATE_CHUNK, len(data))}/{len(data)}")
+        self.call(OP_UPDATE_DONE, struct.pack("<I", len(data)))
+
     def takeover(self):
         self.call(OP_TAKEOVER)
 
@@ -268,6 +279,10 @@ def main():
                 print("  " + describe(pkt))
     elif what == "release":
         nfc.release()
+    elif what == "update":
+        path = args[0] if args else os.path.join(os.path.dirname(__file__), "../nfcprobe/nfcprobe.3dsx")
+        nfc.update(open(path, "rb").read())
+        print("updated, app restarting")
     elif what == "scan":
         r = nfc.scan()
         print("no card" if r is None else f"ATQA {r[0][::-1].hex()} SAK {r[1]:02X} UID {r[2].hex()}")

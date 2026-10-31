@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "mfc.h"
@@ -30,6 +31,10 @@ enum {
 	OP_XFER     = 0x05, // u16 timeout ms, bytes -> write, then one packet like OP_READ
 	OP_GPIO     = 0x06, // u32 value, u32 mask (mask 0 = only read) -> u32 data of the NFC pins
 	OP_RELEASE  = 0x07, // power off, unbind the IRQ, close gpio/i2c
+	// Self-update, for debugging: chunks of a new .3dsx go to <app>.new; DONE checks the size, swaps
+	// it in and has the app exit (chip handed back as usual) and relaunch itself (main.c).
+	OP_UPDATE      = 0x08, // offset u32 (0 = start over), data
+	OP_UPDATE_DONE = 0x09, // size u32
 	// High-level card ops (mfc.c); they take over the chip themselves. Result 0 = ok,
 	// 1 = no card / auth refused, -1 = chip monitor error.
 	OP_14A_START  = 0x10, // load the monitor, activate a card -> ATQA[2] SAK uidLen uid
@@ -263,6 +268,28 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	return -4;
 }
 
+static Result handleUpdate(u8 op, const u8 *in, u32 inLen)
+{
+	char tmp[sizeof(appPath) + 4];
+	snprintf(tmp, sizeof(tmp), "%s.new", appPath);
+	if (inLen < 4) return -3;
+	u32 n;
+	memcpy(&n, in, 4);
+	if (op == OP_UPDATE) {
+		FILE *f = fopen(tmp, n ? "r+b" : "wb");
+		if (!f) return -5;
+		bool ok = !fseek(f, n, SEEK_SET) && fwrite(in + 4, 1, inLen - 4, f) == inLen - 4;
+		return fclose(f) || !ok ? -5 : 0;
+	}
+	struct stat st;
+	if (stat(tmp, &st) || st.st_size != n) return -6;
+	remove(appPath);
+	if (rename(tmp, appPath)) return -5;
+	printf("net: app updated (%lu bytes), restarting\n", n);
+	restartRequested = true;
+	return 0;
+}
+
 // Handles one request; out/outLen is the reply payload.
 static Result handle(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 {
@@ -272,6 +299,7 @@ static Result handle(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		*outLen = 8;
 		return 0;
 	}
+	if (op == OP_UPDATE || op == OP_UPDATE_DONE) return handleUpdate(op, in, inLen);
 	if (op == OP_TAKEOVER) return chipEnsure() ? 0 : -1;
 	if (op == OP_RELEASE) {
 		if (irqEvent) chipRelease();
@@ -321,7 +349,7 @@ static Result handle(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 
 static void serveClient(int fd)
 {
-	static u8 in[0x400], out[OUT_MAX];
+	static u8 in[0x8000], out[OUT_MAX];
 	for (;;) {
 		u8 hdr[3];
 		if (!recvAll(fd, hdr, 3)) return;

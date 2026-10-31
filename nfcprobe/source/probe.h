@@ -18,5 +18,8 @@ extern Handle irqEvent;   // nonzero while we own the chip
 extern LightLock hwLock;
 
 #define NET_PORT 8020
+// Self-update (netsrv OP_UPDATE*): the running .3dsx, and the request to exit and relaunch it.
+extern char appPath[256];
+extern volatile bool restartRequested;
 void netStart(void);
 void netStop(void);
