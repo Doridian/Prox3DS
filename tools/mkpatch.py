@@ -1,48 +1,56 @@
 #!/usr/bin/env python3
 """Build a Broadcom SPD patch (.ncd) around our own SRAM image.
 
-Header and AON segment are taken from the stock B5 patch (the AON entry only calls
-a ROM function); the hook table is replaced (default: no hooks), the SRAM segment is
-ours, the signature is 48 zero bytes (not checked, see NOTES.md).
+Everything is generated here, nothing is copied from the stock patch: the header is
+built field by field (values as in the stock B5 patch), the AON segment is a thunk to
+the ROM init the stock AON entry calls, the hook table is ours (default: no hooks), the
+SRAM segment is ours, the signature is 48 zero bytes (not checked, see NOTES.md).
 
     mkpatch.py SRAM.bin OUT.ncd [--chipver STR16] [--hook ROMADDR:HALFWORDS ...]
 """
 import argparse
 import struct
 
-STOCK = __file__.rsplit("/", 2)[0] + "/extracted/patch_20791B5.ncd"
 CHUNK = 0xF0
-
-
-def records(ncd):
-    o = 0
-    while o + 5 <= len(ncd):
-        ln = ncd[o + 3]
-        yield ncd[o + 4], ncd[o + 5:o + 4 + ln]
-        o += 4 + ln
+AON_LOAD = 0x68008
+AON_ROM_INIT = 0x11888  # what the stock AON entry calls: [0x68C80] = 0x32E0, [0x68C84] = 0
+PROJECT = 0x0004
+VERSION = (11, 64)  # shown as major.minor by GET_PATCH_VERSION
 
 
 def frame(rtype, data):
     return bytes([0x10, 0x2F, 0x2E, len(data) + 1, rtype]) + data
 
 
-def build(sram, chipver=None, hooks=()):
-    stock = list(records(open(STOCK, "rb").read()))
-    header = bytearray(next(d for t, d in stock if t == 0))
-    aon = b"".join(d for t, d in stock if t == 2)
+def thumb_bl(pc, target):
+    off = (target - (pc + 4)) >> 1
+    return struct.pack("<HH", 0xF000 | (off >> 11) & 0x7FF, 0xF800 | off & 0x7FF)
 
+
+def aon_thunk():
+    # Entry pointer, then push {lr}; bl AON_ROM_INIT; pop {r1}; bx r1 (entered at load + 4).
+    code = struct.pack("<I", AON_LOAD + 4 | 1) + b"\x00\xb5"
+    code += thumb_bl(AON_LOAD + 6, AON_ROM_INIT)
+    return code + b"\x02\xbc\x08\x47"
+
+
+def header(sram_load, chipver):
+    # u8 1, RAM ptrs 0x3B590 / 0 / 0x3B598, AON load, SRAM load, u16 project, u8 0, u8 7,
+    # chipver[16] (echoed by GET_PATCH_VERSION), version major, 0, minor, 0.
+    return (struct.pack("<BIIIIIHBB", 1, 0x3B590, 0, 0x3B598, AON_LOAD, sram_load, PROJECT, 0, 7)
+            + chipver.ljust(16, b"\0")[:16] + bytes([VERSION[0], 0, VERSION[1], 0]))
+
+
+def build(sram, chipver=None, hooks=()):
     load = (struct.unpack_from("<I", sram)[0] & ~1) - 4
-    struct.pack_into("<I", header, 17, load)  # SRAM load address field
-    if chipver is not None:
-        header[25:41] = chipver.ljust(16, b"\0")[:16]
 
     # Hook table: N ROM word addresses, enable mask, N replacement words.
     hook = struct.pack(f"<{len(hooks)}I", *(a // 4 for a, _ in hooks))
     hook += struct.pack("<I", (1 << len(hooks)) - 1)
     hook += struct.pack(f"<{len(hooks)}I", *(w for _, w in hooks))
 
-    out = frame(0, bytes(header)) + frame(3, hook)
-    for seg_type, seg in ((2, aon), (1, sram)):
+    out = frame(0, header(load, chipver or b"20791B5")) + frame(3, hook)
+    for seg_type, seg in ((2, aon_thunk()), (1, sram)):
         for i in range(0, len(seg), CHUNK):
             out += frame(seg_type, seg[i:i + CHUNK])
     return out + frame(6, bytes(48))

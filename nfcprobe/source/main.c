@@ -1,8 +1,6 @@
 // nfcprobe: probe of the New3DS NFC controller (BCM20791B5).
 // Kills the nfc sysmodule, takes over its GPIO/I2C, and either just queries the
-// controller, downloads the module's own Broadcom SPD patch (stock or with one
-// byte changed) to find out whether patch signatures are enforced, or tries to
-// dump the controller's memory.
+// controller or loads our own patch (chip/memrw.c) and runs card operations through it.
 // Reboot afterwards to get the nfc sysmodule back.
 
 #include <stdarg.h>
@@ -13,7 +11,6 @@
 #include "nfchw.h"
 #include "mfc.h"
 #include "probe.h"
-#include "patch_20791B5_bin.h"
 
 #define LOG_PATH     "sdmc:/nfcprobe.log"
 #define MS(x)        ((s64)(x) * 1000000LL)
@@ -384,147 +381,8 @@ bool spdDownload(const u8 *ncd, u32 size, bool verbose)
 	return true;
 }
 
-enum { JOB_PROBE, JOB_PATCH_STOCK, JOB_PATCH_CODE, JOB_PATCH_SIG, JOB_DUMP, JOB_SCAN, JOB_MF_DUMP };
-static const char *jobNames[] = { "probe", "stock patch", "patch w/ modified code byte", "patch w/ modified signature",
-	"dump via HCI Read_RAM", "scan", "Mifare Classic dump" };
-
-// Byte offsets in patch_20791B5.ncd (see NOTES.md):
-#define NCD_PAD_OFFSET 0xA44  // SRAM 0x3BB36, alignment padding after pop {r3-r7,pc}, never executed
-#define NCD_SIG_OFFSET 0x1475 // first byte of the (all-zero) signature record payload
-
-static u8 ncdBuf[0x1600];
-
-static void runPatchJob(int job)
-{
-	u32 size = patch_20791B5_bin_size;
-	if (size > sizeof(ncdBuf)) return;
-	memcpy(ncdBuf, patch_20791B5_bin, size);
-	if (job == JOB_PATCH_CODE) {
-		logp("modifying ncd[%#x] (SRAM 0x3BB36): %02X -> 01\n", NCD_PAD_OFFSET, ncdBuf[NCD_PAD_OFFSET]);
-		if (ncdBuf[NCD_PAD_OFFSET] != 0x00) return;
-		ncdBuf[NCD_PAD_OFFSET] = 0x01;
-	} else if (job == JOB_PATCH_SIG) {
-		logp("modifying ncd[%#x] (signature): %02X -> 01\n", NCD_SIG_OFFSET, ncdBuf[NCD_SIG_OFFSET]);
-		if (ncdBuf[NCD_SIG_OFFSET] != 0x00) return;
-		ncdBuf[NCD_SIG_OFFSET] = 0x01;
-	}
-
-	logp("=== download (%lu bytes) ===\n", size);
-	bool ok = spdDownload(ncdBuf, size, true);
-	logp("=== download %s ===\n", ok ? "completed" : "FAILED");
-
-	logp("=== after download ===\n");
-	chipInfo();
-
-	logp("=== after power cycle (patch should be gone if RAM-only) ===\n");
-	chipPowerCycle();
-	chipInfo();
-}
-
-// Broadcom BT vendor command Read_RAM (0xFC4D): addr32, len8. The answer is a Command
-// Complete event: 04 0E plen | ncmds, opcode16, status, data[len]. The chip shares
-// Broadcom's BT HCI layer (the nfc module sends BT VSCs over HCIT 0x01 too), so this
-// may work without any patch.
-#define HCI_READ_RAM    0xFC4D
-#define READ_CHUNK      0xF0
-
-static int hciReadRam(u32 addr, u8 *out, u32 len, bool verbose)
-{
-	u8 cmd[] = { HCI_HCIT_CMD, HCI_READ_RAM & 0xFF, HCI_READ_RAM >> 8, 5,
-		addr, addr >> 8, addr >> 16, addr >> 24, len };
-	u8 pkt[4 + 0x100];
-	if (verbose) logHex("  tx: ", cmd, sizeof(cmd));
-	Result res = i2cNfcWrite(cmd, sizeof(cmd));
-	if (R_FAILED(res)) {
-		logp("  read %08lX: write failed %08lX\n", addr, res);
-		return -1;
-	}
-	for (int n = 0; n < 4; n++) {
-		u32 rlen = nciRecv(pkt, sizeof(pkt), 25, verbose || n);
-		if (!rlen) {
-			logp("  read %08lX: no response\n", addr);
-			return -1;
-		}
-		if (verbose) {
-			logHex("  rx: ", pkt, rlen);
-			describe(pkt, rlen);
-		}
-		if (pkt[0] == HCI_HCIT_EVT && pkt[1] == 0x0E && rlen >= 7 && (pkt[4] | (pkt[5] << 8)) == HCI_READ_RAM) {
-			if (pkt[6] != 0) {
-				logp("  read %08lX: status %02X\n", addr, pkt[6]);
-				return -1;
-			}
-			if (rlen - 7 != len) {
-				logp("  read %08lX: got %lu bytes, wanted %lu\n", addr, rlen - 7, len);
-				return -1;
-			}
-			memcpy(out, pkt + 7, len);
-			return 0;
-		}
-		if (!verbose) {
-			logHex("  unexpected: ", pkt, rlen);
-			describe(pkt, rlen);
-		}
-	}
-	return -1;
-}
-
-// Dumps [start, end) to path, stopping at the first failed read (unmapped memory may
-// also just hang the chip; whatever was read so far stays in the file).
-static void dumpRegion(const char *path, u32 start, u32 end)
-{
-	static u8 buf[READ_CHUNK];
-	FILE *f = fopen(path, "wb");
-	if (!f) {
-		logp("can't open %s\n", path);
-		return;
-	}
-	logp("> dump %08lX..%08lX -> %s\n", start, end, path);
-	u32 a = start;
-	for (; a < end; a += READ_CHUNK) {
-		u32 n = end - a < READ_CHUNK ? end - a : READ_CHUNK;
-		if (hciReadRam(a, buf, n, false)) break;
-		fwrite(buf, 1, n, f);
-		if ((a & 0x3FFF) == 0) printf("  %08lX\n", a);
-	}
-	fclose(f);
-	logp("  dumped %lu bytes (%08lX..%08lX)\n", a - start, start, a);
-}
-
-static void runDumpJob(void)
-{
-	u8 buf[0x40];
-	logp("=== Read_RAM probe ===\n");
-	if (hciReadRam(0, buf, 0x20, true)) {
-		logp("Read_RAM doesn't work, no dump\n");
-		return;
-	}
-	logHex("  rom@0: ", buf, 0x20);
-
-	// ROM: hooks go up to 0x1DA38 and patch code calls up to 0x1E834, so 0x20000 is a
-	// guess; read on until something fails. RAM holds the patch at 0x3B80C..0x3C530.
-	dumpRegion("sdmc:/nfc_rom.bin", 0x00000, 0x40000);
-	dumpRegion("sdmc:/nfc_aon.bin", 0x68000, 0x69000);
-
-	// Cross-check: with the stock patch loaded, its SRAM image must show up at 0x3B80C.
-	logp("=== check against stock patch ===\n");
-	chipPowerCycle();
-	if (!spdDownload(patch_20791B5_bin, patch_20791B5_bin_size, true)) return;
-	static u8 sram[0x40];
-	u32 have = 0;
-	const u8 *ncd = patch_20791B5_bin;
-	for (u32 o = 0; o + 5 <= patch_20791B5_bin_size && have < sizeof(sram); o += 4 + ncd[o + 3]) {
-		if (ncd[o + 4] != 0x01) continue;
-		u32 n = ncd[o + 3] - 1;
-		if (n > sizeof(sram) - have) n = sizeof(sram) - have;
-		memcpy(sram + have, ncd + o + 5, n);
-		have += n;
-	}
-	if (hciReadRam(0x3B80C, buf, sizeof(buf), true)) return;
-	logHex("  ram@3B80C: ", buf, sizeof(buf));
-	logHex("  expected:  ", sram, sizeof(sram));
-	logp("  %s\n", memcmp(buf, sram, sizeof(buf)) ? "MISMATCH" : "match: Read_RAM returns real memory");
-}
+enum { JOB_PROBE, JOB_SCAN, JOB_MF_DUMP };
+static const char *jobNames[] = { "probe", "scan", "Mifare Classic dump" };
 
 LightLock hwLock; // held by a job or a network request while it touches the chip
 static volatile bool jobRunning;
@@ -562,7 +420,7 @@ static void runMfDump(void)
 }
 
 // Card jobs keep the chip (and the loaded monitor) so the network side can carry on with it;
-// the research jobs start from a fresh takeover and give it back.
+// the probe starts from a fresh takeover and gives it back.
 static void jobThread(void *arg)
 {
 	int job = (int)arg;
@@ -582,8 +440,6 @@ static void jobThread(void *arg)
 			chipTakeover();
 			chipPowerCycle();
 			chipInfo();
-			if (job == JOB_DUMP) runDumpJob();
-			else if (job != JOB_PROBE) runPatchJob(job);
 			chipRelease();
 		}
 		nfchwExit();
@@ -604,8 +460,7 @@ int main(int argc, char *argv[])
 	printf("HOME/sleep are off while running; exit with START.\n\n");
 	printf("A: scan card\n");
 	printf("X: dump Mifare Classic (keys: defaults + %s)\n", MF_KEYS);
-	printf("L+A: chip probe   L+B/X/Y: patch tests\n");
-	printf("L+R: HCI Read_RAM   START: exit\n");
+	printf("L+A: chip probe   START: exit\n");
 	printf("log: %s\n\n", LOG_PATH);
 
 	LightLock_Init(&hwLock);
@@ -625,9 +480,7 @@ int main(int argc, char *argv[])
 		if (jobRunning) continue;
 		int job = -1;
 		if (hidKeysHeld() & KEY_L)
-			job = (kDown & KEY_A) ? JOB_PROBE : (kDown & KEY_B) ? JOB_PATCH_STOCK :
-				(kDown & KEY_X) ? JOB_PATCH_CODE : (kDown & KEY_Y) ? JOB_PATCH_SIG :
-				(kDown & KEY_R) ? JOB_DUMP : -1;
+			job = (kDown & KEY_A) ? JOB_PROBE : -1;
 		else
 			job = (kDown & KEY_A) ? JOB_SCAN : (kDown & KEY_X) ? JOB_MF_DUMP : -1;
 		if (job < 0) continue;

@@ -10,8 +10,6 @@
 *_keys.bin
 # objdump output of firmware
 /disasm/
-# Stock BCM20791B5 patch, copied from extracted/ (embedded in the app for L+B)
-/nfcprobe/data/patch_20791B5.bin
 
 # --- Ghidra ---
 # Projects hold the firmware; keep only our scripts

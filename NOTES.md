@@ -261,3 +261,13 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
 - App verified (nfcnet.py mfwrite, block 2 key A FF..): 3/3 writes VERIFIED, independent mfread
   matches, block back to zeros. Block 5 with sector 1 key A -> "A0 nak 4": access bits F0 FF 00 =
   condition 100 for data blocks (write needs key B), the card refuses correctly, nothing written.
+
+## No stock patch needed (tools/mkpatch.py) -- 2026-10-30
+- memrw .ncd used to copy the stock header (45 B) and AON segment (1528 B) from patch_20791B5.ncd.
+  The AON entry only does `bl 0x11888` (ROM: [0x68C80] = 0x32E0, [0x68C84] = 0); the rest of the
+  AON code is only reachable via the stock SRAM hooks, which we don't load.
+- mkpatch now builds the header field by field (byte-identical to before) and an AON segment of
+  14 bytes (entry ptr + push {lr}; bl 0x11888; pop {r1}; bx r1). Verified on HW: monitor answers,
+  0x68C80 = 0x32E0 afterwards, Gen1a backdoor dump of all 64 blocks matches dump/card_C1C1C1C1.bin.
+- App: the stock-patch jobs (L+B/X/Y signature tests, L+R Read_RAM + stock cross-check) are gone,
+  so nfcprobe embeds no Broadcom/Nintendo bytes and the user needs no sysmodule dump to build it.
