@@ -409,6 +409,9 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - Verified on-device: config matches pm3 byte for byte; mfdump 32/32 keys + 64 blocks in 3 s,
   identical to pm3 `hf mf gview`; g4write block 1 VERIFIED (and seen by an encrypted mfread), then
   restored; `magic gen2` -> gen2, gen4; wrong password -> mute until rescan.
+- Separate Gen2 (CUID) card, UID 5A11E21B (ATQA 0004, SAK 08, all keys FF): `magic` -> none (no
+  Gen1a/Gen4 answer); mfdump 32/32 keys + 64 blocks in 3 s; `magic gen2` -> gen2 (block 0 rewrite
+  ACKed and verified); rescan + mfread block 0 unchanged (5A11E21B B2 08 0400 6263...69).
 - Not done: GTU config writes (CF pwd F0/F1, mode changes) on purpose -- easy to make a GTU hard to
   recover. Gen1a dump through magicPass is untested on-device since the change (the Gen1a card was not
   on the 3DS).
