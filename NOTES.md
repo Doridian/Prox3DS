@@ -661,3 +661,14 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   16-slot inventory (flags bit 2), and ACTALL answers only an SOF ("command failed" in both codings).
   So it is still open whether this PicoPass accepts 1-of-256 at all; if it doesn't, iClass needs a
   1-of-4 modulator path we haven't found (0x5C554 9-E time like one but don't modulate).
+- Settled with a patched pm3 (local, uncommitted in ~/Programming/RE/proxmark3: `hf iclass reader --256`
+  sends the iClass reader frames in 1-of-256; `hf 15 raw --noinv` sends `0C` as one frame): the card
+  answers the normal 1-of-4 ACTALL / IDENTIFY / SELECT / READ, but NOT ACTALL in 1-of-256. So this
+  PicoPass needs 1-of-4. (`hf 15 raw` can't talk to iClass even in 1-of-4: the card answers ~274 us
+  after the reader EOF, before the 15693 reader starts listening.)
+- `hf iclass sniff` (decodes 1-of-4, sensitive) while the 3DS sent ACTALL / IDENTIFY with 0x5C554 =
+  19, 1A, 1B, 1C, 1D, 1E, 09: trace empty. Those coder modes don't put a V frame on air.
+- Idea, untested: synthesize 1-of-4 with the B coder. NRZ at 106 kbps, 10% ASK: a 1-of-4 pulse is
+  exactly one '0' bit cell (9.44 us), slots are 2 cells. Needs a B raw mode without SOF/EOF and
+  start/stop bits, from a stalled B poll. Miller (A) can't do it: no two empty cells in a row.
+  RX is a separate open problem (iClass answers in 15693 format: 423.75 kHz subcarrier, Manchester).
