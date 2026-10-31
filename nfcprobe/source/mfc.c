@@ -468,33 +468,86 @@ static int authRetry(u8 block, const u8 key[6], bool keyB, Crypto1 *c)
 	return -1;
 }
 
+static int sectorValid(const MfDump *d, int sec)
+{
+	int b0 = mfFirstBlock(sec), nb = mfSectorBlocks(sec), have = 0;
+	for (int i = 0; i < nb; i++) have += d->valid[b0 + i];
+	return have;
+}
+
+// Auth a sector with the given key/type, record it, and read every block not read yet.
+// 1 = key authed (recorded), 0 = refused, -1 = monitor stall we couldn't recover from.
+static int readSector(MfDump *d, int sec, const u8 key[6], bool kb)
+{
+	int b0 = mfFirstBlock(sec), nb = mfSectorBlocks(sec);
+	Crypto1 c;
+	int r = authRetry(b0, key, kb, &c);
+	if (r < 0) return -1;
+	if (!r) return 0;
+	memcpy(d->keys[sec][kb], key, 6);
+	d->keyFound[sec][kb] = true;
+	for (int i = 0; i < nb; i++) {
+		if (d->valid[b0 + i]) continue;
+		r = mfReadBlock(&c, b0 + i, d->data[b0 + i]);
+		if (r < 0) { // stall: re-auth and go on with the next block
+			if (!iso14aStart() || authRetry(b0, key, kb, &c) <= 0) break;
+			r = mfReadBlock(&c, b0 + i, d->data[b0 + i]);
+		}
+		if (r > 0) d->valid[b0 + i] = true;
+	}
+	return 1;
+}
+
+static int addKey(u8 (*out)[6], int n, int max, const u8 *key);
+
 int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 {
 	memset(d, 0, sizeof(*d));
 	d->sectors = sectors;
+	// Running dictionary: the supplied keys plus every key we recover (a key reused by
+	// another sector is far cheaper to auth than to recover again).
+	static u8 dict[MF_MAX_KEYS][6];
+	int ndict = nkeys < MF_MAX_KEYS ? nkeys : MF_MAX_KEYS;
+	memcpy(dict, keys, ndict * 6);
+	bool nestedTried[40][2] = { 0 };
+	int tried[40][2] = { 0 }; // dict entries already attempted per cell (so each is tried once)
+	int pivotSec = -1; bool pivotB = false; // first confirmed key, used as the nested known key
+
+	// Sweep until a full pass turns up nothing new: recover EVERY missing A/B key, folding each
+	// one back into the dictionary so later sectors can reuse it before falling back to nested.
+	bool progress = true;
+	while (progress) {
+		progress = false;
+		for (int sec = 0; sec < sectors; sec++)
+			for (int kb = 0; kb < 2; kb++) {
+				if (d->keyFound[sec][kb]) continue;
+				for (int k = tried[sec][kb]; k < ndict && !d->keyFound[sec][kb]; k++)
+					if (readSector(d, sec, dict[k], kb) < 0) return -1;
+				tried[sec][kb] = ndict;
+				if (!d->keyFound[sec][kb]) {
+					if (pivotSec < 0 || nestedTried[sec][kb]) continue; // nested needs a known key
+					nestedTried[sec][kb] = true;
+					u8 rk[6];
+					logp("sector %2d %c: nested...\n", sec, kb ? 'B' : 'A');
+					int r = mfNestedRecover(mfFirstBlock(pivotSec), d->keys[pivotSec][pivotB],
+						pivotB, mfFirstBlock(sec), kb, rk);
+					if (r < 0) return -1;
+					if (!r) { logp("  nested: %s\n", mfWhy()); continue; }
+					logp("  recovered %02X%02X%02X%02X%02X%02X\n",
+						rk[0], rk[1], rk[2], rk[3], rk[4], rk[5]);
+					if (readSector(d, sec, rk, kb) < 0) return -1;
+				}
+				if (d->keyFound[sec][kb]) {
+					if (pivotSec < 0) { pivotSec = sec; pivotB = kb; }
+					ndict = addKey(dict, ndict, MF_MAX_KEYS, d->keys[sec][kb]);
+					progress = true;
+				}
+			}
+	}
+	// Fill trailer keys we know, tally, and log.
 	int total = 0;
 	for (int sec = 0; sec < sectors; sec++) {
-		int b0 = mfFirstBlock(sec), nb = mfSectorBlocks(sec), have = 0;
-		for (int kb = 0; kb < 2 && have < nb; kb++) {
-			for (int k = 0; k < nkeys; k++) {
-				Crypto1 c;
-				int r = authRetry(b0, keys[k], kb, &c);
-				if (r < 0) return -1;
-				if (!r) continue;
-				memcpy(d->keys[sec][kb], keys[k], 6);
-				d->keyFound[sec][kb] = true;
-				for (int i = 0; i < nb; i++) {
-					if (d->valid[b0 + i]) continue;
-					r = mfReadBlock(&c, b0 + i, d->data[b0 + i]);
-					if (r < 0) { // stall: re-auth and go on with the next block
-						if (!iso14aStart() || authRetry(b0, keys[k], kb, &c) <= 0) break;
-						r = mfReadBlock(&c, b0 + i, d->data[b0 + i]);
-					}
-					if (r > 0) d->valid[b0 + i] = true, have++;
-				}
-				break;
-			}
-		}
+		int b0 = mfFirstBlock(sec), nb = mfSectorBlocks(sec), have = sectorValid(d, sec);
 		int t = b0 + nb - 1;
 		if (d->valid[t]) { // keys read back as zeros (or not at all); fill in what we know
 			if (d->keyFound[sec][0]) memcpy(d->data[t], d->keys[sec][0], 6);

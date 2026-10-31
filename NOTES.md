@@ -318,3 +318,13 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
 - chipmon.py nested(); crapto1.py recover_keys(uid, nt, ks).
 - TODO (native): port crapto1 recover to C on the ARM11, mfc.c mfNested + mfNestedRecover, net op,
   and a "recover keys from one known key" button; then feed recovered keys into the dump.
+
+## Nested folded into the card dump -- 2026-10-30
+- mfDumpCard (mfc.c) sweeps: dictionary per sector/type, then nested-recovers EVERY still-missing
+  A/B key from the first confirmed key (pivot). Each recovered key is added to the running dictionary
+  so later sectors that reuse it auth instantly instead of paying for another nested recovery. Sweeps
+  repeat until a pass finds nothing new; each dict key is tried at most once per cell (tried[][]) and
+  each nested attempt at most once (nestedTried[][]), so it can't spin. No new net op -- the existing
+  `mfdump` drives it.
+- On-device: full 1K dumped from ONLY key FF -- sector 1 B c1c1c1000003 (nested), sectors 2-14 both
+  c1c1c1000002 (recovered once, then reused via the pivot dictionary), all 64 blocks read.
