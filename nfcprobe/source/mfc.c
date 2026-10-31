@@ -15,6 +15,7 @@
 #define NRAR_TX     0x178 // r574 = 1, length code 0x78 for the 72-bit {nr}{ar} (NOTES.md)
 
 Card card;
+volatile bool mfCancel;
 static char why[64]; // last failure reason, for the log
 
 const char *mfWhy(void)
@@ -66,6 +67,7 @@ bool iso14aStart(void)
 		i2cNfcWrite(rfDiscoverA, sizeof(rfDiscoverA));
 		u64 t0 = osGetTime();
 		while (osGetTime() - t0 < 4000) {
+			if (mfCancel) return false;
 			u32 len = nciRecv(pkt, sizeof(pkt), 10, false);
 			if (len && pkt[1] == 0x61 && pkt[2] == 0x05) {
 				if (!parseActivation(pkt, len)) {
@@ -82,6 +84,7 @@ bool iso14aStart(void)
 			}
 		}
 		if (!card.active) logp("  (start: no card activated)\n");
+		if (mfCancel) return false;
 	}
 	return false;
 }
@@ -921,14 +924,14 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	static u64 cand[1 << 18];
 	bool done[40][2] = { 0 }, expanded[40][2] = { 0 };
 	u32 uid = cardUid();
-	for (int sec = 0; sec < sectors; sec++)
+	for (int sec = 0; sec < sectors && !mfCancel; sec++)
 		for (int kb = 0; kb < 2; kb++) {
 			if ((r = mfStaticNonce(mfFirstBlock(sec), kb, bd, &st[sec][kb])) < 0) return -1;
 			done[sec][kb] = r == 1;
 		}
 #define OPEN(s, k) (done[s][k] && !d->keyFound[s][k])
 	bool progress = true;
-	while (progress) {
+	while (progress && !mfCancel) {
 		progress = false;
 		for (int sec = 0; sec < sectors; sec++)
 			for (int kb = 0; kb < 2; kb++)
@@ -985,7 +988,7 @@ static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	bool gen4 = r;
 	if (!gen4 && !mfGen1aUnlock()) return 0;
 	logp("%s magic: reading without keys\n", gen4 ? "gen4 GTU" : "gen1a");
-	for (int b = 0; b < nb; b++) {
+	for (int b = 0; b < nb && !mfCancel; b++) {
 		for (int t = 0; t < 3; t++) {
 			if (gen4) {
 				if ((r = mfGen4Read(mfGen4DefaultPwd, b, d->data[b])) < 0) return -1;
@@ -1033,9 +1036,9 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 	// Sweep until a full pass turns up nothing new: recover EVERY missing A/B key, folding each
 	// one back into the dictionary so later sectors can reuse it before falling back to nested.
 	bool progress = true;
-	while (progress) {
+	while (progress && !mfCancel) {
 		progress = false;
-		for (int sec = 0; sec < sectors; sec++)
+		for (int sec = 0; sec < sectors && !mfCancel; sec++)
 			for (int kb = 0; kb < 2; kb++) {
 				if (d->keyFound[sec][kb]) continue;
 				for (int k = tried[sec][kb]; k < ndict && !d->keyFound[sec][kb]; k++)
@@ -1061,6 +1064,7 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 				}
 			}
 	}
+	if (mfCancel) logp("cancelled\n");
 	// Fill trailer keys we know, tally, and log.
 	int total = 0;
 	for (int sec = 0; sec < sectors; sec++) {
@@ -1095,6 +1099,11 @@ static int addKey(u8 (*out)[6], int n, int max, const u8 *key)
 	return n;
 }
 
+static int hexNibble(char c)
+{
+	return (c >= '0' && c <= '9') ? c - '0' : ((c | 0x20) >= 'a' && (c | 0x20) <= 'f') ? (c | 0x20) - 'a' + 10 : -1;
+}
+
 int mfKeyList(u8 (*out)[6], int max, const u8 (*extra)[6], int nextra)
 {
 	int n = 0;
@@ -1106,7 +1115,7 @@ int mfKeyList(u8 (*out)[6], int max, const u8 (*extra)[6], int nextra)
 			u8 key[6];
 			int d = 0;
 			for (char *p = line; *p && *p != '#' && d < 12; p++) {
-				int v = (*p >= '0' && *p <= '9') ? *p - '0' : ((*p | 0x20) >= 'a' && (*p | 0x20) <= 'f') ? (*p | 0x20) - 'a' + 10 : -1;
+				int v = hexNibble(*p);
 				if (v < 0) continue;
 				key[d / 2] = (d & 1) ? (key[d / 2] | v) : v << 4;
 				d++;
@@ -1119,47 +1128,118 @@ int mfKeyList(u8 (*out)[6], int max, const u8 (*extra)[6], int nextra)
 	return n;
 }
 
+bool mfWriteDump(const MfDump *d, const char *path)
+{
+	FILE *f = fopen(path, "wb");
+	if (!f) return false;
+	static const u8 zero[16];
+	int nb = mfFirstBlock(d->sectors);
+	bool ok = true;
+	for (int b = 0; b < nb; b++) ok &= fwrite(d->valid[b] ? d->data[b] : zero, 1, 16, f) == 16; // unread = zeros
+	ok &= !fclose(f);
+	char kpath[300];
+	snprintf(kpath, sizeof(kpath), "%.*s.keys.txt", (int)(strlen(path) - 4), path);
+	if (!ok || !(f = fopen(kpath, "w"))) return false;
+	for (int s = 0; s < d->sectors; s++) {
+		fprintf(f, "%2d", s);
+		for (int k = 0; k < 2; k++) {
+			fprintf(f, " %c ", "AB"[k]);
+			for (int i = 0; i < 6; i++)
+				if (d->keyFound[s][k]) fprintf(f, "%02X", d->keys[s][k][i]);
+				else fprintf(f, "--");
+		}
+		fprintf(f, "\n");
+	}
+	bool any = false;
+	for (int b = 0; b < nb; b++)
+		if (!d->valid[b]) fprintf(f, "%s %d", any ? "" : "# unread:", b), any = true;
+	if (any) fprintf(f, "\n");
+	return !fclose(f);
+}
+
+bool mfLoadDump(MfDump *d, const char *path)
+{
+	memset(d, 0, sizeof(*d));
+	FILE *f = fopen(path, "rb");
+	if (!f) return false;
+	int n = fread(d->data, 16, MF_MAX_BLOCKS, f);
+	fclose(f);
+	while (d->sectors < 40 && mfFirstBlock(d->sectors) < n) d->sectors++;
+	if (!n || mfFirstBlock(d->sectors) != n) return false;
+	for (int b = 0; b < n; b++) d->valid[b] = true;
+	char kpath[300], line[300];
+	snprintf(kpath, sizeof(kpath), "%.*s.keys.txt", (int)(strlen(path) - 4), path);
+	if (!(f = fopen(kpath, "r"))) { // no key file (a foreign dump): the trailers hold the keys
+		for (int s = 0; s < d->sectors; s++) {
+			const u8 *t = d->data[mfFirstBlock(s) + mfSectorBlocks(s) - 1];
+			memcpy(d->keys[s][0], t, 6);
+			memcpy(d->keys[s][1], t + 10, 6);
+			d->keyFound[s][0] = d->keyFound[s][1] = true;
+		}
+		return true;
+	}
+	while (fgets(line, sizeof(line), f)) {
+		int s, pos;
+		if (!strncmp(line, "# unread:", 9)) {
+			for (char *p = line + 9; sscanf(p, "%d%n", &s, &pos) == 1; p += pos)
+				if (s >= 0 && s < n) d->valid[s] = false;
+			continue;
+		}
+		char kA[16], kB[16];
+		if (sscanf(line, "%d A %15s B %15s", &s, kA, kB) != 3 || s < 0 || s >= d->sectors) continue;
+		const char *ks[2] = { kA, kB };
+		for (int k = 0; k < 2; k++) {
+			d->keyFound[s][k] = strlen(ks[k]) == 12;
+			for (int i = 0; i < 12 && d->keyFound[s][k]; i++) {
+				int v = hexNibble(ks[k][i]);
+				if (v < 0) d->keyFound[s][k] = false;
+				else d->keys[s][k][i / 2] = (i & 1) ? (d->keys[s][k][i / 2] | v) : v << 4;
+			}
+		}
+	}
+	fclose(f);
+	return true;
+}
+
 bool mfSaveDump(const MfDump *d, char *path, u32 pathMax)
 {
 	char uid[21] = "";
 	for (int i = 0; i < card.uidLen; i++) sprintf(uid + 2 * i, "%02X", card.uid[i]);
 	mkdir(MF_DIR, 0777);
-	mkdir(MF_DIR "/dumps", 0777);
-	snprintf(path, pathMax, MF_DIR "/dumps/%s.bin", uid);
-	FILE *f = fopen(path, "wb");
-	if (!f) return false;
-	static const u8 zero[16];
-	int nb = mfFirstBlock(d->sectors);
-	for (int b = 0; b < nb; b++) fwrite(d->valid[b] ? d->data[b] : zero, 1, 16, f); // unread = zeros
-	fclose(f);
-	char kpath[64];
-	snprintf(kpath, sizeof(kpath), MF_DIR "/dumps/%s.keys.txt", uid);
-	if ((f = fopen(kpath, "w"))) {
-		for (int s = 0; s < d->sectors; s++) {
-			fprintf(f, "%2d", s);
-			for (int k = 0; k < 2; k++) {
-				fprintf(f, " %c ", "AB"[k]);
-				for (int i = 0; i < 6; i++)
-					if (d->keyFound[s][k]) fprintf(f, "%02X", d->keys[s][k][i]);
-					else fprintf(f, "--");
-			}
-			fprintf(f, "\n");
-		}
-		fclose(f);
-	}
-	return true;
+	mkdir(MF_DUMPS, 0777);
+	// Never overwrite an older dump (it may hold edits): UID.bin, UID-2.bin, ...
+	struct stat st;
+	snprintf(path, pathMax, MF_DUMPS "/%s.bin", uid);
+	for (int i = 2; !stat(path, &st) && i < 1000; i++) snprintf(path, pathMax, MF_DUMPS "/%s-%d.bin", uid, i);
+	return mfWriteDump(d, path);
 }
 
 // Access bits are stored twice (inverted); a broken copy locks a real sector for good.
-static bool aclValid(const u8 *t)
+bool mfAclValid(const u8 *t)
 {
 	return (t[7] >> 4) == (~t[6] & 0xF) && (t[8] & 0xF) == (~t[6] >> 4 & 0xF) && (t[8] >> 4) == (~t[7] & 0xF);
 }
 
-// C1 C2 C3 of the trailer itself: 001 and 011 leave keys and access bits writable (key A / key B).
-static bool trailerRewritable(const u8 *t)
+int mfAclGet(const u8 *t, int g)
 {
-	u8 c = (t[7] >> 7 & 1) << 2 | (t[8] >> 3 & 1) << 1 | (t[8] >> 7 & 1);
+	return (t[7] >> (4 + g) & 1) << 2 | (t[8] >> g & 1) << 1 | (t[8] >> (4 + g) & 1);
+}
+
+void mfAclSet(u8 *t, int g, int c)
+{
+	int c1 = c >> 2 & 1, c2 = c >> 1 & 1, c3 = c & 1;
+	t[7] = (t[7] & ~(0x10 << g)) | c1 << (4 + g);
+	t[8] = (t[8] & ~(0x01 << g)) | c2 << g;
+	t[8] = (t[8] & ~(0x10 << g)) | c3 << (4 + g);
+	t[6] = (t[6] & ~(0x01 << g)) | !c1 << g;
+	t[6] = (t[6] & ~(0x10 << g)) | !c2 << (4 + g);
+	t[7] = (t[7] & ~(0x01 << g)) | !c3 << g;
+}
+
+// The trailer's own C1 C2 C3: 001 and 011 leave keys and access bits writable (key A / key B).
+bool mfTrailerRewritable(const u8 *t)
+{
+	int c = mfAclGet(t, 3);
 	return c == 1 || c == 3;
 }
 
@@ -1207,7 +1287,7 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 	if (sectors > mfSectorsFromSak(card.sak)) FAIL(0, "dump has %d sectors, the card %d", sectors, mfSectorsFromSak(card.sak));
 	for (int sec = 0; sec < sectors; sec++) {
 		int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
-		if (valid[t] && !aclValid(data[t])) FAIL(0, "sector %d: broken access bits", sec);
+		if (valid[t] && !mfAclValid(data[t])) FAIL(0, "sector %d: broken access bits", sec);
 	}
 
 	MfMagic m;
@@ -1224,7 +1304,7 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 		if (!r) FAIL(0, "not a magic card");
 		for (int sec = 0; sec < sectors && !force; sec++) {
 			int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
-			if (valid[t] && !trailerRewritable(data[t]))
+			if (valid[t] && !mfTrailerRewritable(data[t]))
 				FAIL(0, "sector %d: trailer freezes it on Gen2 (force)", sec);
 		}
 		// Normal writes need the target's current keys: the dump's own trailer keys first.
@@ -1244,6 +1324,7 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 	// Sector 0 last: block 0 changes the UID (later SELECTs use the new one), its trailer after it.
 	for (int i = 1; i <= sectors; i++) {
 		int sec = i % sectors, b0 = mfFirstBlock(sec), nb = mfSectorBlocks(sec), t = b0 + nb - 1, r;
+		if (mfCancel) FAIL(0, "cancelled before sector %d", sec);
 		if (type == CLONE_GEN2 && !tgt.keyFound[sec][0] && !tgt.keyFound[sec][1]) FAIL(0, "sector %d: no key", sec);
 		for (int b = b0 + (sec == 0); b < t; b++)
 			if (valid[b] && (r = cloneBlock(type, &tgt, sec, b, data[b])) != 1) return r;

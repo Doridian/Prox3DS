@@ -1,32 +1,37 @@
-// nfcprobe: probe of the New3DS NFC controller (BCM20791B5).
+// nfcprobe: Mifare Classic tool on the New3DS NFC controller (BCM20791B5).
 // Kills the nfc sysmodule, takes over its GPIO/I2C, and either just queries the
 // controller or loads our own patch (chip/memrw.c) and runs card operations through it.
-// Reboot afterwards to get the nfc sysmodule back.
+// The nfc module is relaunched on exit. The UI is in app.c / editor.c.
 
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <3ds.h>
 
+#include "app.h"
 #include "nfchw.h"
 #include "mfc.h"
 #include "probe.h"
+#include "ui.h"
 
 #define LOG_PATH     "sdmc:/nfcprobe.log"
 #define MS(x)        ((s64)(x) * 1000000LL)
 
 static FILE *logFile;
 
+// Log: the top screen's log view, the bottom screen console and the log file.
 void logp(const char *fmt, ...)
 {
+	char s[512];
 	va_list va;
 	va_start(va, fmt);
-	vprintf(fmt, va);
+	vsnprintf(s, sizeof(s), fmt, va);
 	va_end(va);
+	uiLogAppend(s);
+	fputs(s, stdout);
 	if (logFile) {
-		va_start(va, fmt);
-		vfprintf(logFile, fmt, va);
-		va_end(va);
+		fputs(s, logFile);
 		fflush(logFile);
 	}
 }
@@ -381,74 +386,21 @@ bool spdDownload(const u8 *ncd, u32 size, bool verbose)
 	return true;
 }
 
-enum { JOB_PROBE, JOB_SCAN, JOB_MF_DUMP };
-static const char *jobNames[] = { "probe", "scan", "Mifare Classic dump" };
-
 LightLock hwLock; // held by a job or a network request while it touches the chip
-static volatile bool jobRunning;
 
-static bool scanCard(void)
+// Chip probe (reset / init / patch version) from a fresh takeover; the chip is given back after it.
+void chipProbe(void)
 {
-	logp("hold a card to the touch screen...\n");
-	if (!iso14aStart()) {
-		logp("no card\n");
-		return false;
+	if (irqEvent) chipRelease(); // a card job or network client still had the chip
+	nfchwExit();
+	stepTerminate();
+	if (stepOpen(5)) {
+		chipTakeover();
+		chipPowerCycle();
+		chipInfo();
+		chipRelease();
 	}
-	logp("ATQA %02X%02X SAK %02X UID ", card.atqa[1], card.atqa[0], card.sak);
-	for (int i = 0; i < card.uidLen; i++) logp("%02X", card.uid[i]);
-	logp("\n");
-	return true;
-}
-
-static void runMfDump(void)
-{
-	static MfDump d;
-	static u8 keys[MF_MAX_KEYS][6];
-	if (!scanCard()) return;
-	int sectors = mfSectorsFromSak(card.sak);
-	int nkeys = mfKeyList(keys, MF_MAX_KEYS, NULL, 0);
-	logp("%d sectors, %d keys (defaults + %s)\n", sectors, nkeys, MF_KEYS);
-	int got = mfDumpCard(&d, sectors, (const u8 (*)[6])keys, nkeys);
-	iso14aParity(true);
-	if (got < 0) {
-		logp("card lost\n");
-		return;
-	}
-	char path[64];
-	logp("%d/%d blocks read\n", got, mfFirstBlock(sectors));
-	if (got && mfSaveDump(&d, path, sizeof(path))) logp("saved %s\n", path);
-}
-
-// Card jobs keep the chip (and the loaded monitor) so the network side can carry on with it;
-// the probe starts from a fresh takeover and gives it back.
-static void jobThread(void *arg)
-{
-	int job = (int)arg;
-	logFile = fopen(LOG_PATH, "a");
-	logp("--- nfcprobe: %s ---\n", jobNames[job]);
-	LightLock_Lock(&hwLock);
-	if (job == JOB_SCAN || job == JOB_MF_DUMP) {
-		if (chipEnsure()) {
-			if (job == JOB_SCAN) scanCard();
-			else runMfDump();
-		}
-	} else {
-		if (irqEvent) chipRelease(); // a network client still had the chip
-		nfchwExit();
-		stepTerminate();
-		if (stepOpen(5)) {
-			chipTakeover();
-			chipPowerCycle();
-			chipInfo();
-			chipRelease();
-		}
-		nfchwExit();
-	}
-	LightLock_Unlock(&hwLock);
-	logp("--- done ---\n");
-	if (logFile) fclose(logFile);
-	logFile = NULL;
-	jobRunning = false;
+	nfchwExit();
 }
 
 char appPath[256] = "sdmc:/3ds/nfcprobe.3dsx"; // argv[0] when the loader gives one
@@ -486,15 +438,14 @@ int main(int argc, char *argv[])
 	if (argc > 0 && argv[0] && !strncmp(argv[0], "sdmc:/", 6))
 		snprintf(appPath, sizeof(appPath), "%s", argv[0]);
 	gfxInitDefault();
-	consoleInit(GFX_TOP, NULL);
-
-	printf("nfcprobe - BCM20791B5 (built " __DATE__ " " __TIME__ ")\n");
-	printf("HOME/sleep are off while running; exit with START.\n\n");
-	printf("A: scan card\n");
-	printf("X: dump Mifare Classic (keys: defaults + %s)\n", MF_KEYS);
-	printf("L+A: chip probe   START: exit\n");
-	printf("app: %s (net update restarts it)\n", appPath);
-	printf("log: %s\n\n", LOG_PATH);
+	consoleInit(GFX_BOTTOM, NULL);
+	uiInit();
+	logFile = fopen(LOG_PATH, "a");
+	logp("--- nfcprobe (built " __DATE__ " " __TIME__ ") ---\n");
+	time_t now = time(NULL);
+	struct tm *tm = gmtime(&now);
+	logp("app: %s, console clock %04d-%02d-%02d %02d:%02d\n", appPath, tm->tm_year + 1900, tm->tm_mon + 1,
+		tm->tm_mday, tm->tm_hour, tm->tm_min);
 
 	LightLock_Init(&hwLock);
 	netStart();
@@ -502,35 +453,10 @@ int main(int argc, char *argv[])
 	aptSetHomeAllowed(false);
 	aptSetSleepAllowed(false);
 
-	Thread worker = NULL;
-	while (aptMainLoop()) {
-		gspWaitForVBlank();
-		gfxSwapBuffers();
-		hidScanInput();
-		if (aptCheckHomePressRejected()) printf("HOME is off while NFC is ours: START to exit\n");
-		u32 kDown = hidKeysDown();
-		if ((kDown & KEY_START) || restartRequested) break;
-		if (jobRunning) continue;
-		int job = -1;
-		if (hidKeysHeld() & KEY_L)
-			job = (kDown & KEY_A) ? JOB_PROBE : -1;
-		else
-			job = (kDown & KEY_A) ? JOB_SCAN : (kDown & KEY_X) ? JOB_MF_DUMP : -1;
-		if (job < 0) continue;
-		if (worker) threadJoin(worker, U64_MAX), threadFree(worker);
-		jobRunning = true;
-		worker = threadCreate(jobThread, (void *)job, 0x8000, 0x30, -2, false);
-	}
+	appRun();
 
-	printf("exiting: giving NFC back...\n");
-	gfxSwapBuffers();
-	gspWaitForVBlank();
 	netStop();
-	// A worker stuck in IPC can't be joined; only clean up a finished one.
-	for (int i = 0; i < 100 && jobRunning; i++) svcSleepThread(MS(100));
-	if (worker && !jobRunning) threadJoin(worker, U64_MAX), threadFree(worker);
-	logFile = fopen(LOG_PATH, "a");
-	logp("--- exit: net stopped, job %s ---\n", jobRunning ? "STILL RUNNING" : "done");
+	appShutdown();
 	LightLock_Lock(&hwLock);
 	chipGiveBack();
 	logp("--- exit: NFC given back ---\n");
@@ -539,6 +465,7 @@ int main(int argc, char *argv[])
 	logFile = NULL;
 	aptSetHomeAllowed(true);
 	aptSetSleepAllowed(true);
+	uiExit();
 	gfxExit();
 	if (restartRequested) relaunchSelf();
 	return 0;

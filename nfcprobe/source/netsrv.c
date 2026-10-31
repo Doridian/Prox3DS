@@ -62,9 +62,16 @@ enum {
 	                       // mfc.h), read back; on failure payload = reason. WRITES THE CARD CONFIG
 	OP_MF_CLONE    = 0x1D, // force u8, per block: valid u8, data[16] -> empty ok; on failure payload =
 	                       // reason (mfCloneToMagic). WRITES THE CARD
+	// UI debugging, served without hwLock (they work while a job runs):
+	OP_SHOT        = 0x20, // offset u32 -> up to OUT_MAX bytes of the top framebuffer (240x400 BGR8,
+	                       // column-major from the bottom left), empty past the end
+	OP_KEYS        = 0x21, // keys u32 (KEY_*) -> pressed for one frame of the UI loop
 };
 
 #define OUT_MAX 0x2000
+
+char netAddr[32];
+volatile u32 netKeys;
 
 static u32 *socBuf;
 static int listenFd = -1;
@@ -306,6 +313,26 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	return -4;
 }
 
+static Result handleDebug(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
+{
+	if (inLen < 4) return -3;
+	u32 v;
+	memcpy(&v, in, 4);
+	if (op == OP_KEYS) {
+		netKeys |= v;
+		return 0;
+	}
+	u16 w, h;
+	u8 *fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &w, &h);
+	u32 size = w * h * 3;
+	if (v < size) {
+		*outLen = size - v < OUT_MAX ? size - v : OUT_MAX;
+		GSPGPU_InvalidateDataCache(fb + v, *outLen);
+		memcpy(out, fb + v, *outLen);
+	}
+	return 0;
+}
+
 static Result handleUpdate(u8 op, const u8 *in, u32 inLen)
 {
 	char tmp[sizeof(appPath) + 4];
@@ -323,7 +350,7 @@ static Result handleUpdate(u8 op, const u8 *in, u32 inLen)
 	if (stat(tmp, &st) || st.st_size != n) return -6;
 	remove(appPath);
 	if (rename(tmp, appPath)) return -5;
-	printf("net: app updated (%lu bytes), restarting\n", n);
+	logp("net: app updated (%lu bytes), restarting\n", n);
 	restartRequested = true;
 	return 0;
 }
@@ -393,10 +420,15 @@ static void serveClient(int fd)
 		if (!recvAll(fd, hdr, 3)) return;
 		u32 len = hdr[1] | (hdr[2] << 8);
 		if (len > sizeof(in) || !recvAll(fd, in, len)) return;
-		u16 outLen;
-		LightLock_Lock(&hwLock);
-		Result res = handle(hdr[0], in, len, out, &outLen);
-		LightLock_Unlock(&hwLock);
+		u16 outLen = 0;
+		Result res;
+		if (hdr[0] == OP_SHOT || hdr[0] == OP_KEYS) {
+			res = handleDebug(hdr[0], in, len, out, &outLen);
+		} else {
+			LightLock_Lock(&hwLock);
+			res = handle(hdr[0], in, len, out, &outLen);
+			LightLock_Unlock(&hwLock);
+		}
 		if (!sendReply(fd, hdr[0], res, out, outLen)) return;
 	}
 }
@@ -413,10 +445,10 @@ static void netMain(void *arg)
 			continue;
 		}
 		fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK);
-		printf("net: client %s\n", inet_ntoa(client.sin_addr));
+		logp("net: client %s\n", inet_ntoa(client.sin_addr));
 		serveClient(fd);
 		close(fd);
-		printf("net: client gone\n");
+		logp("net: client gone\n");
 	}
 }
 
@@ -424,7 +456,7 @@ void netStart(void)
 {
 	socBuf = memalign(0x1000, SOC_BUFFERSIZE);
 	if (!socBuf || R_FAILED(socInit(socBuf, SOC_BUFFERSIZE))) {
-		printf("net: socInit failed (no wifi?)\n");
+		logp("net: socInit failed (no wifi?)\n");
 		free(socBuf);
 		socBuf = NULL;
 		return;
@@ -432,12 +464,13 @@ void netStart(void)
 	listenFd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
 	struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(NET_PORT), .sin_addr.s_addr = INADDR_ANY };
 	if (listenFd < 0 || bind(listenFd, (struct sockaddr *)&addr, sizeof(addr)) || listen(listenFd, 1)) {
-		printf("net: can't listen on %d\n", NET_PORT);
+		logp("net: can't listen on %d\n", NET_PORT);
 		return;
 	}
 	fcntl(listenFd, F_SETFL, fcntl(listenFd, F_GETFL, 0) | O_NONBLOCK);
 	struct in_addr ip = { .s_addr = gethostid() };
-	printf("net: listening on %s:%d\n\n", inet_ntoa(ip), NET_PORT);
+	snprintf(netAddr, sizeof(netAddr), "%s:%d", inet_ntoa(ip), NET_PORT);
+	logp("net: listening on %s\n", netAddr);
 	netThread = threadCreate(netMain, NULL, 0x8000, 0x30, -2, false);
 }
 

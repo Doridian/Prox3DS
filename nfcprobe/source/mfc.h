@@ -17,6 +17,9 @@ typedef struct {
 } Card;
 
 extern Card card;
+// Set from the UI to stop a long operation: card polling, the dump (keeps what it has), the clone
+// (between sectors). Cleared by whoever starts the next one.
+extern volatile bool mfCancel;
 
 bool iso14aStart(void);  // load the monitor, poll NFC-A until a card is activated, capture on
 bool iso14aParity(bool on); // off: we pack parity ourselves (0x5C560 = 8)
@@ -120,7 +123,20 @@ extern const int mfNumDefaultKeys;
 int mfSectorsFromSak(u8 sak);
 // extra keys, then MF_KEYS, then the defaults, without duplicates
 int mfKeyList(u8 (*out)[6], int max, const u8 (*extra)[6], int nextra);
-bool mfSaveDump(const MfDump *d, char *path, u32 pathMax); // MF_DIR/dumps/<UID>.bin + .keys.txt
+#define MF_DUMPS    MF_DIR "/dumps"
+// Dump files: <name>.bin (raw blocks, unread = zeros) and <name>.keys.txt (per sector "NN A <key> B <key>",
+// "--" = not found, then "# unread: <block>..."). mfSaveDump picks MF_DUMPS/<UID>.bin, or <UID>-2.bin and
+// so on: it never overwrites. mfLoadDump takes foreign dumps (no key file) with the trailer keys.
+bool mfSaveDump(const MfDump *d, char *path, u32 pathMax);
+bool mfWriteDump(const MfDump *d, const char *path);
+bool mfLoadDump(MfDump *d, const char *path);
+
+// Trailer access bits. Group 0-2 = data blocks (small sectors) or 5-block groups (4K's big sectors),
+// 3 = the trailer; the value is C1 C2 C3 as bits 2..0. mfAclSet keeps the inverted copy in step.
+bool mfAclValid(const u8 *trailer);
+int mfAclGet(const u8 *trailer, int group);
+void mfAclSet(u8 *trailer, int group, int c);
+bool mfTrailerRewritable(const u8 *trailer); // keys and access bits still writable afterwards
 
 // Writes a dump onto a magic card: Gen4 GTU (default password) and Gen1a/USCUID through their
 // backdoors, Gen2 with normal writes and the card's current keys (found like mfDumpCard). Refuses

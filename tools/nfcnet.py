@@ -23,6 +23,10 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                    decode; with HEX32 write it (guarded; WRITES CONFIG)
        nfcnet.py HOST g4config [HEX60] [PWD]       Gen4 GTU config: read and decode; with HEX60 write it
                                                    (only UID length/shadow/ATS/ATQA/SAK may change; WRITES CONFIG)
+  UI debugging:
+       nfcnet.py HOST shot [OUT.png]               grab the top screen (default shot.png; needs Pillow)
+       nfcnet.py HOST keys KEY [KEY...]            press buttons in the UI, one frame each, ~0.1 s apart
+                                                   (a b x y l r up down left right start select)
 """
 import os
 import socket
@@ -37,6 +41,9 @@ UPDATE_CHUNK = 0x7000
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE) = range(0x10, 0x1E)
 GEN4_PWD = bytes(4)
+OP_SHOT, OP_KEYS = 0x20, 0x21
+KEYS = {"a": 1 << 0, "b": 1 << 1, "select": 1 << 2, "start": 1 << 3, "right": 1 << 4, "left": 1 << 5,
+        "up": 1 << 6, "down": 1 << 7, "r": 1 << 8, "l": 1 << 9, "x": 1 << 10, "y": 1 << 11}
 NO_CARD = 1  # card op result: no card / auth refused
 
 CORE_RESET = bytes.fromhex("1020000101")
@@ -188,6 +195,21 @@ class Nfc:
         p = bytes([force]) + b"".join(bytes([1]) + b if b else bytes(17) for b in blocks)
         return self.card_call(OP_MF_CLONE, p, None) is not None
 
+    def shot(self):
+        """Top screen as a PIL image (the framebuffer is 240x400 BGR8, column-major from the bottom)."""
+        from PIL import Image
+        raw = b""
+        while True:
+            chunk = self.call(OP_SHOT, struct.pack("<I", len(raw)))
+            if not chunk:
+                break
+            raw += chunk
+        img = Image.frombytes("RGB", (240, len(raw) // 720), raw, "raw", "BGR")
+        return img.transpose(Image.Transpose.ROTATE_90)
+
+    def keys(self, mask):
+        self.call(OP_KEYS, struct.pack("<I", mask))
+
     def takeover(self):
         self.call(OP_TAKEOVER)
 
@@ -300,6 +322,15 @@ def main():
         path = args[0] if args else os.path.join(os.path.dirname(__file__), "../nfcprobe/nfcprobe.3dsx")
         nfc.update(open(path, "rb").read())
         print("updated, app restarting")
+    elif what == "shot":
+        out = args[0] if args else "shot.png"
+        nfc.shot().save(out)
+        print("saved", out)
+    elif what == "keys":
+        import time
+        for k in args:
+            nfc.keys(KEYS[k.lower()])
+            time.sleep(0.1)
     elif what == "scan":
         r = nfc.scan()
         print("no card" if r is None else f"ATQA {r[0][::-1].hex()} SAK {r[1]:02X} UID {r[2].hex()}")
