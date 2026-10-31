@@ -22,7 +22,7 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST uscconfig [HEX32]            USCUID (Gen4 GDM) config via the Gen1a wakeup: read and
                                                    decode; with HEX32 write it (guarded; WRITES CONFIG)
        nfcnet.py HOST g4config [HEX60] [PWD]       Gen4 GTU config: read and decode; with HEX60 write it
-                                                   (only shadow/ATS/ATQA/SAK may change; WRITES CONFIG)
+                                                   (only UID length/shadow/ATS/ATQA/SAK may change; WRITES CONFIG)
 """
 import os
 import socket

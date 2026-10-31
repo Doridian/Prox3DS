@@ -511,3 +511,20 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   key is kept for the card (per UID) and used first for its next keys.
 - Gen2, sector 2 keys 4B3A29180716 / 7C6D5E4F3021: A 48.8 s (160 refused, calibrated), B 28.1 s and
   A again 26.1 s (remembered distance), all correct. Card restored == backup.
+
+## 10-byte UIDs (cascade level 3) + card sizes -- 2026-10-31
+- iso14aSelect generalized: levels = uidLen / 3; every level but the last is `88` + 3 UID bytes, the
+  last gets the last 4. SEL code 93/95/97 (`0x93 + 2 * level`), levels 2-3 in data mode. The chip's
+  ROM activation handles triple cascade by itself (RF_INTF_ACTIVATED_NTF gives the 10-byte UID).
+- GTU in 10-byte mode: block 0 = 04A1B2C3D4E5F6071829 0804 0000.., config byte 1 = 02, ATQA 8400
+  (bits 7-6 = 10: triple). Scan ATQA 0084 UID 04A1B2C3D4E5F6071829, mfread + 64/64 dump OK. The
+  config guard now allows UID length 00/01/02.
+- Card sizes from the SAK: 09 Mini (5 sectors), 08 1K, 19 2K (32 sectors, NEW: was read as 1K), 18
+  4K (40). The GTU holds 4K whatever it announces; its size follows the SAK/ATQA config bytes.
+- Bug: card.sak was only set by a full activation, so after a GTU config write under an active card
+  the dump/clone used the old size. iso14aSelect now stores the SAK; OP_MF_DUMP (sectors 0 = from
+  SAK) and mfCloneToMagic select first.
+- Verified on the GTU (ATQA/SAK set through g4config, no rescan in between): Mini 20, 2K 128, 4K 256,
+  1K 64 blocks dumped. 4K dump onto the 1K-configured card refused ("dump has 40 sectors, the card
+  16"); a 4K test clone (text in blocks 200 and 254, i.e. the 16-block sectors) in 10.5 s, key dump ==
+  file; original 4K contents cloned back == original, config restored == ginfo.txt.

@@ -136,31 +136,32 @@ static u32 cardUid(void)
 int iso14aSelect(void)
 {
 	MonFrame f[4];
-	u8 hlta[4] = { 0x50, 0x00 }, wupa = 0x52, cl[2][4];
-	if (card.uidLen != 4 && card.uidLen != 7) return -1;
+	u8 hlta[4] = { 0x50, 0x00 }, wupa = 0x52, cl[3][4];
+	if (card.uidLen != 4 && card.uidLen != 7 && card.uidLen != 10) return -1;
 	crcA(hlta, 2, hlta + 2);
 	if (iso14aTx(hlta, 4, 0, f, 4) < 0) return -2;
 	int n = iso14aTx(&wupa, 1, 0x07, f, 4);
 	if (n < 0) return -2;
 	if (!n || f[n - 1].len != 2) return -1;
 	memcpy(card.atqa, f[n - 1].data, 2);
-	// 7-byte UID: cascade tag 88 + 3 bytes at level 1, the other 4 at level 2
-	int levels = card.uidLen == 7 ? 2 : 1, sak = -1;
-	if (levels == 2) {
-		cl[0][0] = 0x88;
-		memcpy(cl[0] + 1, card.uid, 3);
+	// 7/10-byte UID: cascade tag 88 + 3 bytes at each level but the last, which gets the last 4
+	int levels = card.uidLen / 3, sak = -1;
+	for (int l = 0; l < levels - 1; l++) {
+		cl[l][0] = 0x88;
+		memcpy(cl[l] + 1, card.uid + 3 * l, 3);
 	}
 	memcpy(cl[levels - 1], card.uid + card.uidLen - 4, 4);
 	for (int l = 0; l < levels; l++) {
-		u8 sel[7] = { l ? 0x95 : 0x93, 0x70 };
+		u8 sel[7] = { 0x93 + 2 * l, 0x70 };
 		memcpy(sel + 2, cl[l], 4);
 		sel[6] = cl[l][0] ^ cl[l][1] ^ cl[l][2] ^ cl[l][3];
-		// The bit-mode framer CRCs 93 70 by itself; level 2 goes in data mode, which CRCs any frame.
+		// The bit-mode framer CRCs 93 70 by itself; levels 2 and 3 go in data mode, which CRCs any frame.
 		n = l ? dataTx(sel, 7, f, 4) : iso14aTx(sel, 7, 0, f, 4);
 		if (n < 0) return -2;
 		if (!n || !f[n - 1].len) return -1;
 		sak = f[n - 1].data[0];
 	}
+	card.sak = sak; // a GTU config write changes it under an active card
 	return sak;
 }
 
@@ -315,7 +316,7 @@ int mfGen4Config(const u8 pwd[4], u8 *out, u32 max)
 	return gen4Cmd(pwd, &cmd, 1, out, max);
 }
 
-// Config bytes a write may change: 1 UID length (4 or 7 bytes: what our SELECT does), 6 shadow mode,
+// Config bytes a write may change: 1 UID length (4, 7 or 10 bytes: what our SELECT does), 6 shadow mode,
 // 7 ATS length, 8-23 ATS, 24-25 ATQA (swapped), 26 SAK. The rest (protocol, password, UL mode, max
 // sectors) must stay, so a write can't lock us out: a lost password is a lost card.
 static bool gen4CfgChangeable(int i)
@@ -331,7 +332,7 @@ int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG])
 	if (n != MF_GEN4_CFG) FAIL(0, "config is %d bytes, not %d", n, MF_GEN4_CFG);
 	for (int i = 0; i < MF_GEN4_CFG; i++)
 		if (cfg[i] != cur[i] && !gen4CfgChangeable(i)) FAIL(0, "config byte %d may not change", i);
-	if (cfg[1] > 1) FAIL(0, "UID length %02X (only 4 or 7 bytes)", cfg[1]);
+	if (cfg[1] > 2) FAIL(0, "UID length %02X (only 4, 7 or 10 bytes)", cfg[1]);
 	if (cfg[6] > 4) FAIL(0, "shadow mode %02X", cfg[6]);
 	if (cfg[7] > 16) FAIL(0, "ATS length %d", cfg[7]);
 	// F0 only: F1 would fuse the config for good.
@@ -1081,6 +1082,7 @@ int mfSectorsFromSak(u8 sak)
 	switch (sak & 0x19) {
 	case 0x09: return 5;  // Mini
 	case 0x18: return 40; // 4K
+	case 0x19: return 32; // 2K
 	default: return 16;   // 1K
 	}
 }
@@ -1201,6 +1203,7 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 	int sectors = 0;
 	while (sectors < 40 && mfFirstBlock(sectors) < nblocks) sectors++;
 	if (mfFirstBlock(sectors) != nblocks) FAIL(0, "%d blocks: not whole sectors", nblocks);
+	if (iso14aSelect() == -2) return -1; // current SAK
 	if (sectors > mfSectorsFromSak(card.sak)) FAIL(0, "dump has %d sectors, the card %d", sectors, mfSectorsFromSak(card.sak));
 	for (int sec = 0; sec < sectors; sec++) {
 		int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;

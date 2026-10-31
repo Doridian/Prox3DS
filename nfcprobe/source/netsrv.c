@@ -162,6 +162,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		static u8 keys[MF_MAX_KEYS][6];
 		if (inLen < 1) return -3;
 		if (!card.active && !iso14aStart()) return 1;
+		if (!in[0] && iso14aSelect() < 0 && !iso14aStart()) return 1; // current SAK
 		int sectors = in[0] ? in[0] : mfSectorsFromSak(card.sak);
 		if (sectors > 40) return -3;
 		int nkeys = mfKeyList(keys, MF_MAX_KEYS, (const u8 (*)[6])(in + 1), (inLen - 1) / 6);

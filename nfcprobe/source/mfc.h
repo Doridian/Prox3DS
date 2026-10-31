@@ -6,7 +6,7 @@
 
 // Raw ISO14443A and Mifare Classic through the debug monitor; the C version of tools/rawa.py
 // and tools/mfc.py. The ROM does the first activation, then the framer is ours (capture on).
-// 4- and 7-byte UIDs (cascade levels 1 and 2).
+// 4-, 7- and 10-byte UIDs (cascade levels 1 to 3).
 
 typedef struct {
 	bool active;
@@ -38,8 +38,8 @@ extern const u8 mfGen4DefaultPwd[4];
 int mfGen4Read(const u8 pwd[4], u8 block, u8 out[16]);
 int mfGen4Write(const u8 pwd[4], u8 block, const u8 data[16]); // WRITES THE CARD
 int mfGen4Config(const u8 pwd[4], u8 *out, u32 max);
-// Writes the 30-byte config (F0, never the fusing F1) and reads it back. Only the UID length (4 or 7
-// bytes), shadow mode, ATS and ATQA/SAK may differ from the current config; anything else is
+// Writes the 30-byte config (F0, never the fusing F1) and reads it back. Only the UID length (4, 7 or
+// 10 bytes), shadow mode, ATS and ATQA/SAK may differ from the current config; anything else is
 // refused unsent.
 // WRITES THE CARD CONFIG.
 #define MF_GEN4_CFG 30
