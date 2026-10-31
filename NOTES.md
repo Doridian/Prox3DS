@@ -652,6 +652,12 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   whether the card answers 1-of-256 at all. ROM 0x1206 (data TX) skips writing 0x5C56C = 2 after TX
   only in mode 0x89, so V RX is armed differently from A/B. ROM V module (NCI side): 0x1B000-0x1B400,
   state 0x39EAC, RAM hooks 0x38770.
-- Next (needs someone at the pm3): `hf iclass sniff` (button to stop) while the 3DS sends ACTALL /
-  IDENTIFY in 1-of-256: tells whether the card answers, and pm3 decodes our frames. A known V target
-  (`hf 15 sim`, button to stop) would let us find the V RX settings.
+- pm3 `hf iclass sniff` (stopped with the button) while the 3DS sent ACTALL / IDENTIFY in 1-of-256:
+  pm3 decodes every byte as value + 1 (`0A` -> `0B`, `0C` -> `0D`; the ROM's INVENTORY `24 01` showed
+  as `25 02` in `hf 15 sniff` too): the BCM coder puts the pulse one slot late against the pm3 decoder.
+  Sending value - 1 (`09` / `0B`) decodes as clean ACTALL / IDENTIFY frames. Still no Tag frame in the
+  trace. Back-to-back frames are sometimes merged by the decoder (`0A 0A 0A ...`).
+- pm3 as a 1-of-256 reader can't settle it either: `hf 15 raw -2` exists, but it takes `0C` for a
+  16-slot inventory (flags bit 2), and ACTALL answers only an SOF ("command failed" in both codings).
+  So it is still open whether this PicoPass accepts 1-of-256 at all; if it doesn't, iClass needs a
+  1-of-4 modulator path we haven't found (0x5C554 9-E time like one but don't modulate).
