@@ -129,6 +129,17 @@ static int dataTx(const u8 *data, u32 len, MonFrame *ans, int max)
 	return waitFrames(ans, max);
 }
 
+int iso14aDataTx(const u8 *data, u32 len, MonFrame *ans, int max, int polls)
+{
+	if (monFrames(ans, max) < 0 || !monTxraw(data, len, 0, 0, 0, 0x88)) return -1;
+	return waitFramesN(ans, max, polls);
+}
+
+void iso14aCrc(const u8 *data, u32 len, u8 out[2])
+{
+	crcA(data, len, out);
+}
+
 // The UID Crypto1 uses: the last cascade level's 4 bytes.
 static u32 cardUid(void)
 {

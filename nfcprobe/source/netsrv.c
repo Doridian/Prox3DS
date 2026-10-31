@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "mfc.h"
+#include "mfu.h"
 #include "nfchw.h"
 #include "probe.h"
 
@@ -39,7 +40,8 @@ enum {
 	// 1 = no card / auth refused, -1 = chip monitor error.
 	OP_14A_START  = 0x10, // load the monitor, activate a card -> ATQA[2] SAK uidLen uid
 	OP_14A_PARITY = 0x11, // u8 on
-	OP_14A_TX     = 0x12, // code u8 (0 = whole bytes), frame -> per answer: len u8, raw bytes
+	OP_14A_TX     = 0x12, // code u8 (0 = whole bytes, FF = data mode: HW parity + CRC), frame
+	                      // -> per answer: len u8, raw bytes
 	OP_MF_READ    = 0x13, // block u8, keyB u8, key[6], count u8 -> per block: ok u8, data[16]
 	OP_MF_DUMP    = 0x14, // sectors u8 (0 = from SAK), keys[6]... (+ keys.txt + defaults), saved to SD
 	                      // -> sectors u8, per sector: found u8 (1 = A, 2 = B) keyA[6] keyB[6],
@@ -62,6 +64,10 @@ enum {
 	                       // mfc.h), read back; on failure payload = reason. WRITES THE CARD CONFIG
 	OP_MF_CLONE    = 0x1D, // force u8, per block: valid u8, data[16] -> empty ok; on failure payload =
 	                       // reason (mfCloneToMagic). WRITES THE CARD
+	OP_MFU_DUMP    = 0x1E, // [pwd[4]] -> Ultralight / NTAG dump (mfu.c, also saved to SD): pm3 header[56],
+	                       // pwdOk u8, per page: valid u8, data[4], then type name len u8, name
+	OP_MFU_WRITE   = 0x1F, // page u8, data[4] -> empty ok (read back); on failure payload = reason.
+	                       // User memory pages only. WRITES THE CARD
 	// UI debugging, served without hwLock (they work while a job runs):
 	OP_SHOT        = 0x20, // offset u32 -> up to OUT_MAX bytes of the top framebuffer (240x400 BGR8,
 	                       // column-major from the bottom left), empty past the end
@@ -134,7 +140,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	case OP_14A_TX: {
 		if (inLen < 2) return -3;
 		MonFrame f[8];
-		int n = iso14aTx(in + 1, inLen - 1, in[0], f, 8);
+		int n = in[0] == 0xFF ? iso14aDataTx(in + 1, inLen - 1, f, 8, 10) : iso14aTx(in + 1, inLen - 1, in[0], f, 8);
 		if (n < 0) return -1;
 		for (int i = 0; i < n; i++) {
 			out[*outLen] = f[i].len;
@@ -292,6 +298,47 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		if (r == 1) return 0;
 		*outLen = strlen(mfWhy());
 		memcpy(out, mfWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_MFU_DUMP: {
+		static MfuDump d;
+		if (inLen != 0 && inLen != 4) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		if (iso14aSelect() < 0 && !iso14aStart()) return 1;
+		int r = mfuDumpCard(&d, inLen ? in : NULL);
+		if (r <= 0) {
+			*outLen = strlen(mfuWhy());
+			memcpy(out, mfuWhy(), *outLen);
+			return r < 0 ? -1 : 1;
+		}
+		char path[64];
+		if (mfuSaveDump(&d, path, sizeof(path))) logp("net: saved %s\n", path);
+		u8 *p = out;
+		memcpy(p, d.info.version, 8);
+		memset(p + 8, 0, 3);
+		p[11] = d.pages - 1;
+		memcpy(p + 12, d.info.sig, 32);
+		memcpy(p + 44, d.info.cnt, 12);
+		p += MFU_HDR;
+		*p++ = d.pwdOk;
+		for (int i = 0; i < d.pages; i++, p += 5) {
+			p[0] = d.valid[i];
+			memcpy(p + 1, d.data[i], 4);
+		}
+		*p = strlen(d.info.type->name);
+		memcpy(p + 1, d.info.type->name, *p);
+		*outLen = p + 1 + *p - out;
+		return 0;
+	}
+	case OP_MFU_WRITE: {
+		if (inLen != 5) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		MfuInfo info;
+		int r = iso14aSelect() < 0 ? 0 : mfuIdentify(&info);
+		if (r > 0) r = mfuWritePage(info.type, in[0], in + 1);
+		if (r == 1) return 0;
+		*outLen = strlen(mfuWhy());
+		memcpy(out, mfuWhy(), *outLen);
 		return r < 0 ? -1 : 1;
 	}
 	case OP_MF_NESTED: {

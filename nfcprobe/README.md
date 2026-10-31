@@ -1,6 +1,6 @@
 # nfcprobe
 
-Mifare Classic tool for the New3DS NFC controller (BCM20791). Build with `make` (devkitPro, needs
+Mifare Classic and Ultralight / NTAG tool for the New3DS NFC controller (BCM20791). Build with `make` (devkitPro, needs
 citro2d), run the .3dsx from the Homebrew Launcher. NFC is handed back to the system on exit (START).
 
 The app loads its own chip patch (chip/memrw.c, embedded as `data/memrw_ncd.bin`, rebuilt by
@@ -32,14 +32,27 @@ is a `CardFamily` (`source/app.h`: match on ATQA/SAK, probe, card screen, menu) 
   the access conditions when on trailer bytes 6-8 (the inverted copy is kept consistent). X: save,
   save a copy, write the block to a card (magic backdoor, else the dump's keys), write the dump to a
   magic card, copy/paste/revert, add the dump's keys to `keys.txt`.
+
+MIFARE Ultralight / NTAG (`source/mfu.c`, `source/mfuui.c`, `source/mfuedit.c`), any SAK 00 card:
+- Scan card: type from GET_VERSION (Ultralight EV1, NTAG210-216; without it Ultralight, Ultralight C,
+  NTAG203), originality signature, counters and tearing flags, BCCs, lock bits, OTP / NDEF capability
+  container, password config (AUTH0, PROT, CFGLCK, AUTHLIM) when readable.
+- Read card: every readable page; a password-protected area stays unread. Saved as
+  `sdmc:/nfcprobe/mfu/<UID>.bin` in pm3's `hf mfu` dump format (56-byte header: version, signature,
+  counters), unread pages listed in `<UID>.txt`, and opened in the page editor.
+- Saved dumps (pm3 .bin dumps work too), page editor: one page per row with its role, the page under
+  the cursor decoded. X writes a page, or every user page that differs, to the card on the reader.
+  Only user memory is ever written: lock bits and OTP are one-way, config can lock the card.
+
 - Chip info: reset / init / patch version.
 
 Card jobs keep the chip, so the network side can carry on with the loaded monitor.
 
 Network: with wifi up, the app listens on TCP 8020 (address shown on the top screen) and
 exposes raw takeover / power / I2C / GPIO primitives, plus the app's card operations
-(`scan`, `mfread`, `mfdump`, `gen1awrite`, `mfwrite` in `tools/nfcnet.py`; ops 0x10-0x16 in
-`source/netsrv.c`; `mfwrite` is an encrypted Mifare Classic write, WRITES THE CARD).
+(`scan`, `mfread`, `mfdump`, `gen1awrite`, `mfwrite`, `mfudump`, `mfuwrite` in `tools/nfcnet.py`; ops
+0x10-0x1F in `source/netsrv.c`; `mfwrite` is an encrypted Mifare Classic write, `mfuwrite` an Ultralight
+user page write, both WRITE THE CARD).
 `nfcnet.py HOST shot [OUT.png]` grabs the top screen and `nfcnet.py HOST keys a down ...` presses
 buttons (ops 0x20/0x21, served even while a job holds the chip). Drive it from the PC with
 `tools/nfcnet.py HOST probe|spd FILE.ncd|send HEX...|release`, or import `Nfc` from it.

@@ -528,3 +528,24 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   1K 64 blocks dumped. 4K dump onto the 1K-configured card refused ("dump has 40 sectors, the card
   16"); a 4K test clone (text in blocks 200 and 254, i.e. the 16-block sectors) in 10.5 s, key dump ==
   file; original 4K contents cloned back == original, config restored == ginfo.txt.
+
+## MIFARE Ultralight / NTAG family -- 2026-10-31
+- Test card: UID 04A0A0A0A0A001, ATQA 0044, SAK 00, GET_VERSION 0004030101000B03 = Ultralight EV1
+  MF0UL11 (20 pages, user 4-15, config 16-19). Not magic (no Gen1a / GTU answer). Signature reads,
+  counters 0/0/0, tearing BD x3, lock bytes 0800 (L-OTP set), OTP FA027011.
+- Its config pages are read-protected (AUTH0 <= 16, PROT 1): READ 10..13 -> 4-bit NAK 0. READ 0F
+  returns page 0F then pages 00-02: a READ that reaches into the protected area rolls over to page 0
+  (NTAG21x/EV1 datasheet). mfuDumpCard re-reads the 3 pages before the first NAK one at a time.
+- Bit-mode OP_14A_TX (host CRC) is enough for 2-byte commands, but PWD_AUTH (7 bytes with CRC) got
+  no answer that way; WRITE (8) can't go in bit mode anyway. mfu.c uses data mode (iso14aDataTx: HW
+  parity + CRC, stale frames dropped). OP_14A_TX code FF = data mode now.
+- A NAK (or no answer) leaves the card IDLE: every failed command is followed by iso14aSelect.
+- PWD_AUTH is never tried on its own: a wrong password counts towards AUTHLIM, which can lock the
+  protected area for good. Only a given password (OP_MFU_DUMP pwd) is sent, once. Not tested on this
+  card (password unknown).
+- Writes (A2 page data[4] -> 4-bit ACK A, polled 10x for the EEPROM write) only to user memory, read
+  back. Page 10 DEADBEEF via net and 10 from the UI editor, both verified, restored to 00000000 by the
+  UI's "write user pages" (1 page written, the rest skipped as equal).
+- Dump file = pm3 mfu_dump_t (.bin: version[8], tbo[2], tbo1, max page, signature[32], counter +
+  tearing [3][4], pages). `pm3 hf mfu view -f` reads ours with every field right.
+- Net ops 0x1E OP_MFU_DUMP, 0x1F OP_MFU_WRITE; nfcnet.py mfudump [PWD] [-o OUT], mfuwrite PAGE HEX8.

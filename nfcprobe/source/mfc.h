@@ -27,6 +27,10 @@ bool iso14aParity(bool on); // off: we pack parity ourselves (0x5C560 = 8)
 // answers; returns their number or -1 on a monitor error.
 int iso14aTx(const u8 *data, u32 len, u8 code, MonFrame *ans, int max);
 int iso14aSelect(void); // HLTA + WUPA + SELECT; SAK, -1 = no card answer, -2 = monitor error
+// Data mode (parity on: HW parity and CRC appended): stale frames dropped, then one frame of whole
+// bytes; polls `polls` times (2 ms apart) for the answers. Their count, or -1 on a monitor error.
+int iso14aDataTx(const u8 *data, u32 len, MonFrame *ans, int max, int polls);
+void iso14aCrc(const u8 *data, u32 len, u8 out[2]); // CRC_A
 
 // Gen1a "magic" backdoor (UID-0 cards): unlock, then plaintext writes with no auth.
 bool mfGen1aUnlock(void);

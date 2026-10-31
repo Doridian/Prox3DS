@@ -24,6 +24,9 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST g4config [HEX60] [PWD]       Gen4 GTU config: read and decode; with HEX60 write it
                                                    (only UID length/shadow/ATS/ATQA/SAK may change; WRITES CONFIG)
   UI debugging:
+       nfcnet.py HOST mfudump [PWD] [-o OUT]       Ultralight / NTAG: info + every readable page (PWD: 8 hex,
+                                                   tried once), also saved to SD; OUT = pm3 .bin
+       nfcnet.py HOST mfuwrite PAGE HEX8           Ultralight / NTAG user page write + read-back (WRITES THE CARD)
        nfcnet.py HOST shot [OUT.png]               grab the top screen (default shot.png; needs Pillow)
        nfcnet.py HOST keys KEY [KEY...]            press buttons in the UI, one frame each, ~0.1 s apart
                                                    (a b x y l r up down left right start select)
@@ -39,7 +42,7 @@ PORT = 8020
 UPDATE_CHUNK = 0x7000
 (OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
- OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE) = range(0x10, 0x1E)
+ OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS = 0x20, 0x21
 KEYS = {"a": 1 << 0, "b": 1 << 1, "select": 1 << 2, "start": 1 << 3, "right": 1 << 4, "left": 1 << 5,
@@ -181,6 +184,21 @@ class Nfc:
         (30 bytes) write it and read it back: True if verified. WRITES THE CARD CONFIG."""
         p = self.card_call(OP_GEN4_CONFIG, bytes(pwd) + bytes(cfg or b""), 30)
         return p if cfg is None or p is None else True
+
+    def mfu_dump(self, pwd=None):
+        """-> (header[56], pwd_ok, pages [bytes or None], type name), or None (self.why)."""
+        r = self.card_call(OP_MFU_DUMP, pwd or b"", timeout=30)
+        if r is None:
+            return None
+        hdr, pwd_ok, n = r[:56], r[56], r[11] + 1
+        pages = [r[57 + 5 * i + 1:57 + 5 * i + 5] if r[57 + 5 * i] else None for i in range(n)]
+        p = 57 + 5 * n
+        return hdr, bool(pwd_ok), pages, r[p + 1:p + 1 + r[p]].decode()
+
+    def mfu_write(self, page, data):
+        if self.card_call(OP_MFU_WRITE, bytes([page]) + data) is None:
+            return False
+        return True
 
     def update(self, data, log=print):
         """Upload a new .3dsx; the app swaps it in, exits and relaunches itself."""
@@ -399,6 +417,25 @@ def main():
             sys.exit("dump size is not whole blocks")
         ok = nfc.mf_clone([raw[i:i + 16] for i in range(0, len(raw), 16)], "force" in args[1:])
         print("CLONED (every block read back)" if ok else f"clone failed: {nfc.why}")
+    elif what == "mfudump":
+        out = args[args.index("-o") + 1] if "-o" in args else None
+        pwd = next((bytes.fromhex(a) for a in args if len(a) == 8 and a != out), None)
+        r = nfc.mfu_dump(pwd)
+        if r is None:
+            sys.exit(f"no Ultralight / NTAG: {nfc.why}")
+        hdr, pwd_ok, pages, name = r
+        print(name, f"(password {'ok' if pwd_ok else 'refused'})" if pwd else "")
+        print("version  ", hdr[:8].hex(), "\nsignature", hdr[12:44].hex())
+        for i in range(3):
+            c = hdr[44 + 4 * i:48 + 4 * i]
+            print(f"counter {i}: {int.from_bytes(c[:3], 'little')}  tearing {c[3]:02X}")
+        for i, d in enumerate(pages):
+            print(f"{i:3} {i:02X}: {d.hex(' ') if d else '-- -- -- --'}")
+        if out:
+            open(out, "wb").write(hdr + b"".join(d or bytes(4) for d in pages))
+    elif what == "mfuwrite":
+        ok = nfc.mfu_write(int(args[0], 0), bytes.fromhex(args[1]))
+        print("VERIFIED" if ok else f"write failed: {nfc.why}")
     elif what == "uscconfig":
         if args:
             ok = nfc.usc_config(bytes.fromhex(args[0]))

@@ -2,11 +2,12 @@
 #include <3ds.h>
 
 #include "mfc.h"
+#include "mfu.h"
 #include "ui.h"
 
 // The app shell (app.c): a stack of screens, dialogs, the card job worker, and the root menu with a
 // generic scan that identifies the card and hands it to its family (Proxmark style: "hf search", then
-// "hf mf ..."). Families: MIFARE Classic (mfui.c, editor.c).
+// "hf mf ..."). Families: MIFARE Classic (mfui.c, editor.c), Ultralight / NTAG (mfuui.c, mfuedit.c).
 
 typedef struct {
 	void (*show)(void); // whenever it becomes the top screen (entered, or returned to); may be NULL
@@ -57,7 +58,7 @@ typedef struct {
 	void (*show)(void);           // UI thread: push its card screen
 	void (*menu)(void);           // UI thread: push its menu
 } CardFamily;
-extern const CardFamily mfcFamily;
+extern const CardFamily mfcFamily, mfuFamily;
 
 const char *cardTypeName(const Card *c); // best guess from ATQA / SAK, any ISO14443-A card
 void uidHex(const Card *c, char *out, const char *sep); // out: up to 30 chars
@@ -65,3 +66,7 @@ void uidHex(const Card *c, char *out, const char *sep); // out: up to 30 chars
 // MIFARE Classic
 void cloneStart(const MfDump *d, bool force); // write a dump onto the magic card on the reader
 void editorOpen(const MfDump *d, const char *path);
+
+// MIFARE Ultralight / NTAG
+void mfuRestoreStart(const MfuDump *d); // write a dump's user pages onto the card on the reader
+void mfuEditorOpen(const MfuDump *d, const char *path);
