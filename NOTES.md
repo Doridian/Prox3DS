@@ -445,3 +445,21 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   the Homebrew Menu does, and aptSetChainloaderToSelf() -> soft reset into the new build.
 - Verified: 197 KB sent in < 1 s, app back on port 8020 within ~2 s, start screen shows the new
   build stamp (the banner now carries __DATE__ __TIME__). No FTP round trip needed any more.
+
+## Magic: USCUID / Gen4 GDM (ZUID) -- 2026-10-31
+- Card UID 2A01E51E (ATQA 0004, SAK 08, Fudan based, keys FF). pm3 `hf mf info`: "Gen 1a" + "Gen 4 GDM /
+  USCUID (ZUID Gen1 Magic Wakeup)". `hf mf gdmgetcfg --gen1a` -> 7AFF0000000000000000000000000008
+  (gdmcfg.txt), the factory ZUID config. ZUID only honors the first 8 config bytes and the SAK (pm3
+  doc/magic_cards_notes.md "MIFARE Classic USCUID"), so no 7-byte UID / static nonce modes on this one.
+- Protocol (pm3 trace): 40(7) / 43 wakeup (0A each), then E0 00 + CRC -> config[16] + CRC; write: E1 00
+  + CRC -> 0A, config[16] + CRC -> 0A (3.3 ms later). Hidden blocks 38xx / A8xx. NEVER F0 F1 F6 F8 F9
+  FE (wipe main / hidden memory and config).
+- Config bytes: 0-1 wakeup enable (7AFF / 85..), 2 wakeup style (00 = 40/43, 85 = 20/23), 6 block key B
+  if readable, 7 CUID, 9 EV1 perso (7-byte UID), 10 shadow, 11 magic auth (8000), 12 static encrypted
+  nonce, 13 signature sector, 15 SAK; options on = 5A.
+- App: mfUscuidConfig / mfUscuidSetConfig (only bytes 6, 7, 12 as 00/5A and 15 may change: the rest
+  could lock the backdoor), mfMagicDetect flag MF_MAGIC_USCUID. Net op 0x1C OP_USC_CONFIG, OP_MF_MAGIC
+  reply now flags, gen4 len, gen4 cfg, usc cfg[16]. nfcnet.py uscconfig [HEX32].
+- Verified on the 3DS: detect "gen1a, uscuid", config read = pm3; identical rewrite VERIFIED; CUID on
+  -> `magic gen2` reports gen2, off -> gone; SAK 08 -> 18 seen on rescan, restored; guard refused bytes
+  3 and 9. Config back to 7AFF...08.

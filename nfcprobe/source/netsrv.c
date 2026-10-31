@@ -50,13 +50,16 @@ enum {
 	OP_MF_NESTED  = 0x17, // knownBlock u8, knownKeyB u8, knownKey[6], tgtBlock u8, tgtKeyB u8
 	                      // -> recovered key[6]; on failure payload = reason (nested attack, NOTES.md)
 	OP_MF_MAGIC   = 0x18, // gen2 u8 (1 = also test Gen2: rewrites block 0 with its own data), [pwd[4]]
-	                      // -> flags u8 (1 = Gen1a, 2 = Gen2, 4 = Gen4 GTU), Gen4 config
+	                      // -> flags u8 (1 = Gen1a, 2 = Gen2, 4 = Gen4 GTU, 8 = USCUID), Gen4 config
+	                      //    len u8, Gen4 config, USCUID config[16] (zeros without the flag)
 	OP_GEN4_READ  = 0x19, // pwd[4], block u8, count u8 -> per block: ok u8, data[16]
 	OP_GEN4_WRITE = 0x1A, // pwd[4], block u8, data[16] -> empty ok (read back); on failure payload
 	                      // = reason. WRITES THE CARD
 	OP_GEN4_CONFIG = 0x1B, // pwd[4], [config[30]] -> config read; with config: write it (F0, only
 	                       // shadow mode / ATS / ATQA / SAK may change), read back; on failure payload
 	                       // = reason. WRITES THE CARD CONFIG
+	OP_USC_CONFIG  = 0x1C, // [config[16]] -> USCUID config read; with config: write it (guarded,
+	                       // mfc.h), read back; on failure payload = reason. WRITES THE CARD CONFIG
 };
 
 #define OUT_MAX 0x2000
@@ -210,8 +213,10 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		iso14aParity(true);
 		if (r < 0) return -1;
 		out[0] = m.flags;
-		memcpy(out + 1, m.cfg, m.cfgLen);
-		*outLen = 1 + m.cfgLen;
+		out[1] = m.cfgLen;
+		memcpy(out + 2, m.cfg, m.cfgLen);
+		memcpy(out + 2 + m.cfgLen, m.usc, MF_USC_CFG);
+		*outLen = 2 + m.cfgLen + MF_USC_CFG;
 		return 0;
 	}
 	case OP_GEN4_READ: {
@@ -245,6 +250,19 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 			return 0;
 		}
 		if (inLen != 4 && r == 1) return 0; // written and verified
+		*outLen = strlen(mfWhy());
+		memcpy(out, mfWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_USC_CONFIG: {
+		if (inLen != 0 && inLen != MF_USC_CFG) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		int r = inLen ? mfUscuidSetConfig(in) : mfUscuidConfig(out);
+		iso14aParity(true);
+		if (r == 1) {
+			*outLen = inLen ? 0 : MF_USC_CFG;
+			return 0;
+		}
 		*outLen = strlen(mfWhy());
 		memcpy(out, mfWhy(), *outLen);
 		return r < 0 ? -1 : 1;

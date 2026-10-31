@@ -17,6 +17,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                    Gen2 by rewriting block 0 with its own data (WRITES)
        nfcnet.py HOST g4read BLOCK [N] [PWD]       Gen4 GTU read without keys (PWD default 00000000)
        nfcnet.py HOST g4write BLOCK HEX32 [PWD]    Gen4 GTU write + read-back (WRITES THE CARD)
+       nfcnet.py HOST uscconfig [HEX32]            USCUID (Gen4 GDM) config via the Gen1a wakeup: read and
+                                                   decode; with HEX32 write it (guarded; WRITES CONFIG)
        nfcnet.py HOST g4config [HEX60] [PWD]       Gen4 GTU config: read and decode; with HEX60 write it
                                                    (only shadow/ATS/ATQA/SAK may change; WRITES CONFIG)
 """
@@ -31,7 +33,7 @@ PORT = 8020
 UPDATE_CHUNK = 0x7000
 (OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
- OP_GEN4_WRITE, OP_GEN4_CONFIG) = range(0x10, 0x1C)
+ OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG) = range(0x10, 0x1D)
 GEN4_PWD = bytes(4)
 NO_CARD = 1  # card op result: no card / auth refused
 
@@ -139,12 +141,19 @@ class Nfc:
         return self.card_call(OP_MF_NESTED, arg, 60)
 
     def mf_magic(self, gen2=False, pwd=GEN4_PWD):
-        """-> ({'gen1a', 'gen2', 'gen4'}, gen4 config bytes) or None (no card). gen2=True rewrites
+        """-> ({'gen1a', 'gen2', 'gen4', 'uscuid'}, gen4 config, uscuid config) or None (no card). gen2=True rewrites
         block 0 with its own data to test it (WRITES THE CARD)."""
         p = self.card_call(OP_MF_MAGIC, bytes([gen2]) + bytes(pwd), 60)
         if p is None:
             return None
-        return {n for i, n in enumerate(("gen1a", "gen2", "gen4")) if p[0] >> i & 1}, p[1:]
+        flags = {n for i, n in enumerate(("gen1a", "gen2", "gen4", "uscuid")) if p[0] >> i & 1}
+        return flags, p[2:2 + p[1]], p[2 + p[1]:] if "uscuid" in flags else b""
+
+    def usc_config(self, cfg=None):
+        """Read the USCUID config (16 bytes, None if refused: reason in self.why), or write cfg and
+        read it back: True if verified. WRITES THE CARD CONFIG."""
+        p = self.card_call(OP_USC_CONFIG, bytes(cfg or b""), 30)
+        return p if cfg is None or p is None else True
 
     def gen4_read(self, block, count=1, pwd=GEN4_PWD):
         """Gen4 GTU read without keys -> [16 bytes or None per block], None if no card."""
@@ -330,6 +339,8 @@ def main():
         print("magic:", ", ".join(sorted(r[0])) or "none", "" if gen2 else "(gen2 not tested)")
         if r[1]:
             print(f"gen4 config ({len(r[1])} bytes): {r[1].hex()}")
+        if r[2]:
+            print(f"uscuid config: {r[2].hex()}")
     elif what == "g4read":
         blk = int(args[0])
         n = int(args[1]) if len(args) > 1 and len(args[1]) != 8 else 1
@@ -343,6 +354,18 @@ def main():
         blk, data = int(args[0]), bytes.fromhex(args[1])
         ok = nfc.gen4_write(blk, data, bytes.fromhex(args[2]) if len(args) > 2 else GEN4_PWD)
         print("VERIFIED" if ok else f"write failed: {nfc.why}")
+    elif what == "uscconfig":
+        if args:
+            ok = nfc.usc_config(bytes.fromhex(args[0]))
+            print("VERIFIED" if ok else f"config write failed: {nfc.why}")
+        c = nfc.usc_config()
+        if c is None:
+            sys.exit(f"no config: {nfc.why}")
+        on = lambda b: "on" if b == 0x5A else "off" if b == 0 else f"{b:02X}"
+        print(f"uscuid config: {c.hex()}")
+        print(f"  wakeup {c[0:2].hex()} style {'20/23' if c[2] == 0x85 else '40/43'}  block key B {on(c[6])}"
+              f"  CUID {on(c[7])}  perso {c[9]:02X}  shadow {on(c[10])}  magic auth {on(c[11])}")
+        print(f"  static enc nonce {on(c[12])}  signature {on(c[13])}  SAK {c[15]:02X}")
     elif what == "g4config":
         cfg = next((bytes.fromhex(a) for a in args if len(a) == 60), None)
         pwd = next((bytes.fromhex(a) for a in args if len(a) == 8), GEN4_PWD)

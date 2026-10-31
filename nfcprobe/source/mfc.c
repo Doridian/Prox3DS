@@ -227,6 +227,45 @@ static int gen4Cmd(const u8 pwd[4], const u8 *cmd, u32 len, u8 *out, u32 outMax)
 	FAIL(0, "no gen4 answer");
 }
 
+int mfUscuidConfig(u8 out[MF_USC_CFG])
+{
+	MonFrame f[2];
+	u8 cmd[4] = { 0xE0, 0x00 }, crc[2];
+	if (!mfGen1aUnlock()) FAIL(0, "no gen1a wakeup");
+	crcA(cmd, 2, cmd + 2);
+	int n = iso14aTx(cmd, 4, 0, f, 2);
+	if (n < 0) FAIL(-1, "E000 tx");
+	if (!n || f[n - 1].len != MF_USC_CFG + 2) FAIL(0, "no uscuid config");
+	crcA(f[n - 1].data, MF_USC_CFG, crc);
+	if (memcmp(crc, f[n - 1].data + MF_USC_CFG, 2)) FAIL(0, "config crc");
+	memcpy(out, f[n - 1].data, MF_USC_CFG);
+	return 1;
+}
+
+int mfUscuidSetConfig(const u8 cfg[MF_USC_CFG])
+{
+	MonFrame f[2];
+	u8 cur[MF_USC_CFG], cmd[2] = { 0xE1, 0x00 };
+	int r = mfUscuidConfig(cur);
+	if (r <= 0) return r;
+	for (int i = 0; i < MF_USC_CFG; i++) {
+		if (cfg[i] == cur[i]) continue;
+		if (i == 15) continue;
+		if (i != 6 && i != 7 && i != 12) FAIL(0, "config byte %d may not change", i);
+		if (cfg[i] != 0x00 && cfg[i] != 0x5A) FAIL(0, "config byte %d: %02X, not 00/5A", i, cfg[i]);
+	}
+	if (!mfGen1aUnlock()) FAIL(-1, "gen1a unlock");
+	int n = dataTx(cmd, 2, f, 2);
+	if (n < 0) FAIL(-1, "E1 tx");
+	if (!n || f[n - 1].len < 1 || f[n - 1].data[0] != 0x0A) FAIL(0, "E1 nak");
+	n = dataTx(cfg, MF_USC_CFG, f, 2);
+	if (n < 0) FAIL(-1, "data tx");
+	if (!n || f[n - 1].len < 1 || f[n - 1].data[0] != 0x0A) FAIL(0, "data nak");
+	if ((r = mfUscuidConfig(cur)) <= 0) return r;
+	if (memcmp(cur, cfg, MF_USC_CFG)) FAIL(0, "verify mismatch");
+	return 1;
+}
+
 int mfGen4Read(const u8 pwd[4], u8 block, u8 out[16])
 {
 	u8 cmd[2] = { 0xCE, block }, buf[16];
@@ -738,7 +777,11 @@ int mfMagicDetect(const u8 pwd[4], bool testGen2, MfMagic *m)
 		m->flags |= MF_MAGIC_GEN4;
 		m->cfgLen = r;
 	}
-	if (mfGen1aUnlock()) m->flags |= MF_MAGIC_GEN1A;
+	if (mfGen1aUnlock()) {
+		m->flags |= MF_MAGIC_GEN1A;
+		if ((r = mfUscuidConfig(m->usc)) < 0) return -1;
+		if (r) m->flags |= MF_MAGIC_USCUID;
+	}
 	if (testGen2) {
 		if ((r = gen2Test()) < 0) return -1;
 		if (r) m->flags |= MF_MAGIC_GEN2;

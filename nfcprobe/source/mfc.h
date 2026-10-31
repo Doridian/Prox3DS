@@ -46,13 +46,22 @@ int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG]);
 
 // Magic card detection. Gen2 (CUID) is only tested when asked: it rewrites block 0 with its own
 // contents through a normal authenticated WRITE (a default key A for sector 0 must work).
-enum { MF_MAGIC_GEN1A = 1, MF_MAGIC_GEN2 = 2, MF_MAGIC_GEN4 = 4 };
+enum { MF_MAGIC_GEN1A = 1, MF_MAGIC_GEN2 = 2, MF_MAGIC_GEN4 = 4, MF_MAGIC_USCUID = 8 };
 typedef struct {
 	u8 flags;
 	u8 cfgLen;
 	u8 cfg[32]; // Gen4 config (C6)
+	u8 usc[16]; // USCUID config (E000)
 } MfMagic;
 int mfMagicDetect(const u8 pwd[4], bool testGen2, MfMagic *m); // flags, -1 on a monitor error
+
+// USCUID ("Gen4 GDM") behind the Gen1a wakeup: 16-byte config read (E000) and write (E100 + data,
+// read back). A write may only change byte 6 (block key B if readable), 7 (CUID), 12 (static
+// encrypted nonce), each 00 or 5A, and 15 (SAK); the rest (wakeup, shadow, magic auth, perso...)
+// could cut off the backdoor. The wipe commands (F0 F1 F6 F8 F9 FE) are never sent. WRITES CONFIG.
+#define MF_USC_CFG 16
+int mfUscuidConfig(u8 out[MF_USC_CFG]); // 1 ok, 0 no Gen1a wakeup / no config, -1 monitor error
+int mfUscuidSetConfig(const u8 cfg[MF_USC_CFG]);
 
 // Parity-off framing: bytes + parity bits <-> raw bit stream (9 bits per byte, LSB first).
 u32 mfPack(const u8 *data, u32 len, const u8 *par, u8 *out, u8 *code);
