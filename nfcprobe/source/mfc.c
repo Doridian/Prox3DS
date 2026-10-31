@@ -76,6 +76,7 @@ bool iso14aStart(void)
 					break;
 				}
 				card.active = true;
+				iso14aSelect(); // the ROM's SENS_RES in the NTF is always 00 00; get the ATQA from a WUPA
 				return true;
 			}
 		}
@@ -121,6 +122,7 @@ int iso14aSelect(void)
 	int n = iso14aTx(&wupa, 1, 0x07, f, 4);
 	if (n < 0) return -2;
 	if (!n || f[n - 1].len != 2) return -1;
+	memcpy(card.atqa, f[n - 1].data, 2);
 	memcpy(sel + 2, card.uid, 4);
 	sel[6] = card.uid[0] ^ card.uid[1] ^ card.uid[2] ^ card.uid[3];
 	n = iso14aTx(sel, 7, 0, f, 4); // the hardware adds SELECT's CRC

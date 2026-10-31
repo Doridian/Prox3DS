@@ -271,3 +271,23 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
   0x68C80 = 0x32E0 afterwards, Gen1a backdoor dump of all 64 blocks matches dump/card_C1C1C1C1.bin.
 - App: the stock-patch jobs (L+B/X/Y signature tests, L+R Read_RAM + stock cross-check) are gone,
   so nfcprobe embeds no Broadcom/Nintendo bytes and the user needs no sysmodule dump to build it.
+
+## Nested auth: mechanism CONFIRMED, recovery pending -- 2026-10-30
+- Nested auth works: after a known-key auth (cs_A running, parity off), send `60/61 target`+CRC
+  ENCRYPTED under cs_A (4 bytes, fits bit mode). The tag replies with the target nonce nt_T
+  encrypted under the TARGET cipher's keystream (NOT cs_A), 4 bytes + 4 parity bits.
+- Verified on sector 1 (known key c1c1c1000001), authing sector 0 first: for each nested auth there
+  is a valid PRNG nonce nt_T with enc_nt_T XOR nt_T == Crypto1(key).word(uid^nt_T). i.e. the 32
+  keystream bits ks = enc_nt_T ^ nt_T are exactly recoverable keystream -> lfsr_recovery32 -> key.
+  (tools/exp -> scratchpad nested1.py)
+- Timing: with host round-trips the distance nt0->nt_T is wildly variable (1183..63378 steps), so
+  nt_T is NOT predictable this way. The real attack needs an ON-CHIP nested auth (auth1 then the
+  nested command at fixed cycles) so the PRNG distance is stable and nt_T can be predicted.
+- TODO: (1) crapto1 lfsr_recovery32 + lfsr_rollback_word port (Python prototype, then C on the
+  ARM11), validate recovering the known key from captured (ks, uid^nt_T). (2) On-chip nested op for
+  a stable distance. (3) collect 2+ nonces, intersect candidate keys. (4) app + net op + button.
+
+## ATQA 0000 -- 2026-10-30
+- The ROM's RF_INTF_ACTIVATED_NTF always reports SENS_RES 00 00 (e.g. `61 05 .. 09 00 00 04
+  c1 c1 c1 c1 01 88`); a raw WUPA right after gets 04 00 = ATQA 0x0004. The app now takes the ATQA
+  from the WUPA in iso14aSelect and selects once after activation. (rawa.py still prints the NTF value.)
