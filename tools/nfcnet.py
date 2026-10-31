@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""PC side of nfcprobe's network server (nfcprobe/source/netsrv.c, TCP port 8020).
+
+usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT, GET_PATCH_VERSION
+       nfcnet.py HOST spd FILE.ncd       power cycle, download an SPD patch, show the version
+       nfcnet.py HOST send HEX [HEX...]  send raw I2C packets (HCIT included), print the replies
+       nfcnet.py HOST release            power off and give the pins back
+  Card ops implemented in the app (nfcprobe mfc.c):
+       nfcnet.py HOST scan                         activate a card, show ATQA/SAK/UID
+       nfcnet.py HOST mfread BLOCK KEY [b] [N]     Mifare Classic auth + read N blocks
+       nfcnet.py HOST mfdump [KEY...] [-o OUT]     dump with keys (+ keys.txt + defaults), also saved to SD
+       nfcnet.py HOST gen1awrite BLOCK HEX32       Gen1a backdoor write of 16 bytes (WRITES THE CARD)
+       nfcnet.py HOST mfwrite BLOCK KEY HEX32 [b]  Mifare Classic encrypted write + read-back (WRITES THE CARD)
+"""
+import socket
+import struct
+import sys
+
+PORT = 8020
+OP_PING, OP_TAKEOVER, OP_POWER, OP_WRITE, OP_READ, OP_XFER, OP_GPIO, OP_RELEASE = range(8)
+(OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
+ OP_GEN1A_WRITE, OP_MF_WRITE) = range(0x10, 0x17)
+NO_CARD = 1  # card op result: no card / auth refused
+
+CORE_RESET = bytes.fromhex("1020000101")
+CORE_INIT = bytes.fromhex("10200100")
+GET_PATCH_VERSION = bytes.fromhex("102f2d00")
+
+
+class NfcError(Exception):
+    pass
+
+
+class Nfc:
+    def __init__(self, host, port=PORT):
+        self.sock = socket.create_connection((host, port), timeout=10)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+    def _recv(self, n):
+        buf = b""
+        while len(buf) < n:
+            chunk = self.sock.recv(n - len(buf))
+            if not chunk:
+                raise NfcError("connection closed")
+            buf += chunk
+        return buf
+
+    def call(self, op, payload=b""):
+        self.send_call(op, payload)
+        return self.recv_reply(op)
+
+    # Split halves of call(), for pipelining requests without waiting for each reply.
+    def send_call(self, op, payload=b""):
+        self.sock.sendall(struct.pack("<BH", op, len(payload)) + payload)
+
+    def recv_reply(self, op):
+        rop, res, ln = struct.unpack("<BIH", self._recv(7))
+        data = self._recv(ln)
+        if rop != op:
+            raise NfcError(f"reply for op {rop}, sent {op}")
+        if res:
+            raise NfcError(f"op {op} failed: {res:08X}")
+        return data
+
+    def card_call(self, op, payload=b"", timeout=10):
+        """Card ops: returns the payload, None for result NO_CARD."""
+        self.sock.settimeout(timeout)
+        try:
+            self.send_call(op, payload)
+            rop, res, ln = struct.unpack("<BIH", self._recv(7))
+            data = self._recv(ln)
+        finally:
+            self.sock.settimeout(10)
+        if res == NO_CARD:
+            self.why = data.decode(errors="replace")
+            return None
+        if res:
+            raise NfcError(f"op {op:#x} failed: {res:08X} {data.decode(errors='replace')}")
+        return data
+
+    def scan(self):
+        """-> (atqa, sak, uid) or None."""
+        p = self.card_call(OP_14A_START, timeout=30)
+        return p and (p[0:2], p[2], p[4:4 + p[3]])
+
+    def mf_read(self, block, key, key_b=False, count=1):
+        """-> [16 bytes or None per block], None if auth was refused."""
+        p = self.card_call(OP_MF_READ, bytes([block, key_b]) + key + bytes([count]), 30)
+        return p and [p[i + 1:i + 17] if p[i] else None for i in range(0, len(p), 17)]
+
+    def mf_dump(self, keys=(), sectors=0):
+        """-> (keys {(sector, 'A'/'B'): key}, blocks [16 bytes or None]) or None (no card)."""
+        p = self.card_call(OP_MF_DUMP, bytes([sectors]) + b"".join(keys), None)
+        if p is None:
+            return None
+        n, o, found = p[0], 1, {}
+        for sec in range(n):
+            for k, name in ((0, "A"), (1, "B")):
+                if p[o] >> k & 1:
+                    found[sec, name] = p[o + 1 + 6 * k:o + 7 + 6 * k]
+            o += 13
+        blocks = [p[i + 1:i + 17] if p[i] else None for i in range(o, len(p), 17)]
+        return found, blocks
+
+    def gen1a_write(self, block, data):
+        """Gen1a backdoor write of 16 bytes to a block (writes the card). Returns True if the
+        device verified the write, False if refused (reason in self.why). WRITES THE CARD."""
+        if len(data) != 16:
+            raise ValueError("data must be 16 bytes")
+        p = self.card_call(OP_GEN1A_WRITE, bytes([block]) + bytes(data), 30)
+        return p is not None
+
+    def mf_write(self, block, key, data, key_b=False):
+        """Encrypted Mifare Classic write of 16 bytes (auth with key, write, read back). True if
+        verified, False if refused / failed (reason in self.why). WRITES THE CARD."""
+        if len(data) != 16:
+            raise ValueError("data must be 16 bytes")
+        p = self.card_call(OP_MF_WRITE, bytes([block, key_b]) + bytes(key) + bytes(data), 30)
+        return p is not None
+
+    def takeover(self):
+        self.call(OP_TAKEOVER)
+
+    def power(self, on=True):
+        self.call(OP_POWER, bytes([1 if on else 0]))
+
+    def write(self, pkt):
+        self.call(OP_WRITE, pkt)
+
+    def read(self, timeout_ms=100):
+        return self.call(OP_READ, struct.pack("<H", timeout_ms))
+
+    def xfer(self, pkt, timeout_ms=500):
+        return self.call(OP_XFER, struct.pack("<H", timeout_ms) + pkt)
+
+    def gpio(self, value=0, mask=0):
+        return struct.unpack("<I", self.call(OP_GPIO, struct.pack("<II", value, mask)))[0]
+
+    def release(self):
+        self.call(OP_RELEASE)
+
+    def drain(self, timeout_ms=50):
+        pkts = []
+        while pkt := self.read(timeout_ms):
+            pkts.append(pkt)
+        return pkts
+
+    def cmd(self, pkt, timeout_ms=500):
+        """Send a command, return [response, notifications...]."""
+        first = self.xfer(pkt, timeout_ms)
+        return ([first] if first else []) + self.drain()
+
+    def spd_download(self, ncd, log=print):
+        """Send an SPD patch record by record (see nfcprobe spdDownload)."""
+        o, rec = 0, 0
+        while o + 5 <= len(ncd):
+            ln = 4 + ncd[o + 3]
+            status = None
+            for pkt in self.cmd(ncd[o:o + ln], 1000):
+                if pkt[1] == 0x4F and pkt[2] & 0x3F == 0x2E and len(pkt) >= 5:
+                    status = pkt[4]
+                else:
+                    log("  other: " + describe(pkt))
+            log(f"  rec {rec:2d} type {ncd[o + 4]:02X} len {ln - 5:3d} -> status {status}")
+            if status != 0:
+                return False
+            o += ln
+            rec += 1
+        # Authentication result, then the reset notification (60 00) ends the download.
+        while pkt := self.read(2000):
+            log("  " + describe(pkt))
+            if pkt[1:3] == b"\x60\x00":
+                break
+        return True
+
+
+def describe(pkt):
+    s = pkt.hex(" ")
+    if not pkt:
+        return "(nothing)"
+    if pkt[0] == 0x04 and len(pkt) >= 7 and pkt[1] == 0x0E:
+        return f"{s}  [HCI cmd complete {pkt[4] | pkt[5] << 8:04X} status {pkt[6]:02X}]"
+    if pkt[0] != 0x10 or len(pkt) < 4:
+        return s
+    mt, gid, oid, p = pkt[1] >> 5, pkt[1] & 0xF, pkt[2] & 0x3F, pkt[4:]
+    what = f"{['DATA', 'CMD', 'RSP', 'NTF'][mt]} {gid:X}/{oid:02X}"
+    if mt == 2 and gid == 0xF and oid == 0x2D and len(p) >= 24:
+        chip = p[4:20].split(b"\0")[0].decode(errors="replace").strip()
+        what += f" PATCH_VERSION proj={p[0] | p[1] << 8:04X} chip={chip} ver={p[20] | p[21] << 8}.{p[22] | p[23] << 8}"
+    elif mt == 2 and p:
+        what += f" status {p[0]:02X}"
+    return f"{s}  [{what}]"
+
+
+def chip_info(nfc):
+    for c in (CORE_RESET, CORE_INIT, GET_PATCH_VERSION):
+        for pkt in nfc.cmd(c):
+            print("  " + describe(pkt))
+
+
+def start(nfc):
+    nfc.takeover()
+    nfc.power(True)
+    for pkt in nfc.drain():
+        print("  power-up: " + describe(pkt))
+
+
+def main():
+    if len(sys.argv) < 3:
+        sys.exit(__doc__)
+    nfc = Nfc(sys.argv[1])
+    print(nfc.call(OP_PING).decode())
+    what, args = sys.argv[2], sys.argv[3:]
+    if what == "probe":
+        start(nfc)
+        chip_info(nfc)
+    elif what == "spd":
+        start(nfc)
+        ok = nfc.spd_download(open(args[0], "rb").read())
+        print("download", "completed" if ok else "FAILED")
+        chip_info(nfc)
+    elif what == "send":
+        nfc.takeover()
+        for h in args:
+            for pkt in nfc.cmd(bytes.fromhex(h)):
+                print("  " + describe(pkt))
+    elif what == "release":
+        nfc.release()
+    elif what == "scan":
+        r = nfc.scan()
+        print("no card" if r is None else f"ATQA {r[0][::-1].hex()} SAK {r[1]:02X} UID {r[2].hex()}")
+    elif what == "mfread":
+        blk, key = int(args[0]), bytes.fromhex(args[1])
+        r = nfc.mf_read(blk, key, len(args) > 2 and args[2] == "b", int(args[3]) if len(args) > 3 else 1)
+        if r is None:
+            print("auth refused / no card:", nfc.why)
+        for i, d in enumerate(r or []):
+            print(f"{blk + i:3}: {d.hex(' ') if d else 'read failed'}")
+    elif what == "mfdump":
+        out = args[args.index("-o") + 1] if "-o" in args else None
+        keys = [bytes.fromhex(k) for k in args if len(k) == 12 and k != out]
+        r = nfc.mf_dump(keys)
+        if r is None:
+            sys.exit("no card")
+        found, blocks = r
+        for sec in range(len(blocks) // 4 if len(blocks) <= 128 else 32 + (len(blocks) - 128) // 16):
+            ka, kb = found.get((sec, "A")), found.get((sec, "B"))
+            print(f"sector {sec:2}: A {ka.hex() if ka else '-' * 12}  B {kb.hex() if kb else '-' * 12}")
+        for i, d in enumerate(blocks):
+            print(f"{i:3}: {d.hex(' ') if d else '??'}")
+        if out:
+            open(out, "wb").write(b"".join(d or bytes(16) for d in blocks))
+    elif what == "gen1awrite":
+        blk, data = int(args[0]), bytes.fromhex(args[1])
+        ok = nfc.gen1a_write(blk, data)
+        print("VERIFIED" if ok else f"write failed: {nfc.why}")
+    elif what == "mfwrite":
+        blk, key, data = int(args[0]), bytes.fromhex(args[1]), bytes.fromhex(args[2])
+        ok = nfc.mf_write(blk, key, data, len(args) > 3 and args[3] == "b")
+        print("VERIFIED" if ok else f"write failed: {nfc.why}")
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()

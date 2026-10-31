@@ -1,0 +1,41 @@
+# --- Dumps and anything derived from Nintendo / Broadcom firmware ---
+# Title dumps
+*.cxi
+*.cia
+# Unpacked titles (code.bin, exheader, extracted SPD patches)
+/extracted/
+# Chip ROM/RAM dumps, card dumps and keys
+/dump/
+*.dump
+*_keys.bin
+# objdump output of firmware
+/disasm/
+# Stock BCM20791B5 patch, copied from extracted/ (embedded in the app for L+B)
+/nfcprobe/data/patch_20791B5.bin
+
+# --- Ghidra ---
+# Projects hold the firmware; keep only our scripts
+/ghidra/*
+!/ghidra/scripts/
+
+# --- Build artifacts ---
+# chip/: gcc + objcopy + objdump output, and mkpatch .ncd
+/chip/*.elf
+/chip/*.bin
+/chip/*.s
+/chip/*.ncd
+*.ncd
+/tools/exp/**/*.bin
+# nfcprobe (devkitPro)
+/nfcprobe/build/
+/nfcprobe/*.3dsx
+/nfcprobe/*.elf
+/nfcprobe/*.smdh
+/nfcprobe/data/memrw_ncd.bin
+
+# --- Logs ---
+*.log
+
+# --- Python ---
+__pycache__/
+*.py[cod]

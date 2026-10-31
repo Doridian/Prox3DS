@@ -1,0 +1,6 @@
+rm nfcprobe.log
+cd 3ds
+rm nfcprobe.3dsx
+put nfcprobe.3dsx
+exit
+

@@ -1,0 +1,263 @@
+# New 3DS NFC RE notes
+
+## Inputs
+- `0004013020004002` New3DS `nfc` sysmodule (v21 / "0201builder"), decrypted CXI. NOTE: at runtime it runs as
+  program ID `0004013000004002` (same for gpio 1B02 / i2c 1E02), so PM calls must use that ID
+- `0004013020001E02` New3DS `i2c` sysmodule (v3), decrypted CXI
+- Unpack: `python3 tools/ncch.py <cxi> extracted/<tid>` (exheader + decompressed .code)
+
+## nfc sysmodule
+- .code loads at 0x100000: text 0x100000 (0x34a64), ro 0x135000 (0x41e0), data 0x13a000 (0x149c), bss 0x2cc00
+- Services: cfg:s, fs:USER, gpio:NFC, hid:NFC, i2c::NFC, nwm::EXT, ps:ps, ptm:s
+- Stack is Broadcom NFA/NCI (strings NFC_TASK, NFA_APP, NFC_HAL_TASK) = same codebase as
+  AOSP external/libnfc-nci halimpl/bcm2079x -> use as reference for symbol recovery
+- I2C framing: 1-byte HCIT prefix 0x10 + NCI packet (e.g. `10 20 00 01 01` = CORE_RESET_CMD)
+- ro has amiibo key material ("unfixed infos" / "locked secret") + AES tables at ~0x355b0..0x36080
+
+## Host <-> controller wiring (from nfc .code, Ghidra project ghidra/proj)
+- I2C: i2c::NFC device 15. Write = cmd 0x14 WriteDeviceRaw(dev, size, static buf id1) (FUN_00109e88),
+  Read = cmd 0x15 ReadDeviceRaw(dev, size) -> static buf id0 (FUN_00106240). Both chunked to <=0x100.
+- Receive path is AOSP nfc_hal_nci_receive_msg style: read HCIT+3-byte header, then exactly payload len.
+- gpio:NFC init (FUN_0011dce4): 0x2000 out, set low; 0x1000 out; 0x10000 in + interrupt (SetRegPart2,
+  SetInterruptMask, BindInterrupt prio 8).
+  - 0x2000 = UPIO pin 1 = REG_PU: boot (FUN_00100c84) drives high then sleeps 50 ms; shutdown (FUN_00102f14) drives low
+  - 0x1000 = UPIO pin 2 = NFC_WAKE: set via nfc_hal_dm_set_nfc_wake (FUN_0011b5a0), level = active_mode != cmd
+    (AOSP default active-low -> low = asserted)
+  - 0x10000 = IRQ from controller
+- UPIO-style setter FUN_0011d420(pin, level) -> GPIO cmd 0x8 SetGPIOData(value, mask) (FUN_0011d214)
+
+## Controller patchram
+- Chip name table at ro 0x36304: 20791B3, 20791B4, 43341B0, ... -> controller is BCM20791
+- Two Secure Patch Download (SPD) sets, pre-framed as `10 2F 2E <len> <type> ...`
+  (NCI GID_PROP / OID 0x2E = NCI_MSG_SECURE_PATCH_DOWNLOAD):
+  - .code+0x36339 .. 0x37349 -> `extracted/patch_20791B4.ncd` (4112 B)
+  - .code+0x37360 .. 0x38805 -> `extracted/patch_20791B5.ncd` (5285 B)
+- Segment type = payload[0]: 00 header (chip ver string), 01 SRAM, 02 AON, 03 patch table, 04 secure patch table, 06 signature
+- **Signature segment (type 06, 48 bytes = ECDSA-P192 r||s sized) is ALL ZEROS in both sets**
+  -> strong hint the controller does not enforce patch signatures. Unconfirmed until tested on HW.
+- Per AOSP HAL: controller verifies sig itself (SPD_ERROR_INVALID_SIG), and COMMITS the patch to its NVM.
+  Host compares via GET_PATCH_VERSION (2F 2D) and only downloads on mismatch.
+  => a bad patch persists across reboots; risk of bricking the NFC controller (soldered).
+
+## Taking over from homebrew (nfcprobe/)
+- PMAPP_TerminateTitle(0004013000004002) returns 0 but nfc keeps running; svcTerminateProcess on its PID works
+- Killing nfc leaves its event bound to the IRQ pin in gpio -> gpio crashes (D8E007F7 @ 0x1009a8) when it fires.
+  nfcprobe masks the IRQ, unbinds, and binds its own event first.
+- With REG_PU held low (pins swapped in first attempt) every I2C xfer fails F9602FEF (NACK)
+
+## Live controller (first successful probe)
+- Power-up NTF `60 00 02 00 01`; CORE_RESET_RSP NCI 1.0; CORE_INIT: manuf 0x2E (Broadcom), info 00 15 0D 46,
+  ifaces 00 01 02 03 81 84 83 (0x83 = ISO15693 per AOSP brcm defs, from memory), max ctrl payload 255
+- GET_PATCH_VERSION after our power cycle: chip "20791B5", ver 0.0 -> the module's boot-time patch did NOT
+  survive a REG_PU cycle => patch looks RAM-only (to be confirmed by loading it ourselves)
+- IRQ high = packet pending; reading with nothing pending returns FF FF FF FF
+- Module patch descriptors (FUN_00106c2c -> PRM download start): 16-byte AOSP patchfile header right before
+  each record chain: B4 @0x136329 (proj 0x0203, ver 48.55), B5 @0x137350 (proj 4, ver 11.64 = 0x0B.0x40),
+  1 FPM patch each, len 0x1010 / 0x14A5
+- Stock B5 patch load (job B, 2026-10-29): all 24 records -> status 0; after the sig record
+  NTF 6F 2E 01 00 (auth OK) then CORE_RESET_NTF 60 00 02 00 01. GET_PATCH_VERSION then reports
+  proj 0004, ver 11.64 (0B 00 40 00), plus extra word 0x13D0 at p[30..31] (0 unpatched).
+  After REG_PU cycle: back to 0.0 => CONFIRMED RAM-only, no NVM commit on this board.
+- Signature-test bytes in patch_20791B5.ncd: 0xA44 = SRAM 0x3BB36 (padding after pop, never run), 0x1475 = sig[0]
+- Jobs X and Y (2026-10-29): BOTH accepted -- every record status 0, auth NTF 6F 2E 01 00, ver 11.64, gone
+  after power cycle. => no signature/integrity check on SPD patches on this chip. Custom RAM patches possible.
+  (Not yet proven the modified byte lands in RAM -- needs a memory read.)
+
+## Patch format details (tools/bcmpatch.py)
+- SRAM (01) / AON (02) streams begin with a Thumb entry ptr; load = (entry & ~1) - 4
+  - B4: SRAM 0x03b934..0x03c3c4, AON 0x068004..0x068444
+  - B5: SRAM 0x03b80c..0x03c530, AON 0x068008..0x068600
+- Hook table (03): N ROM *word* addresses, enable mask ((1<<N)-1), N replacement words (mostly Thumb BL
+  into the patch, some raw instruction replacements). B4: 13 hooks, B5: 22 hooks.
+- Implied chip map: ROM at 0x0 (hooks up to 0x1da38), RAM 0x03xxxx (patch at top ~0x3b800+), AON 0x068xxx,
+  other refs to 0x05xxxx, 0x07000000, 0x07c00000, 0x0849xxxx (likely MMIO, unconfirmed)
+- Ghidra project ghidra/chip (Cortex-M Thumb), one program per segment, functions seeded at entry + hook targets.
+  Hook handlers are mid-function trampolines into ROM -> need a ROM dump to get much further.
+
+## Open questions / next steps
+- Disassemble patch type-01 segments (Thumb, chip addrs 0x03xxxx RAM / 0x05xxxx) -> chip memory map
+- Find gpio:NFC usage (reset/power line) and the patch version compare logic in nfc .code
+- Safe first HW test: nfcprobe/ (stop nfc module, power-cycle, CORE_RESET/INIT + GET_PATCH_VERSION only)
+- Get a ROM dump. Attempt 1 (nfcprobe job R): BT HCI VSC Read_RAM 0xFC4D over HCIT 0x01
+  (01 4D FC 05 addr32 len8 -> 04 0E .. 4D FC status data), no patch needed; dumps 0..0x40000 and AON
+  to sdmc:/nfc_rom.bin / nfc_aon.bin, then validates by reading the stock patch back at 0x3B80C.
+  RESULT: chip answers BT HCI over HCIT 0x01 (04 0E 04 01 4D FC 01) but Read_RAM = status 01
+  (unknown command). BT HCI path exists, Read_RAM doesn't.
+  Next: tiny custom SPD patch that exfiltrates memory (patch header record holds RAM ptrs 0x3B590/0x3B598,
+  chipver string + version are reflected by GET_PATCH_VERSION).
+- (answered: patch is RAM-only) Are there NCI_MSG_EEPROM_RW / memory read/write vendor cmds?
+
+## Network control (nfcprobe/source/netsrv.c, tools/nfcnet.py)
+TCP 8020, request op u8 + len u16 + payload, reply op u8 + result u32 + len u16 + payload.
+Ops: 0 ping, 1 takeover, 2 power (0 off / 1 cycle), 3 i2c write, 4 read packet (u16 ms),
+5 write+read, 6 gpio (value, mask), 7 release. Button jobs release a network-held chip first.
+
+## Custom patches and ROM dump (chip/, tools/mkpatch.py, tools/dumpchip.py) -- 2026-10-29
+- Unsigned custom patches work. Layout rules learned the hard way:
+  - SRAM init is entered at load+4 (right after the entry word), NOT via the entry pointer.
+  - Init must return 0; nonzero => chip goes silent after auth (no CORE_RESET_NTF).
+  - Hook table may be empty (payload = 4-byte mask 0). Stock header + stock AON segment reused.
+  - Header chip-version string is free-form and echoed by GET_PATCH_VERSION.
+  - GET_PATCH_VERSION payload bytes 0..19 are read live from RAM 0x3B7A8 (proj, ?, chipver[16]);
+    RAM global 0x38A70 -> 0x3B7A0. Last field of the response = total patch size.
+- Core: Cortex-M3 vector table (MemManage/BusFault/UsageFault/DebugMon), only 8 external IRQs.
+  BUT SCS (0xE000E000..) reads all zero: no DWT/FPB/SysTick regs visible. Build patches as plain Thumb (M0).
+- ROM exception stubs jump via RAM table at 0x38000 (vector layout: DebugMon 0x38030, SysTick 0x3803C,
+  IRQ0..7 0x38040..). SysTick/fault stubs push {lr} first, IRQ stubs don't.
+- Last received NCI command sits at RAM 0x3AF05 (GKI-ish buffers, payload at addr = 1 mod 4).
+  GET_PATCH_VERSION ignores extra payload; unknown proprietary OID -> status 05.
+- dumper4: wraps SysTick+IRQ0..7, scans 0x3A001..0x3B590 step 4 for "2F 2D 07 sess seq16 addr32",
+  fills 0x3B7A8 with [addr][16 bytes]. Fill lags one request; pipelined over TCP ~2.8 KB/s.
+  Pipelining can tear a chunk -> dump reads twice and re-reads disagreements.
+- ROM: 128 KB at 0x0, mirrored at 0x20000 (up to 0x38000). RAM 0x38000..; initial SP 0x3A374, reset 0x61.
+  "Copyright (c) Broadcom Corp. 2011 BCM20791B0 (r) NFC Firmware", built "Dec 22 2012".
+  dump/rom_20791B5.bin sha256 258ab0fc63a43a7c83da54fa66e464365a7af025c56d0b721217ad24e47f6424
+  (two full passes identical). dump/ram_38000_40000_dumper4.bin = RAM with dumper4 loaded.
+- BT HCI (HCIT 01) is parsed (Read_RAM 0xFC4D -> status 01 unknown cmd).
+
+## ROM: NCI command path, debug monitor (chip/memrw.c, tools/chipmon.py) -- 2026-10-29
+- NCI command dispatcher 0x189A2(msg): msg = [MT|PBF|GID][OID][len][payload].
+  index = base[gid] (bytes @0x1F3EC) + oid, must be < 0x4C, gid valid flag @0x1F3DC, else reject.
+  Then the patch-mode filter 0x3742 (during download only CORE_RESET/INIT, 2F/04, 2F/2D, 2F/2E pass),
+  then RAM hook *(0x38718)(msg) (ROM never writes it; nonzero return = consumed),
+  then handler table @0x1F3FC (u32 Thumb ptrs). 0x1898C = reject (status 05).
+- Response API: 0x188C2(total_len incl. 3-byte hdr, mt) -> pkt (hdr[0] = mt<<5, hdr[2] = len-3),
+  0x188E4(pkt) sends (first calls RAM hook *(0x38714)(pkt), nonzero = consumed).
+  0x19F88(status, gid, oid) = status-only response. 0x1E6D6 = memcpy(dst, src, n).
+- GET_PATCH_VERSION handler 0x3B56. Patch state struct at 0x38A00 (+0x6C -> 0x3B7A0 header copy).
+- Implemented 2F OIDs (Broadcom names): 00 TAG_SET_MEM, 01 TAG_GET_MEM, 02, 04 GET_BUILD_INFO, 05, 06,
+  08, 09 FRAME_LOG, 0C, 10, 11, 16, 17, 18, 19, 1C, 1D, 1F, 20, 21, 22, 23, 27, 29 EEPROM_RW,
+  2D, 2E, 2F, 30, 31. Proprietary RF interfaces from CORE_INIT: 81 84 83 (no 0x80 MIFARE interface).
+- Debug monitor memrw: hooks 0x38718, answers 2F 2C (op, addr32, ...): read8/write8/call/read32/write32,
+  replies 4F 2C status + data. ~17 KB/s pipelined (vs 2.8 KB/s for dumper4), verified against the ROM.
+  Build note: -fno-jump-tables (switch would pull in libgcc __gnu_thumb1_case_uqi).
+
+## RF framer + raw ISO14443A (tools/rfpoll.py, tools/rawa.py, memrw ops 5/6) -- 2026-10-29
+- RF_DISCOVER (21 03) is rejected (01) until RF_DISCOVER_MAP (21 00) sets RAM 0x3872C.
+  Map T2T+ISO-DEP -> Frame: 21 00 07 02 01 01 04 01 01; poll NFC-A: 21 03 03 01 00 01.
+  Frame interface: chip adds CRC_A on TX, checks/strips it on RX, data RSP ends with a status byte.
+  A CRC-less answer (Mifare AUTH nonce) is dropped -> 60 08 B2 (RF timeout).
+- FRAME_LOG: set RAM 0x380A0 (TX) / 0x380A1 = 1 -> every frame as NTF 6F 09:
+  dir(1=TX) | timer u32 (down-counting) | RF mode (0x85 A anticoll, 0x02 A data, FE timeout) | bytes | bits | data
+- Framer registers (0x5C540..): 0x5C55C TX ctrl (ROM writes 0x88 before TX), 0x5C568 length code
+  (bytes << 4 | extra bits), 0x5C56C cmd (1 before TX, 2 = after-TX in byte path), 0x5C570/574 mode
+  (anticollision/raw mode = 0/1; data = 0/0), 0x5C594 bit0 TX busy, 0x5C5A0 RX byte count,
+  0x5C58C RX extra bits, 0x5C588 RX status (bit 1 = no/bad CRC: 0x20 ok, 0x22 for 4-bit ACK/NAK
+  and CRC-less frames). TX byte port 0x5C600, RX byte port 0x5C620 (each access pops; ROM uses
+  the 4 word mirrors). Timer 0x5E024 counts DOWN at 1.0 MHz (75.5 ticks = 8 bits at 106 kbps).
+- ROM primitives: 0x11DE(r570, r574, len) + 0x1280(buf, len) = bit-mode TX (REQA/anticoll/SELECT);
+  0x1206(buf, n) = byte TX with RAM hook *(0x380E4); 0x1372 = RX done (hook *(0x380E0)(stage)).
+- Framer ISR 0x197E, status 0x5C5C0: bit2 -> 0x15F2 (sub 0x5C5C4, filter *(0x380D4)),
+  bit1 -> 0x1736 (sub 0x5C5D0 TX/RX, filter *(0x380D8); bit4 RX done, bit5 = RX timeout/no answer),
+  bit0 -> 0x18FE (sub 0x5C5DC, filter *(0x380DC)). Sub-status registers are write-1-clear.
+- Raw mode (memrw CAPTURE + TXRAW): filter 0x380D8 returns 0 so the ROM never sees our exchanges
+  (else it times out, re-polls and the chip stops answering for seconds). In r574=1 mode frames go out
+  exactly as given (no CRC) EXCEPT SELECT (93 70 ..) which the hardware CRCs. A lone full byte needs a
+  padding byte in the FIFO (7-bit frames must not be padded). Writing cmd 0x5C56C from the RX
+  interrupt makes the next TX hang the chip; write it at TX time instead. Rare hangs remain (TX right
+  after a 4-bit answer); rawa.py reloads and resumes.
+- Card on the 3DS (user's): UID C1C1C1C1, ATQA 0004, SAK 88, Mifare Classic 1K, Gen1a magic
+  (40/7 -> 0A, 43 -> 0A). Full dump via backdoor: dump/card_C1C1C1C1.bin. Raw AUTH (60 00 + CRC)
+  returns nt; nonces vary.
+- Parity off (TX and RX): 0x5C560 = 0x08 (reads back 0 normally; ROM writes other values there).
+  Found by bit-flip sweep (one bit at a time over 0x5C540-5C5BC, 5C640-5C6CC, 5C780-5C7BC; only hit
+  of ~600, about half the flips hang the chip). With it, hand-packed READ 0 (bytes LSB first, each
+  followed by its parity bit, code 0x44) is answered, and RX comes back as the raw stream with
+  parity bits: 21 bytes for an 18-byte answer; 9-bit groups starting at bit 4 decode to block 0 with
+  all parity and the CRC correct. Needed for Crypto1 auth ({nr}{ar} with encrypted parity); the
+  ROM has no Crypto1.
+  Earlier misses: r570 0..3 x r574 {0,1,2,3,4,5,8,9,0x10,0x11,0x20,0x21}, r55c {0x80,0x08}.
+
+## Mifare Classic Crypto1 auth WORKS (tools/mfc.py, tools/crypto1.py, memrw op 7) -- 2026-10-30
+- RX alignment with parity off: the RX stream starts at bit (TX bits % 8) -- READ (36 bits) -> 4,
+  9-bit frame -> 1 -- except after 7-bit short frames (WUPA/REQA), which give 0.
+- (WRONG, see "Encrypted WRITE works" below) ~~TX FIFO in parity-off bit mode holds 7 bytes~~: 21
+  bytes written at once go out fine, no pacing needed. (Pace N=83 was also off: the timer is 1.0 MHz.)
+- Data mode (r574=0) with length code 0 appends a HW CRC; with an explicit code it does not.
+  SELECT (93 70) is CRC'd by HW in both modes.
+- Length codes >= 0x80 do odd things (0x90 gives a short frame). The 72-bit {nr}{ar} (9 FIFO bytes)
+  goes out with code **0x78** in bit mode (r574=1), paced or not. Found by sweeping 0x78-0xFF;
+  0x88/0x90/0x00/0x87 never got an answer.
+- memrw op 7 AUTH does the whole 3-pass auth on-chip (host round trip ~200 ms is too slow): sends
+  the AUTH frame, decodes nt (offset 4), runs Crypto1 (key, uid^nt), sends {nr}{ar} with encrypted
+  parity ~0.9 ms later and returns nt + the cipher state (odd/even). addr = pace<<16 | r574<<8 |
+  code for the {nr}{ar} TX (default 0x188 -- use 0x178). The host continues with tools/crypto1.py
+  (crapto1 port, checked against the mfkey64 example trace and against the chip state).
+- Verified on the Gen1a card (tools/exp/auth.py HOST KEY BLOCK 178): {at} decrypts to suc96(nt),
+  encrypted READ answers with correct CRC: block 0 (key FF..), block 4 (sector 1 key A
+  c1c1c1000001), block 8 (sector 2 key c1c1c1000002).
+
+## "Chip stalls" were lost replies (host side) -- 2026-10-30
+- The periodic "unexpected answer: (nothing)" stalls (every ~5-15 s, also with the chip idle and no RF
+  traffic, framer IRQ log empty) are not chip hangs: the request is executed (a WRITE8 lands), only
+  the reply never reaches the host, and the next request is answered at once. Reloading the
+  monitor on every such timeout was what made dumps slow and flaky.
+- The IRQ pin (gpio 0x10000) is a reliable "packet pending" signal: 0 idle, 1 once the reply is
+  queued, 0 after it is read. nciRecv used to read blind (immediately, then every 20 ms); a read
+  racing with the chip queueing a packet loses that packet. nfcprobe now reads only while IRQ = 1.
+- Mifare wrong-key auth (card silent after {nr}{ar}) does not hang the chip by itself.
+- Result with IRQ-gated reads (nfcprobe, net ops 0x10-0x14): no stalls at all. Full 1K dump with
+  the 3 known keys in 3.8 s (was minutes); ~280 wrong-key auths (defaults only) in 16.7 s, ~60 ms
+  each. Data blocks match the Gen1a backdoor dump; trailers differ only in key B (not readable).
+- Exit path (START): release pins/IRQ, then PMAPP_LaunchTitle(nfc 0004013000004002) -> 0, HOME
+  menu fine afterwards. Without the release, gpio dies on exit (HOME/sleep are blocked while running).
+
+## Mifare Classic WRITE: backdoor works (encrypted: see next section) -- 2026-10-30
+- WRITE is two-phase: `A0 block`+CRC -> 4-bit ACK (0x0a), then 16 data + CRC -> 4-bit ACK. The data
+  frame is 18 bytes = 162 bits (with parity), i.e. 21 FIFO bytes in parity-off packing.
+- The `A0` command ACKs fine in every mode. The 18-byte DATA frame is the problem.
+- Bit-mode length register 0x5C568 is two 3-bit fields: byte count [6:4] (max 7), extra bits [2:0]
+  (max 7) -- confirmed by write/readback: 0x90->0x10, 0x142->0x42, 0xABC->0x34, 0xFFFF->0x77,
+  0x1F2->0x72. ROM 0x1280 splits the code the same way (r4=(code>>4)&0xF, r5=code&0xF). The known
+  codes fit code=13*N+16 (READ N=4 ->0x44, {nr}{ar} N=8 ->0x78); N=18 -> 0xFA, in the ">=0x80 does
+  odd things" zone. Swept code 0x00-0x1FF x prefill 1-6 x pace 68-200 ticks: the card never answers
+  the 18-byte bit-mode frame (not even a NAK). The parity-off bit-mode FIFO (7 bytes) + saturating
+  length field cannot send a 162-bit frame.
+- (SUPERSEDED) ~~ENCRYPTED writes are blocked by the chip~~ -- they work with mixed-parity frames,
+  see the next section. OP_MFWRITE and a wider length code were tried and dropped.
+- Gen1a BACKDOOR write is plaintext (no crypto), so it uses DATA mode (r574=0): the HW frames whole
+  bytes, adds parity+CRC (length code 0), and streams the frame through the deeper data-mode FIFO --
+  no 7-byte limit. Sequence: gen1a unlock (40/43), `A0 block` data-mode (ACK 0x0a), 16 data bytes
+  data-mode (ACK 0x0a). Verified on the card: wrote a test block, read it back, restored the
+  original, all exact. Also note the backdoor WRITE (unlike auth) tolerates a host round-trip
+  between the command ACK and the data frame, so it needs no on-chip op.
+- Host/app: tools/rawa.py gen1a-write BLK HEX32 (prototype); app mfc.c mfGen1aUnlock / mfGen1aWrite,
+  net op 0x15 OP_GEN1A_WRITE (block u8, data[16]; verifies by reading back), tools/nfcnet.py
+  gen1awrite. Data-mode TX helper: monTxraw(data, len, 0, 0, 0 /*r574*/, 0x88, 0).
+
+## Encrypted WRITE works: mixed-parity frames (tools/exp/mixedparity/) -- 2026-10-30
+Measured with an experimental monitor op (memrw_auth.c op 8 TXTIME: TX, then timed register stores
+while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4 bits SoF/EoF).
+- The TX FIFO is deep (>= 21 bytes, both modes); data mode and bit mode time identically, same path.
+- Frame length = FIFO contents. [2:0] of 0x5C568 = bits of the last byte, but only if that byte's
+  index i == [6:4]; i < [6:4] -> sent whole, i > [6:4] -> the last byte is DROPPED. The index counter
+  is wider than [6:4], so a partial last byte is only possible for frames <= 63 bits. Long frames
+  are whole bytes: 0x70 sends n*8 bits. The [6:4]/[2:0] decision latches when byte [6:4] goes out.
+- A FIFO underrun does not end the frame: TX stalls (busy stays 1, dead time on air) until the next
+  byte; a byte written before the shifter runs dry continues the frame seamlessly. Trailing junk
+  bits (168-bit frame) and stalled frames are not answered by the card.
+- **0x5C560 (parity off = 8) is sampled live, per byte**, at the end of each byte's 8 data bits
+  (~69.5 ticks after TX start for byte 0, then +75.5 per raw byte, +85 per HW-parity byte). Parity
+  ON at TX start latches a HW CRC onto the frame; start with parity off.
+- So a 162-bit frame = 20 FIFO bytes (code 0x70): 2 data bytes with HW parity (9 bits each) + 18 raw
+  FIFO bytes (144 bits) = 18*9. Alignment allows HW-parity data bytes (j1, j2) in {0,8,16} x {1,9,17}.
+  Toggle 0x5C560 half a byte before each decision point (mixed.py build()).
+- HW parity bit = odd parity of ALL stream bits since the last inserted parity bit (raw bits
+  included), not just its byte (pair (16,17) NAKed with a per-byte check, works with this model).
+  For pair (0,1) both models agree. Each pair fits with p = 1/4; some pair fits ~3/4 of the time,
+  else re-auth (new nt, new keystream).
+- Verified on the Gen1a card, block 2, key A FF..: Gen1a backdoor write via mixed frame (all 6 pairs
+  ACK, pattern lands); ENCRYPTED write: A0 ACK, data ACK (decrypts 0xA), encrypted READ returns the
+  written pattern -- 12/12 data frames ACKed over pairs (0,1) (0,9) (8,9) (8,17) (16,17) ((0,17)
+  never came up); 8 read back exact, the other 4 hit the parity-left-on issue below. Block restored
+  to zeros after.
+- Pairs ending on byte 17 leave 0x5C560 = 0 (parity on): reset it to 8 before the next raw TX.
+- Experimental monitor (memrw_auth.c) = memrw + op 8 TXTIME (prototype, kept for reference).
+- Implemented: chip/memrw.c op 8 TXSCHED (TX + up to n timed stores, delays from the last FIFO
+  write, waits for TX busy to clear; txraw/auth pacing removed, IRQ log 32 -> 16; 3256 bytes).
+  Verified from the host (chipmon.txsched): 2/2 encrypted writes read back. App: mfc.c
+  mfWriteBlock / mfWrite (pair picked on a cipher copy before A0; no pair -> re-auth, up to 16),
+  net op 0x16 OP_MF_WRITE, tools/nfcnet.py mfwrite BLOCK KEY HEX32 [b].
+- App verified (nfcnet.py mfwrite, block 2 key A FF..): 3/3 writes VERIFIED, independent mfread
+  matches, block back to zeros. Block 5 with sector 1 key A -> "A0 nak 4": access bits F0 FF 00 =
+  condition 100 for data blocks (write needs key B), the card refuses correctly, nothing written.
