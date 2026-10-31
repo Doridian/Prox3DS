@@ -297,7 +297,8 @@ static int auth(const u8 *key, u32 uid, u32 nr, u32 code, const u8 *frame, u32 l
 // Framer snapshot (OP_SNAP): on the next frame-log NTF (6F 09, FRAME_LOG on) of the armed RF mode,
 // 0x5C540-0x5C5BC, 0x5C640-0x5C6CC and 0x5C780-0x5C7BC go into the capture ring (free while not
 // capturing), as words. Shows how the ROM set the framer up for a technology (NOTES.md, NFC-V).
-static u32 snap_mode, snap_count;
+// With a range given (base u32, words u8 <= 128), that range instead.
+static u32 snap_mode, snap_count, snap_base, snap_words;
 
 static void snap_range(u32 *dst, u32 a, u32 n)
 {
@@ -308,9 +309,13 @@ static int send_hook(u8 *pkt)
 {
 	if (snap_mode && pkt[0] == 0x6F && pkt[1] == 0x09 && pkt[3 + 5] == snap_mode) {
 		u32 *d = (u32 *)capture.ring;
-		snap_range(d, 0x5C540, 32);
-		snap_range(d + 32, 0x5C640, 36);
-		snap_range(d + 68, 0x5C780, 16);
+		if (snap_words) {
+			snap_range(d, snap_base, snap_words);
+		} else {
+			snap_range(d, 0x5C540, 32);
+			snap_range(d + 32, 0x5C640, 36);
+			snap_range(d + 68, 0x5C780, 16);
+		}
 		snap_mode = 0;
 		snap_count++;
 	}
@@ -415,6 +420,8 @@ static int hook(u8 *msg)
 	}
 	case OP_SNAP: // addr = RF mode to snapshot on (0 = off) -> ring address, snapshots taken so far
 		snap_mode = addr;
+		snap_words = n >= 5 && arg[4] <= 128 ? arg[4] : 0;
+		snap_base = n >= 5 ? get32(arg) & ~3 : 0;
 		SEND_HOOK = (u32)send_hook;
 		put32(buf, (u32)capture.ring);
 		put32(buf + 4, snap_count);

@@ -608,9 +608,9 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - Next: find the ROM's per-tech framer setup (likely table-driven, e.g. the store sequence around
   0xE62C writing 0x5C550 / 0x5C674 from a struct), hook it or call it from the monitor with tech 4, then
   sniff our own frames with pm3 `hf iclass sniff` and look for the card's SOF answer to ACTALL (0A).
-- memrw OP_SNAP (10, addr = frame-log RF mode): the NCI send hook 0x38714 snapshots 0x5C540-5BC,
-  0x5C640-6CC, 0x5C780-7BC into the capture ring on the next frame-log TX NTF of that mode (FRAME_LOG
-  on). memrw.bin 3300 of 3364 bytes. At TX time A / B / V differ only in: 0x5C554 16 / 13 / 18,
+- memrw OP_SNAP (10, addr = frame-log RF mode [, base u32, words u8 <= 128]): the NCI send hook
+  0x38714 snapshots 0x5C540-5BC, 0x5C640-6CC, 0x5C780-7BC (or the given range) into the capture ring on the next frame-log TX NTF of that mode (FRAME_LOG
+  on). memrw.bin 3356 of 3364 bytes. At TX time A / B / V differ only in: 0x5C554 16 / 13 / 18,
   0x5C570 0 / 0 / 1, 0x5C574 1 / 2 / 5 (0x5C568 length code 7 / 0 / 0). The rest is the same: 0x5C550
   8, 0x5C55C 22 (post-TX), 0x5C5B8 1C (idle: C), 0x5C5BC 3, 0x5C640 42, 0x5C64C 9, 0x5C674 4, 0x5C678 3,
   0x5C6AC 80, 0x5C6C4 2, 0x5C7A8 1C, 0x5C7AC 8 (all 0 when idle).
@@ -622,6 +622,36 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   r570 0/1 x r574 4-7: no answer anywhere, no chip hang.
 - pm3 `hf sniff` (raw HF envelope, waits for a field > 180, cancellable over USB, no button needed):
   started after the stall, it triggered (field present) but the 32700 averaged samples (avg of 32) are
-  flat: no visible modulation from our raw V TX in that window. Next: sratio 1 (less averaging) to see
-  10%-ASK pulses, and compare with the ROM's own V poll envelope (1-of-256) to learn what a V frame
-  looks like on this pm3 at all.
+  flat: no visible modulation from our raw V TX in that window (the stall had reset 0x5C554, see below).
+- pm3 `hf sniff` reading: the trigger (> 180) is a modulation edge, not field presence (the samples are
+  an AC-coupled peak-detector envelope, idle -16). Raw mode (no --smode) = 0.59 us/sample, 32700 samples
+  (19 ms); `--smode avg --sratio 2` = 3.54 us/sample (the ARM loop is slower than the SSC), 116 ms.
+  The ROM's V poll decodes from it: SOF, one +-127 pulse per byte at (value + 1) 18.88 us slots after
+  the SOF, EOF = `24 01 00 4E BF` (INVENTORY + CRC), 1366 avg samples per byte (4.83 ms).
+- Snapshots of 0x5C000-0x5C7FF at TX time (OP_SNAP with a range), A vs B vs V twice: stable V-only
+  values 0x5C440-44C 08 D5 1C 9A (A 07 C3 0A C8, B 0; a per-tech table, ROM 0xD728), 0x5C48C 18,
+  0x5C53C 1, plus the framer trio above. 0x5C04C, 0x5C424/42C, 0x5C454/458, 0x5C510-518 vary per
+  snapshot (measurements). None of them is needed for V TX.
+- Framer coder / rate: ROM 0x11C8(tech, rate) writes 0x5C554 = 0x10 | tech, 0x5C558 = 0x10 | rate
+  (callers: tech 0 = A, 3 = B, 6/7 = F, rate = 106/212/424/848). V is tech 8 (0x5C554 = 18, set
+  elsewhere). TX busy time (txsched, 1 MHz) from the stall, 1 data byte:
+  - 0x5C554 low nibble 8 (18, 38, 08): 1-of-256, 4832 us/byte + 115 us SOF/EOF; CRC appended by HW
+    (1 byte = 3 on air). 9-E: ~75 us/byte, ~20 us overhead, but NO modulation on the pm3 (not 1-of-4,
+    or not wired to the modulator). Others: no TX.
+  - 0x5C558 bits 2-3 scale the slot: 0 = 18.88 us, 1 = 1/16 (302 us/byte), 2 = x4; bits 0-1 don't
+    change TX timing (RX rate?).
+  - 0x5C560 = 4 (or 0C): no TX CRC (1 byte = SOF + 4.83 ms + EOF). 8 = default (A: parity off).
+  - r570 / r574 / 0x5C550 / 0x5C564 / length code: no effect on V TX timing.
+- So raw V TX works: stall (capture on, RF_DISCOVER 76), 0x5C554 = 18, txsched(data, r570 1, r574 5)
+  puts SOF `0A 22 5F` EOF on air (pm3-decoded, CRC by HW); with 0x5C560 = 0C, iClass ACTALL `0A` /
+  IDENTIFY `0C` go out plain. Only in 1-of-256 though (iClass readers use 1-of-4; ISO15693-2 VICCs
+  must accept both, PicoPass probably does).
+- RX: no answer to ACTALL / IDENTIFY. Sweeping 0x5C558 0-3 x r570 0-7 x r574 0-F: no RX-done, the IRQ
+  log only shows TX done (group 1 0x20, group 2 0x10). The pm3's peak-detector sniff can't see card
+  load modulation (no 423.75 kHz energy after our frames, but none expected either), so it is unknown
+  whether the card answers 1-of-256 at all. ROM 0x1206 (data TX) skips writing 0x5C56C = 2 after TX
+  only in mode 0x89, so V RX is armed differently from A/B. ROM V module (NCI side): 0x1B000-0x1B400,
+  state 0x39EAC, RAM hooks 0x38770.
+- Next (needs someone at the pm3): `hf iclass sniff` (button to stop) while the 3DS sends ACTALL /
+  IDENTIFY in 1-of-256: tells whether the card answers, and pm3 decodes our frames. A known V target
+  (`hf 15 sim`, button to stop) would let us find the V RX settings.
