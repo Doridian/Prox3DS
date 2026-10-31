@@ -499,6 +499,9 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   trailer with ACL 0F00FF (trailer bits 011, key B writes) cloned, key dump == file; real freeze
   (778F08, trailer bits 110) refused; original cloned back in 1:49 (sector 2 keys recovered by
   nested first, sector 3 written with key B) == backup. Bad BCC and broken ACL dumps refused.
+- Gen1a F5F7BF02: test dump (UID DEADBEEF, sector 1 text, sector 2 keys) cloned in 5 s, key dump ==
+  file; original cloned back == backup. (The Gen2 restore's 1:49 was likely nested returning wrong
+  keys at distance 160; fixed below.)
 
 ## Nested: verify the key, keep the calibrated distance -- 2026-10-31
 - On the Gen2 card (5A11E21B) distance 160 is wrong, yet crapto1_nested at 160 still returned a key
