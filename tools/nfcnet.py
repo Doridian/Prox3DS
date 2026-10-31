@@ -426,9 +426,10 @@ def main():
         hdr, pwd_ok, pages, name = r
         print(name, f"(password {'ok' if pwd_ok else 'refused'})" if pwd else "")
         print("version  ", hdr[:8].hex(), "\nsignature", hdr[12:44].hex())
-        for i in range(3):
+        ev1 = "EV1" in name
+        for i in range(3) if ev1 else [2] if name in ("NTAG213", "NTAG215", "NTAG216") else []:
             c = hdr[44 + 4 * i:48 + 4 * i]
-            print(f"counter {i}: {int.from_bytes(c[:3], 'little')}  tearing {c[3]:02X}")
+            print(f"counter {i}: {int.from_bytes(c[:3], 'little')}" + (f"  tearing {c[3]:02X}" if ev1 else ""))
         for i, d in enumerate(pages):
             print(f"{i:3} {i:02X}: {d.hex(' ') if d else '-- -- -- --'}")
         if out:

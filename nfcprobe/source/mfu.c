@@ -191,6 +191,10 @@ int mfuDumpCard(MfuDump *d, const u8 *pwd)
 	d->pages = t->pages;
 	for (int p = 0; p < d->pages && !mfCancel; p += 4) {
 		if ((r = mfuRead(p, buf)) < 0) return -1;
+		if (!r) { // once more: a lost answer must not end the dump (the reselect dropped the auth)
+			if (d->pwdOk && mfuPwdAuth(pwd, pack) < 0) return -1;
+			if ((r = mfuRead(p, buf)) < 0) return -1;
+		}
 		if (r) {
 			for (int k = 0; k < 4 && p + k < d->pages; k++) {
 				memcpy(d->data[p + k], buf + 4 * k, 4);

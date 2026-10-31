@@ -541,11 +541,19 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   parity + CRC, stale frames dropped). OP_14A_TX code FF = data mode now.
 - A NAK (or no answer) leaves the card IDLE: every failed command is followed by iso14aSelect.
 - PWD_AUTH is never tried on its own: a wrong password counts towards AUTHLIM, which can lock the
-  protected area for good. Only a given password (OP_MFU_DUMP pwd) is sent, once. Not tested on this
-  card (password unknown).
+  protected area for good. Only a given password (OP_MFU_DUMP pwd) is sent, once.
 - Writes (A2 page data[4] -> 4-bit ACK A, polled 10x for the EEPROM write) only to user memory, read
   back. Page 10 DEADBEEF via net and 10 from the UI editor, both verified, restored to 00000000 by the
   UI's "write user pages" (1 page written, the rest skipped as equal).
 - Dump file = pm3 mfu_dump_t (.bin: version[8], tbo[2], tbo1, max page, signature[32], counter +
   tearing [3][4], pages). `pm3 hf mfu view -f` reads ours with every field right.
 - Net ops 0x1E OP_MFU_DUMP, 0x1F OP_MFU_WRITE; nfcnet.py mfudump [PWD] [-o OUT], mfuwrite PAGE HEX8.
+- NTAG215 test card: UID 04C8E3BA064F80, version 0004040201001103, 135 pages, blank (CC E1103E00,
+  empty NDEF 0300FE), AUTH0 FF, ACCESS 00 (NFC counter off: READ_CNT 02 NAKs), PWD FFFFFFFF -> PACK 0000.
+- Password test on it (config written raw via OP_14A_TX FF, CFGLCK and AUTHLIM left 0): PWD 12345678,
+  PACK ABCD, confirmed by PWD_AUTH before AUTH0 80 + PROT 1 went in. Then READ 80 -> NAK 0, after
+  PWD_AUTH it reads. mfudump: no password 128/135 pages; wrong password "refused", 128/135; right
+  password 135/135 with PWD/PACK filled in. A wrong PWD_AUTH got NO answer here (no 4-bit NAK).
+  Restored (AUTH0 first, while authenticated): dump byte-identical to before, FFFFFFFF auths again.
+- Bug found by it: one lost READ answer ended the dump there (taken for the protected area start: 15
+  pages unread once). mfuDumpCard now retries a failed READ once (re-auth first) before stopping.
