@@ -77,7 +77,7 @@ static void cardDraw(void)
 	char hdr[48], s[120];
 	u32 txt = uiCol[COL_TEXT], dim = uiCol[COL_DIM];
 	snprintf(hdr, sizeof(hdr), "ATQA %02X%02X  SAK %02X", sc.atqa[1], sc.atqa[0], sc.sak);
-	uiHeader("DESFire: card", hdr);
+	uiHeader(diResult > 0 ? "DESFire: card" : "ISO14443-4: card", hdr);
 	float y = 28;
 	uidHex(&sc, s, " ");
 	uiText(12, y, S_SMALL, dim, "UID (%d bytes)", sc.uidLen);

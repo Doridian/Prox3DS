@@ -147,7 +147,7 @@ int dfReadInfo(DfInfo *d)
 	d->atsLen = d->ats[0] < sizeof(d->ats) ? d->ats[0] : sizeof(d->ats);
 	u8 c[4] = { 0x60 }, buf[128], st;
 	int n = RUN(c, 1, d->ver, sizeof(d->ver));
-	if (st || n < 14) FAIL(0, "GetVersion: %s (not a DESFire)", n < 14 && !st ? "short answer" : dfStatusName(st));
+	if (st || n < 14) FAIL(0, "GetVersion: %s %02X (not a DESFire)", n < 14 && !st ? "short answer, status" : dfStatusName(st), st);
 	d->verLen = n;
 	logp("DESFire: %s, %lu bytes\n", dfVersionName(d), dfStorage(d->ver[5]));
 

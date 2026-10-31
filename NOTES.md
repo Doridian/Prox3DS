@@ -713,3 +713,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   aid_desfire.json), anything behind a key, TX chaining (commands fit one frame).
 - App: DESFire family (dfui.c) for any SAK with bit 5 and not bit 3; a non-DESFire ISO14443-4 card shows
   its ATS. Card screen, application screen (D-pad left/right between apps, A shows a read file), Y saves sdmc:/nfcprobe/desfire/<UID>.txt.
+- Non-DESFire path checked with a JavaCard (NXP J3H145, JCOP3): UID 046D45528C5080, ATQA 0048, SAK 20,
+  ATS 0578777102 (FSC 256, FWI 7, CID ok, no historical bytes). Native GetVersion 60 -> 67 00 (ISO7816
+  wrong length): screen shows the ATS + "status 67". pm3: CPLC fabricator 4790 / type 0503 / OS 8211
+  (release date 6351), Card Recognition Data GP 2.2.1, SCP03, ISD AID A000000151000000.
