@@ -312,7 +312,7 @@ void menuDraw(Menu *m)
 
 // --- generic scan ("hf search"): identify, then hand the card to its family ---
 
-static const CardFamily *families[] = { &mfcFamily, &mfuFamily };
+static const CardFamily *families[] = { &mfcFamily, &mfuFamily, &dfFamily };
 #define NFAMILIES (int)(sizeof(families) / sizeof(families[0]))
 
 static Card tag; // the last card the generic scan found

@@ -7,7 +7,8 @@
 
 // The app shell (app.c): a stack of screens, dialogs, the card job worker, and the root menu with a
 // generic scan that identifies the card and hands it to its family (Proxmark style: "hf search", then
-// "hf mf ..."). Families: MIFARE Classic (mfui.c, editor.c), Ultralight / NTAG (mfuui.c, mfuedit.c).
+// "hf mf ..."). Families: MIFARE Classic (mfui.c, editor.c), Ultralight / NTAG (mfuui.c, mfuedit.c),
+// DESFire / ISO14443-4 (dfui.c).
 
 typedef struct {
 	void (*show)(void); // whenever it becomes the top screen (entered, or returned to); may be NULL
@@ -58,7 +59,7 @@ typedef struct {
 	void (*show)(void);           // UI thread: push its card screen
 	void (*menu)(void);           // UI thread: push its menu
 } CardFamily;
-extern const CardFamily mfcFamily, mfuFamily;
+extern const CardFamily mfcFamily, mfuFamily, dfFamily;
 
 const char *cardTypeName(const Card *c); // best guess from ATQA / SAK, any ISO14443-A card
 void uidHex(const Card *c, char *out, const char *sep); // out: up to 30 chars

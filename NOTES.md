@@ -687,3 +687,29 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - RX is a separate open problem (iClass answers in 15693 format: 423.75 kHz subcarrier, Manchester).
 - pm3 (local patches, uncommitted): `hf iclass sniff -t <ms>` stops by itself (firmware timeout in
   SniffIso15693, checked per DMA buffer); no button needed for unattended sniffs.
+
+## DESFire without keys (issue #8) -- 2026-10-31
+- Test card: UID 04B1B1B1B1B1B1, ATQA 0344, SAK 20, ATS 0675778102 80 (FSCI 5 = 64, FWI 8, CID ok).
+  GetVersion 04010212001A05 / 04010102011A05 = DESFire EV2, 8192 bytes, 3584 free, batch B0B0B0B0B0,
+  week 37/2021. PICC key settings 0B, 1 AES key (version 00). 7 apps (LEAF F51CDE/DB/D8/DC, F532F1,
+  42494F, Schlage F532F0), every one key settings EB, AES. Signature reads (pm3: verifies, EV2 key).
+- The ROM does RATS itself even with ISO-DEP mapped to the Frame interface: RF_INTF_ACTIVATED_NTF says
+  interface 02 (ISO-DEP) and carries the ATS. Its FSD is unknown, and a card frame over 36 bytes would
+  not fit a capture ring slot, so isodep.c sends S(DESELECT) (C2, answered C2), reselects (WUPA +
+  CL1/CL2) and does its own RATS E0 20 (FSD 32, CID 0). Card frames are then <= 32 bytes; longer
+  answers come chained (PCB bit 4) and get R(ACK) A2|bn. The 56-byte signature arrives in 2 blocks.
+- Single-byte frames (C2, R(ACK)) go out fine in data mode (no FIFO padding byte as in bit mode).
+- isoDepTx: R(NAK) on no answer (twice), S(WTX) echoed, block numbers per ISO14443-4 (toggle on
+  every I-block received). DESFire native commands (status byte first, AF frames joined).
+- Read without keys: GetVersion, FreeMemory, PICC GetKeySettings / GetKeyVersion(0), Read_Sig (3C 00,
+  status 90), GetApplicationIDs, GetDFNames (one app per frame: AID, ISO FID LSB first, name), per app
+  SelectApplication, GetKeySettings, GetKeyVersion for each key, GetFileIDs, GetFileSettings; and
+  files with free read access (read or r/w key E): ReadData / GetValue / ReadRecords, up to 256 bytes.
+  On this card F532F0 file 01 (plain, read free, 32 bytes) = "WAVELYNX TECH 01" + 16 bytes.
+- Checked against pm3 hf mfdes info / lsapp --no-auth / getfilesettings --no-auth: same version,
+  storage, free memory, key settings, key types and counts, key versions, ISO FIDs, file types, comm
+  modes, access rights and sizes.
+- Not done: signature verification (secp224r1, needs ECC on the ARM11), AID names (pm3's
+  aid_desfire.json), anything behind a key, TX chaining (commands fit one frame).
+- App: DESFire family (dfui.c) for any SAK with bit 5 and not bit 3; a non-DESFire ISO14443-4 card shows
+  its ATS. Card screen, application screen (D-pad left/right between apps, A shows a read file), Y saves sdmc:/nfcprobe/desfire/<UID>.txt.
