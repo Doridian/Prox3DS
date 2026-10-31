@@ -72,6 +72,9 @@ enum {
 	OP_SHOT        = 0x20, // offset u32 -> up to OUT_MAX bytes of the top framebuffer (240x400 BGR8,
 	                       // column-major from the bottom left), empty past the end
 	OP_KEYS        = 0x21, // keys u32 (KEY_*) -> pressed for one frame of the UI loop
+	// More card ops:
+	OP_MFU_CLONE   = 0x22, // Ultralight / NTAG dump (pm3 .bin) -> empty ok (read back); on failure
+	                       // payload = reason (mfuCloneToGtu). WRITES THE CARD AND ITS CONFIG
 };
 
 #define OUT_MAX 0x2000
@@ -336,6 +339,18 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		MfuInfo info;
 		int r = iso14aSelect() < 0 ? 0 : mfuIdentify(&info);
 		if (r > 0) r = mfuWritePage(info.type, in[0], in + 1);
+		if (r == 1) return 0;
+		*outLen = strlen(mfuWhy());
+		memcpy(out, mfuWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_MFU_CLONE: {
+		static MfuDump d;
+		if (!mfuParseDump(&d, in, inLen)) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		if (iso14aSelect() < 0 && !iso14aStart()) return 1;
+		int r = mfuCloneToGtu(&d);
+		iso14aParity(true);
 		if (r == 1) return 0;
 		*outLen = strlen(mfuWhy());
 		memcpy(out, mfuWhy(), *outLen);

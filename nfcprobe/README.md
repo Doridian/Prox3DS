@@ -42,7 +42,10 @@ MIFARE Ultralight / NTAG (`source/mfu.c`, `source/mfuui.c`, `source/mfuedit.c`),
   counters), unread pages listed in `<UID>.txt`, and opened in the page editor.
 - Saved dumps (pm3 .bin dumps work too), page editor: one page per row with its role, the page under
   the cursor decoded. X writes a page, or every user page that differs, to the card on the reader.
-  Only user memory is ever written: lock bits and OTP are one-way, config can lock the card.
+  Only user memory is ever written to a real card: lock bits and OTP are one-way, config can lock it.
+- Clone onto magic card: a Gen4 GTU (password 00000000) is switched to Ultralight mode for the dump's
+  type and becomes a full copy (UID, version, signature, password, every page), read back as a reader
+  would. Writing a Classic dump onto a GTU in Ultralight mode switches it back to Classic.
 
 - Chip info: reset / init / patch version.
 
@@ -50,8 +53,8 @@ Card jobs keep the chip, so the network side can carry on with the loaded monito
 
 Network: with wifi up, the app listens on TCP 8020 (address shown on the top screen) and
 exposes raw takeover / power / I2C / GPIO primitives, plus the app's card operations
-(`scan`, `mfread`, `mfdump`, `gen1awrite`, `mfwrite`, `mfudump`, `mfuwrite` in `tools/nfcnet.py`; ops
-0x10-0x1F in `source/netsrv.c`; `mfwrite` is an encrypted Mifare Classic write, `mfuwrite` an Ultralight
+(`scan`, `mfread`, `mfdump`, `gen1awrite`, `mfwrite`, `mfudump`, `mfuwrite`, `mfuclone` in `tools/nfcnet.py`;
+ops 0x10-0x1F and 0x22 in `source/netsrv.c`; `mfwrite` is an encrypted Mifare Classic write, `mfuwrite` an Ultralight
 user page write, both WRITE THE CARD).
 `nfcnet.py HOST shot [OUT.png]` grabs the top screen and `nfcnet.py HOST keys a down ...` presses
 buttons (ops 0x20/0x21, served even while a job holds the chip). Drive it from the PC with

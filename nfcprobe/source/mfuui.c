@@ -18,6 +18,7 @@
 
 static Card sc;
 static MfuDump sm; // identify + pages 0-3 + the config pages, for the card screen
+static bool smGtu;  // a Gen4 GTU (in Ultralight mode, or it would not be here)
 static int scanResult;
 
 static const Screen cardScreen;
@@ -40,6 +41,9 @@ static int mfuProbe(void)
 			sm.valid[want[i] + k] = true;
 		}
 	}
+	u8 cfg[32];
+	if ((r = mfGen4Config(mfGen4DefaultPwd, cfg, sizeof(cfg))) < 0) return -1;
+	smGtu = r > 0;
 	return 1;
 }
 
@@ -144,6 +148,7 @@ static void cardDraw(void)
 			in->version[2], in->version[3], in->version[4], in->version[5], in->version[6], in->version[7]);
 	else
 		uiText(14, y, S_SMALL, dim, "No GET_VERSION (Ultralight, Ultralight C or NTAG203)");
+	if (smGtu) uiTextRight(UI_W - 14, y, S_SMALL, uiCol[COL_OK], "Magic: Gen4 GTU");
 	y += SMALL_H;
 	if (in->hasSig) {
 		uiText(14, y, S_SMALL, txt, "Signature");
@@ -251,6 +256,52 @@ void mfuRestoreStart(const MfuDump *d)
 	jobStart("Writing to card", runRestore, doneRestore, true);
 }
 
+// --- clone onto a magic card ---
+
+static MfuDump cl;
+static int clResult;
+static char clWhy[64];
+
+static void runClone(void)
+{
+	clResult = -2;
+	if (!cardWait()) return;
+	clResult = mfuCloneToGtu(&cl);
+	snprintf(clWhy, sizeof(clWhy), "%s", mfuWhy());
+	iso14aParity(true);
+	logp("clone: %s\n", clResult == 1 ? "done" : clWhy);
+}
+
+static void doneClone(void)
+{
+	if (clResult == -2) return;
+	if (clResult == 1) msgBox("Write to magic card", "Done: the GTU now reads back as this %s.", cl.info.type->name);
+	else if (clResult < 0) msgBox("Write to magic card", "The chip stopped answering.\nThe card may be half written.");
+	else msgBox("Write to magic card", "Not done: %s", clWhy);
+}
+
+static void mfuCloneGo(void)
+{
+	mfuCloneStart(&cl);
+}
+
+void mfuCloneStart(const MfuDump *d)
+{
+	if (d != &cl) cl = *d;
+	jobStart("Writing to magic card", runClone, doneClone, true);
+}
+
+void mfuCloneAsk(const MfuDump *d, const char *name)
+{
+	cl = *d;
+	if (!cl.info.type) {
+		msgBox("Write to magic card", "%s: unknown card type (no version, odd size).", name);
+		return;
+	}
+	confirm("Write to magic card", mfuCloneGo, "Clone %s onto the Gen4 GTU on the reader?\n"
+		"It becomes a %s: UID, version, signature,\nevery page. Everything on it is overwritten.", name, cl.info.type->name);
+}
+
 // --- saved dumps ---
 
 typedef struct {
@@ -320,6 +371,17 @@ static void fileRestore(void)
 	mfuRestoreStart(&ld);
 }
 
+static void fileRestoreAsk(void)
+{
+	confirm("Write to card", fileRestore, "Write the user pages of %s\nonto the card on the reader? Its user memory is overwritten.\n"
+		"Lock bits, OTP and config are left alone.", files[fl.sel].name);
+}
+
+static void fileCloneAsk(void)
+{
+	mfuCloneAsk(&ld, files[fl.sel].name);
+}
+
 static void filesInput(u32 kDown, u32 kRepeat)
 {
 	uiListNav(&fl, nfiles, 12, kRepeat);
@@ -336,8 +398,9 @@ static void filesInput(u32 kDown, u32 kRepeat)
 			mfuEditorOpen(&ld, path);
 			return;
 		}
-		confirm("Write to card", fileRestore, "Write the user pages of %s\nonto the card on the reader? Its user memory is overwritten.\n"
-			"Lock bits, OTP and config are left alone.", files[fl.sel].name);
+		static const MenuItem items[] = { { "Write user pages to card", fileRestoreAsk },
+			{ "Clone onto magic card (GTU)", fileCloneAsk } };
+		popup(files[fl.sel].name, items, 2);
 	}
 	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s?", files[fl.sel].name);
 }
@@ -385,7 +448,7 @@ static const MenuEntry mfuEntries[] = {
 	               "capability container and the password config.", startScan },
 	{ "Read card", "Dump every readable page (a password-protected area stays unread). Saved to the SD card "
 	               "in pm3's format and opened in the editor.", startRead },
-	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card.", openFiles },
+	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card, or clone them onto a Gen4 GTU.", openFiles },
 };
 
 static void mfuExtra(float y)
@@ -425,6 +488,6 @@ static bool mfuMatch(const Card *c)
 
 const CardFamily mfuFamily = {
 	"Ultralight / NTAG",
-	"MIFARE Ultralight (EV1, C), NTAG21x and other type 2 tags: info, read, page editor, write user memory back.",
+	"MIFARE Ultralight (EV1, C), NTAG21x and other type 2 tags: info, read, page editor, write user memory back, clone onto a Gen4 GTU.",
 	mfuMatch, mfuProbe, mfuShow, mfuOpenMenu,
 };

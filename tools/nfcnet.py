@@ -27,6 +27,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST mfudump [PWD] [-o OUT]       Ultralight / NTAG: info + every readable page (PWD: 8 hex,
                                                    tried once), also saved to SD; OUT = pm3 .bin
        nfcnet.py HOST mfuwrite PAGE HEX8           Ultralight / NTAG user page write + read-back (WRITES THE CARD)
+       nfcnet.py HOST mfuclone FILE                clone a pm3 mfu dump onto a Gen4 GTU (switches it to
+                                                   Ultralight mode; WRITES THE CARD AND ITS CONFIG)
        nfcnet.py HOST shot [OUT.png]               grab the top screen (default shot.png; needs Pillow)
        nfcnet.py HOST keys KEY [KEY...]            press buttons in the UI, one frame each, ~0.1 s apart
                                                    (a b x y l r up down left right start select)
@@ -44,7 +46,7 @@ UPDATE_CHUNK = 0x7000
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
 GEN4_PWD = bytes(4)
-OP_SHOT, OP_KEYS = 0x20, 0x21
+OP_SHOT, OP_KEYS, OP_MFU_CLONE = 0x20, 0x21, 0x22
 KEYS = {"a": 1 << 0, "b": 1 << 1, "select": 1 << 2, "start": 1 << 3, "right": 1 << 4, "left": 1 << 5,
         "up": 1 << 6, "down": 1 << 7, "r": 1 << 8, "l": 1 << 9, "x": 1 << 10, "y": 1 << 11}
 NO_CARD = 1  # card op result: no card / auth refused
@@ -194,6 +196,9 @@ class Nfc:
         pages = [r[57 + 5 * i + 1:57 + 5 * i + 5] if r[57 + 5 * i] else None for i in range(n)]
         p = 57 + 5 * n
         return hdr, bool(pwd_ok), pages, r[p + 1:p + 1 + r[p]].decode()
+
+    def mfu_clone(self, dump):
+        return self.card_call(OP_MFU_CLONE, dump, timeout=60) is not None
 
     def mfu_write(self, page, data):
         if self.card_call(OP_MFU_WRITE, bytes([page]) + data) is None:
@@ -434,6 +439,9 @@ def main():
             print(f"{i:3} {i:02X}: {d.hex(' ') if d else '-- -- -- --'}")
         if out:
             open(out, "wb").write(hdr + b"".join(d or bytes(4) for d in pages))
+    elif what == "mfuclone":
+        ok = nfc.mfu_clone(open(args[0], "rb").read())
+        print("CLONED (read back as a reader would)" if ok else f"clone failed: {nfc.why}")
     elif what == "mfuwrite":
         ok = nfc.mfu_write(int(args[0], 0), bytes.fromhex(args[1]))
         print("VERIFIED" if ok else f"write failed: {nfc.why}")

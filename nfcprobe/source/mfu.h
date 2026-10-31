@@ -58,9 +58,18 @@ int mfuDumpCard(MfuDump *d, const u8 *pwd);
 // WRITES THE CARD.
 int mfuRestore(const MfuDump *d, int *written);
 
+// Clones a dump onto a Gen4 GTU (password 00000000): switches it to Ultralight mode for the dump's
+// type, writes every page through the backdoor (UID pages last; config pages the dump lacks get the
+// factory defaults, a password never read FFFFFFFF), the version, signature and password,
+// then reads it back as a reader would (with that password). A GTU that keeps the PACK in page 13
+// (version 6666 / 06A0) answers with whatever that page holds, user memory on most types. 1 = verified, 0 = refused / mismatch
+// (mfuWhy), -1 = monitor error. WRITES THE CARD AND ITS CONFIG.
+int mfuCloneToGtu(const MfuDump *d);
+
 bool mfuSaveDump(const MfuDump *d, char *path, u32 pathMax); // MFU_DIR/<UID>.bin, never overwrites
 bool mfuWriteDump(const MfuDump *d, const char *path);       // + <name>.txt: unread pages
 bool mfuLoadDump(MfuDump *d, const char *path);              // pm3 .bin (with or without the header)
+bool mfuParseDump(MfuDump *d, const u8 *raw, int n);         // the same, from memory
 const MfuType *mfuTypeFromVersion(const u8 version[8]);
 const MfuType *mfuTypeForPages(int pages); // a dump without a version: guess from its size
 extern const MfuType mfuTypeULC; // config in pages 0x28-0x2B, 3DES key in 0x2C-0x2F

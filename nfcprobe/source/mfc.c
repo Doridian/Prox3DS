@@ -330,12 +330,19 @@ int mfGen4Config(const u8 pwd[4], u8 *out, u32 max)
 	return gen4Cmd(pwd, &cmd, 1, out, max);
 }
 
-// Config bytes a write may change: 1 UID length (4, 7 or 10 bytes: what our SELECT does), 6 shadow mode,
-// 7 ATS length, 8-23 ATS, 24-25 ATQA (swapped), 26 SAK. The rest (protocol, password, UL mode, max
-// sectors) must stay, so a write can't lock us out: a lost password is a lost card.
+// Config bytes a write may change: 0 protocol (Classic / Ultralight), 1 UID length (4, 7 or 10 bytes:
+// what our SELECT does), 6 shadow mode, 7 ATS length, 8-23 ATS, 24-25 ATQA (swapped), 26 SAK, 27
+// Ultralight mode. The rest (password, max sectors) must stay, so a write can't lock us out: a lost
+// password is a lost card.
 static bool gen4CfgChangeable(int i)
 {
-	return i == 1 || (i >= 6 && i <= 26);
+	return i <= 1 || (i >= 6 && i <= 27);
+}
+
+int mfGen4Version(const u8 pwd[4], u8 *out, u32 max)
+{
+	u8 cmd = 0xCC;
+	return gen4Cmd(pwd, &cmd, 1, out, max);
 }
 
 int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG])
@@ -346,7 +353,9 @@ int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG])
 	if (n != MF_GEN4_CFG) FAIL(0, "config is %d bytes, not %d", n, MF_GEN4_CFG);
 	for (int i = 0; i < MF_GEN4_CFG; i++)
 		if (cfg[i] != cur[i] && !gen4CfgChangeable(i)) FAIL(0, "config byte %d may not change", i);
+	if (cfg[0] > 1) FAIL(0, "protocol %02X", cfg[0]);
 	if (cfg[1] > 2) FAIL(0, "UID length %02X (only 4, 7 or 10 bytes)", cfg[1]);
+	if (cfg[27] > 3) FAIL(0, "Ultralight mode %02X", cfg[27]);
 	if (cfg[6] > 4) FAIL(0, "shadow mode %02X", cfg[6]);
 	if (cfg[7] > 16) FAIL(0, "ATS length %d", cfg[7]);
 	// F0 only: F1 would fuse the config for good.
@@ -1295,13 +1304,27 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 	while (sectors < 40 && mfFirstBlock(sectors) < nblocks) sectors++;
 	if (mfFirstBlock(sectors) != nblocks) FAIL(0, "%d blocks: not whole sectors", nblocks);
 	if (iso14aSelect() == -2) return -1; // current SAK
+	MfMagic m;
+	if (mfMagicDetect(mfGen4DefaultPwd, false, &m) < 0) return -1;
+	if ((m.flags & MF_MAGIC_GEN4) && m.cfgLen == MF_GEN4_CFG && m.cfg[0]) {
+		// A GTU in Ultralight mode: back to Classic, sized for the dump (4-byte UID), then reactivated.
+		u8 cfg[MF_GEN4_CFG];
+		memcpy(cfg, m.cfg, MF_GEN4_CFG);
+		cfg[0] = cfg[1] = cfg[27] = 0;
+		cfg[24] = sectors == 40 ? 0x02 : 0x04;
+		cfg[25] = 0;
+		cfg[26] = sectors == 5 ? 0x09 : sectors == 32 ? 0x19 : sectors == 40 ? 0x18 : 0x08;
+		logp("gen4 GTU in Ultralight mode: switching to Classic\n");
+		int r = mfGen4SetConfig(mfGen4DefaultPwd, cfg);
+		if (r <= 0) return r;
+		if (!iso14aStart()) FAIL(-1, "reactivate after the mode switch");
+	}
 	if (sectors > mfSectorsFromSak(card.sak)) FAIL(0, "dump has %d sectors, the card %d", sectors, mfSectorsFromSak(card.sak));
 	for (int sec = 0; sec < sectors; sec++) {
 		int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
 		if (valid[t] && !mfAclValid(data[t])) FAIL(0, "sector %d: broken access bits", sec);
 	}
 
-	MfMagic m;
 	if (mfMagicDetect(mfGen4DefaultPwd, false, &m) < 0) return -1;
 	int type = m.flags & MF_MAGIC_GEN4 ? CLONE_GEN4 : m.flags & MF_MAGIC_GEN1A ? CLONE_GEN1A : CLONE_GEN2;
 	// The GTU computes its BCC; the others send block 0's as it is, and a wrong one breaks anticollision.

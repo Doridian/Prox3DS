@@ -249,6 +249,101 @@ int mfuRestore(const MfuDump *d, int *written)
 	return 1;
 }
 
+// --- Gen4 GTU in Ultralight mode (pm3 doc/magic_cards_notes.md, hf_mf_ultimatecard.lua) ---
+// Page n is the first 4 bytes of backdoor block n. GET_VERSION answers from pages FA-FB, READ_SIG from
+// F2-F9, PWD_AUTH checks page E5; the PACK is page 13 on versions 6666 / 06A0 (E6 on others).
+
+static int gtuPage(u8 page, const u8 data[4])
+{
+	u8 b[16] = { 0 };
+	memcpy(b, data, 4);
+	int r = mfGen4Write(mfGen4DefaultPwd, page, b);
+	if (r <= 0) snprintf(why, sizeof(why), "page %02X: %s", page, mfWhy());
+	return r;
+}
+
+// The password a clone gets: the dump's, unless it was never known (zeros, not read with it).
+static void clonePwd(const MfuDump *d, u8 pwd[4])
+{
+	const MfuType *t = d->info.type;
+	static const u8 zero[4];
+	memset(pwd, 0xFF, 4);
+	if (t->cfg && d->valid[t->cfg + 2] && (d->pwdOk || memcmp(d->data[t->cfg + 2], zero, 4)))
+		memcpy(pwd, d->data[t->cfg + 2], 4);
+}
+
+int mfuCloneToGtu(const MfuDump *d)
+{
+	const MfuType *t = d->info.type;
+	if (!t) FAIL(0, "unknown dump type");
+	if (!d->valid[0] || !d->valid[1] || !d->valid[2]) FAIL(0, "the dump has no UID (pages 0-2)");
+	u8 cfg[32], ver[8];
+	int r = mfGen4Config(mfGen4DefaultPwd, cfg, sizeof(cfg));
+	if (r < 0) return -1;
+	if (!r) FAIL(0, "not a Gen4 GTU (password 00000000)");
+	if (r != MF_GEN4_CFG) FAIL(0, "GTU config is %d bytes", r);
+	int vn = mfGen4Version(mfGen4DefaultPwd, ver, sizeof(ver));
+	if (vn < 0) return -1;
+	bool pack13 = vn >= 2 && ((ver[vn - 2] == 0x66 && ver[vn - 1] == 0x66) || (ver[vn - 2] == 0x06 && ver[vn - 1] == 0xA0));
+	u8 mode = t == &mfuTypeULC ? 2 : t == &tUL || t == &tN203 ? 3 : d->info.version[2] == 0x04 ? 1 : 0;
+	u8 want[MF_GEN4_CFG];
+	memcpy(want, cfg, MF_GEN4_CFG);
+	want[0] = 1;    // Ultralight protocol
+	want[1] = 1;    // 7-byte UID (pages 0-1)
+	want[24] = 0x44; // ATQA 0044, swapped
+	want[25] = 0x00;
+	want[26] = 0x00; // SAK
+	want[27] = mode;
+	if (memcmp(want, cfg, MF_GEN4_CFG)) {
+		logp("gtu: Ultralight mode %d\n", mode);
+		if ((r = mfGen4SetConfig(mfGen4DefaultPwd, want)) <= 0) {
+			snprintf(why, sizeof(why), "config: %s", mfWhy());
+			return r;
+		}
+		if (!iso14aStart()) FAIL(-1, "reactivate after the mode switch");
+	}
+	u8 pwd[4], pack[4] = { 0 };
+	clonePwd(d, pwd);
+	if (t->cfg && d->valid[t->cfg + 3]) memcpy(pack, d->data[t->cfg + 3], 2);
+	// Pages 1 and 0 last: they change the UID, which later SELECTs use.
+	// Config pages the dump lacks (read-protected on the original) get the factory defaults: no
+	// password protection, not whatever the GTU held there.
+	static const u8 cfgDefault[2][4] = { { 0x00, 0x00, 0x00, 0xFF }, { 0x00, 0x05, 0x00, 0x00 } };
+	for (int p = 2; p < d->pages; p++) {
+		if (mfCancel) FAIL(0, "stopped");
+		const u8 *data = t->cfg && p == t->cfg + 2 ? pwd : d->data[p];
+		if (!d->valid[p] && t->cfg && p >= t->cfg && p < t->cfg + 2) {
+			logp("gtu: page %d not in the dump, factory default\n", p);
+			data = cfgDefault[p - t->cfg];
+		} else if (!d->valid[p] && !(t->cfg && p >= t->cfg + 2 && p < t->cfg + 4)) {
+			continue;
+		}
+		if ((r = gtuPage(p, data)) <= 0) return r;
+	}
+	for (int i = 0; i < 8; i++)
+		if ((r = gtuPage(0xF2 + i, d->info.sig + 4 * i)) <= 0) return r;
+	if ((r = gtuPage(0xFA, d->info.version)) <= 0 || (r = gtuPage(0xFB, d->info.version + 4)) <= 0) return r;
+	if (t->pwd) {
+		if ((r = gtuPage(0xE5, pwd)) <= 0) return r;
+		if (!pack13 && (r = gtuPage(0xE6, pack)) <= 0) return r;
+		if (pack13 && t->cfg + 3 != 0x13) logp("gtu: PACK = page 13 (user memory) on this GTU\n");
+	}
+	if ((r = gtuPage(1, d->data[1])) <= 0 || (r = gtuPage(0, d->data[0])) <= 0) return r;
+
+	// Read it back as a reader would.
+	if (!iso14aStart()) FAIL(-1, "reactivate after the clone");
+	static MfuDump back;
+	if ((r = mfuDumpCard(&back, t->pwd ? pwd : NULL)) <= 0) return r;
+	if (back.info.type != t) FAIL(0, "reads back as %s", back.info.type->name);
+	if (d->info.hasSig && memcmp(back.info.sig, d->info.sig, 32)) FAIL(0, "signature differs");
+	for (int p = 0; p < d->pages; p++) {
+		if (!d->valid[p] || (t->cfg && p >= t->cfg + 2 && p < t->cfg + 4)) continue; // PWD/PACK read as 00
+		if (!back.valid[p]) FAIL(0, "page %d does not read back", p);
+		if (memcmp(back.data[p], d->data[p], 4)) FAIL(0, "page %d differs", p);
+	}
+	return 1;
+}
+
 bool mfuWriteDump(const MfuDump *d, const char *path)
 {
 	u8 hdr[MFU_HDR] = { 0 };
@@ -277,28 +372,22 @@ bool mfuWriteDump(const MfuDump *d, const char *path)
 	return !fclose(f);
 }
 
-bool mfuLoadDump(MfuDump *d, const char *path)
+bool mfuParseDump(MfuDump *d, const u8 *raw, int n)
 {
-	static u8 raw[MFU_HDR + 4 * MFU_MAX_PAGES + 1];
 	memset(d, 0, sizeof(*d));
-	FILE *f = fopen(path, "rb");
-	if (!f) return false;
-	int n = fread(raw, 1, sizeof(raw), f);
-	fclose(f);
-	const u8 *data = raw;
 	if (n >= MFU_HDR + 4 && n - MFU_HDR == 4 * (raw[11] + 1)) {
 		memcpy(d->info.version, raw, 8);
 		memcpy(d->info.sig, raw + 12, 32);
 		memcpy(d->info.cnt, raw + 44, 12);
 		for (int i = 0; i < 8; i++) d->info.hasVersion |= raw[i];
 		for (int i = 0; i < 32; i++) d->info.hasSig |= raw[12 + i];
-		data += MFU_HDR;
+		raw += MFU_HDR;
 		n -= MFU_HDR;
 	} else if (n % 4 || n < 64 || n > 4 * MFU_MAX_PAGES) {
 		return false; // pm3's old headerless dumps are plain pages
 	}
 	d->pages = n / 4;
-	memcpy(d->data, data, n);
+	memcpy(d->data, raw, n);
 	for (int p = 0; p < d->pages; p++) d->valid[p] = true;
 	d->info.type = d->info.hasVersion ? mfuTypeFromVersion(d->info.version) : mfuTypeForPages(d->pages);
 	if (d->info.type == &tOther) d->info.type = NULL;
@@ -306,6 +395,17 @@ bool mfuLoadDump(MfuDump *d, const char *path)
 		d->info.cntOk = d->info.type->counters;
 		d->info.tearOk = d->info.type->tearing ? 7 : 0;
 	}
+	return true;
+}
+
+bool mfuLoadDump(MfuDump *d, const char *path)
+{
+	static u8 raw[MFU_HDR + 4 * MFU_MAX_PAGES + 1];
+	FILE *f = fopen(path, "rb");
+	if (!f) return false;
+	int n = fread(raw, 1, sizeof(raw), f);
+	fclose(f);
+	if (!mfuParseDump(d, raw, n)) return false;
 	char tpath[300], line[1200];
 	snprintf(tpath, sizeof(tpath), "%.*s.txt", (int)(strlen(path) - 4), path);
 	if ((f = fopen(tpath, "r"))) {

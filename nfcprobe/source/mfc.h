@@ -45,12 +45,13 @@ extern const u8 mfGen4DefaultPwd[4];
 int mfGen4Read(const u8 pwd[4], u8 block, u8 out[16]);
 int mfGen4Write(const u8 pwd[4], u8 block, const u8 data[16]); // WRITES THE CARD
 int mfGen4Config(const u8 pwd[4], u8 *out, u32 max);
-// Writes the 30-byte config (F0, never the fusing F1) and reads it back. Only the UID length (4, 7 or
-// 10 bytes), shadow mode, ATS and ATQA/SAK may differ from the current config; anything else is
-// refused unsent.
+// Writes the 30-byte config (F0, never the fusing F1) and reads it back. Only the protocol (Classic /
+// Ultralight), UID length (4, 7 or 10 bytes), shadow mode, ATS, ATQA/SAK and Ultralight mode may
+// differ from the current config; anything else (password!) is refused unsent.
 // WRITES THE CARD CONFIG.
 #define MF_GEN4_CFG 30
 int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG]);
+int mfGen4Version(const u8 pwd[4], u8 *out, u32 max); // CC: 2 bytes (6666) or 5 (000000 06A0), 0 = none
 
 // Magic card detection. Gen2 (CUID) is only tested when asked: it rewrites block 0 with its own
 // contents through a normal authenticated WRITE (a default key A for sector 0 must work).
@@ -143,7 +144,8 @@ void mfAclSet(u8 *trailer, int group, int c);
 bool mfTrailerRewritable(const u8 *trailer); // keys and access bits still writable afterwards
 
 // Writes a dump onto a magic card: Gen4 GTU (default password) and Gen1a/USCUID through their
-// backdoors, Gen2 with normal writes and the card's current keys (found like mfDumpCard). Refuses
+// backdoors, Gen2 with normal writes and the card's current keys (found like mfDumpCard); a GTU in
+// Ultralight mode is switched to Classic first (4-byte UID, ATQA/SAK for the dump's size). Refuses
 // unsent: a 4-byte block 0 with a bad BCC (not on the GTU: it computes its own), broken access
 // bits, and on Gen2 (unless force) a trailer that would freeze its sector. Sector 0 goes last
 // (block 0 changes the UID). Every block is read back (Gen2 trailers: the new key A must auth).

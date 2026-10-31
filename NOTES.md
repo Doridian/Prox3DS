@@ -557,3 +557,27 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   Restored (AUTH0 first, while authenticated): dump byte-identical to before, FFFFFFFF auths again.
 - Bug found by it: one lost READ answer ended the dump there (taken for the protected area start: 15
   pages unread once). mfuDumpCard now retries a failed READ once (re-auth first) before stopping.
+
+## Gen4 GTU in Ultralight mode: clone MFU dumps -- 2026-10-31
+- pm3 doc/magic_cards_notes.md + client/luascripts/hf_mf_ultimatecard.lua: config byte 0 = protocol
+  (01 Ultralight), 27 = UL mode (00 EV1, 01 NTAG, 02 UL-C, 03 UL), ATQA 0044 / SAK 00 for a UL. Page n
+  = first 4 bytes of backdoor block n, so CF CD/CE still read/write everything. GET_VERSION answers
+  from pages FA-FB, READ_SIG from F2-F9, PWD_AUTH checks E5; PACK is page 13 on versions 6666/06A0
+  (E6 on others). Our GTU: CF CC -> 6666, so its PACK is page 13 (user memory on most types).
+- In UL mode with a 7-byte UID the UID is block 0 bytes 0-2 + block 1 bytes 0-3 (BCCs in the pages are
+  ignored for anticollision). Pages read up to FA at least, whatever config byte 28 says.
+- MISTAKE (recovered): a truncated F0 (13 of 30 config bytes, meant as a dry run) was ACKed 90 00 and
+  wrote bytes 0-11 + garbage into 12-27 (ATQA 7373, SAK 83). The password bytes it carried were the
+  same 00000000, so the backdoor kept working and a full F0 fixed it. The app always sends 30 bytes
+  (mfGen4SetConfig), but a short F0 is NOT rejected by the card.
+- mfGen4SetConfig's guard now also lets byte 0 (00/01) and 27 (00-03) change; password still not.
+- mfuCloneToGtu: config switch (then iso14aStart: the UID changes), pages 2.. through the backdoor,
+  signature, version, PWD (E5), PACK (E6 unless page 13), pages 1 and 0 last, reactivate, mfuDumpCard
+  with the clone's password and compare. Config pages missing from the dump get factory defaults
+  (CFG0 000000FF, CFG1 00050000, PWD FFFFFFFF): first EV1 clone kept the GTU's zeros there = AUTH0 0.
+- The GTU shows the PWD page in clear (a real tag reads 00), and answers READ_CNT 2 even when the
+  copied NFC_CNT_EN is off. Verify skips PWD/PACK pages.
+- Verified: NTAG215 04C8E3BA064F80 cloned (net op 0x22 mfuclone) -> dump identical to the real tag but
+  for the PWD page; EV1 04A0A0A0A0A001 cloned from the UI (saved dumps) -> identical, factory config,
+  FFFFFFFF auths (PACK 0000). Classic clone of the GTU's own 1K backup switched it back (config ==
+  original), blocks 64-255 restored from the backup: all 256 blocks + config == before.

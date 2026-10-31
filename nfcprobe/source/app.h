@@ -70,3 +70,5 @@ void editorOpen(const MfDump *d, const char *path);
 // MIFARE Ultralight / NTAG
 void mfuRestoreStart(const MfuDump *d); // write a dump's user pages onto the card on the reader
 void mfuEditorOpen(const MfuDump *d, const char *path);
+void mfuCloneStart(const MfuDump *d);                 // clone onto the Gen4 GTU on the reader
+void mfuCloneAsk(const MfuDump *d, const char *name); // confirm, then mfuCloneStart

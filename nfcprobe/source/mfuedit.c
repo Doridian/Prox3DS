@@ -179,6 +179,11 @@ static void restoreAsk(void)
 		"reader? Only pages that differ are written.\nLock bits, OTP and config are left alone.", userEnd() - 1);
 }
 
+static void cloneAsk(void)
+{
+	mfuCloneAsk(&d, baseName());
+}
+
 static void copyPage(void)
 {
 	memcpy(clip, d.data[page], 4);
@@ -212,12 +217,13 @@ static void actions(void)
 {
 	static char wlabel[32];
 	snprintf(wlabel, sizeof(wlabel), "Write page %d to card", page);
-	MenuItem items[8];
+	MenuItem items[9];
 	int n = 0;
 	items[n++] = (MenuItem){ "Save", save };
 	items[n++] = (MenuItem){ "Save as a copy", saveCopy };
 	if (isUser(page)) items[n++] = (MenuItem){ wlabel, writePage };
 	items[n++] = (MenuItem){ "Write user pages to card", restoreAsk };
+	items[n++] = (MenuItem){ "Clone onto magic card (GTU)", cloneAsk };
 	items[n++] = (MenuItem){ "Copy page", copyPage };
 	if (clipOk) items[n++] = (MenuItem){ "Paste page", pastePage };
 	items[n++] = (MenuItem){ "Revert page", revertPage };
