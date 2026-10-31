@@ -476,5 +476,6 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - GTU quirk, NOT 7-byte related: nested fails on the GTU in both UID modes. The decrypted nested nonce
   into the known sector is on no PRNG distance from nt0 ("calibration: no distance"), i.e. the GTU's
   nested nonces are not LFSR successors of the first nonce. (pm3 "Prng weak" only checks the first
-  nonce.) Untested: whether pm3 `hf mf nested` works on it. mfNestedRecover now calibrates (like pm3)
+  nonce.) pm3 fails too: `hf mf nested --blk 0 -a -k FF.. --tblk 20 --ta` -> 3 key candidates, "No
+  valid key found" (target key is FF). So it's the card. mfNestedRecover now calibrates (like pm3)
   when the fixed distance 160 finds no key, and reports the calibrated distance.
