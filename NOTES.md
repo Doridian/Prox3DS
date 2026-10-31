@@ -668,7 +668,22 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   after the reader EOF, before the 15693 reader starts listening.)
 - `hf iclass sniff` (decodes 1-of-4, sensitive) while the 3DS sent ACTALL / IDENTIFY with 0x5C554 =
   19, 1A, 1B, 1C, 1D, 1E, 09: trace empty. Those coder modes don't put a V frame on air.
-- Idea, untested: synthesize 1-of-4 with the B coder. NRZ at 106 kbps, 10% ASK: a 1-of-4 pulse is
-  exactly one '0' bit cell (9.44 us), slots are 2 cells. Needs a B raw mode without SOF/EOF and
-  start/stop bits, from a stalled B poll. Miller (A) can't do it: no two empty cells in a row.
-  RX is a separate open problem (iClass answers in 15693 format: 423.75 kHz subcarrier, Manchester).
+- Correction: a 1-of-4 byte is 302 us (4 symbols x 75.52 us); the ~75 us/byte modes above are not 1-of-4.
+- B coder idea (synthesize 1-of-4 from 106 kbps NRZ cells, a 1-of-4 pulse = one 9.44 us cell):
+  - From a stalled B poll (RF_DISCOVER 01; the stall registers are the same as for V, before the tech
+    setup): 0x5C554 13 = normal B, ~103 us/byte (11 etu) + SOF/EOF, CRC (0x5C560 = 4 drops it).
+    0x5C554 1B (and 0B) = 8 cells per byte (74.5 us) with ~20 us overhead: a raw NRZ stream.
+  - Normal B frames only modulate after copying the ROM's B TX-time analog registers into the stall:
+    0x5C44C C8, 0x5C48C 09, 0x5C490-4B8 16 58 08 42 33 CD F9 09 04 (4B4 0) FD, 0x5C504 14, 0x5C50C 10,
+    0x5C53C 1 (pm3 `hf sniff` raw then shows SOF + bits on the 9.44 us grid, like the ROM's REQB).
+  - The raw 1B / 0B mode never modulates (with or without those registers, 0x5C55C 48 / 88 / 89 / 8C /
+    98 / A8 / C8; 08 and 28 break TX). `hf iclass sniff` saw none of the 1-of-4 frames built from it
+    (both bit orders, both polarities), but did decode the 1-of-256 control frames in the same run.
+  - Normal B framing can't carry 1-of-4: the start bit forces a pulse every 10-11 cells at even
+    positions, 1-of-4 needs exactly one pulse per 8 cells at odd positions. Miller (A) can't either (no
+    two empty cells in a row). F is Manchester.
+  - Remaining TX idea: CPU bit-banging, toggling a register that directly gates the modulator, timed
+    from the monitor (1 MHz timer; pulses 9.44 us on an 18.88 us grid). No such register known yet.
+- RX is a separate open problem (iClass answers in 15693 format: 423.75 kHz subcarrier, Manchester).
+- pm3 (local patches, uncommitted): `hf iclass sniff -t <ms>` stops by itself (firmware timeout in
+  SniffIso15693, checked per DMA buffer); no button needed for unattended sniffs.
