@@ -18,7 +18,7 @@ import nfcnet
 
 CHIP = __file__.rsplit("/", 2)[0] + "/chip/"
 (OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED,
- OP_NESTED) = range(10)
+ OP_NESTED, OP_SNAP) = range(11)
 CHUNK = 0xF0
 
 

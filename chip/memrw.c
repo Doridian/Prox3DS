@@ -41,6 +41,7 @@ typedef unsigned int u32;
 typedef unsigned char u8;
 
 #define CMD_HOOK  (*(volatile u32 *)0x38718)
+#define SEND_HOOK (*(volatile u32 *)0x38714) // 0x188E4 calls it with every NCI packet it sends
 #define OID_DEBUG 0x2C
 #define MAX_DATA  0xF0
 
@@ -60,7 +61,7 @@ typedef unsigned char u8;
 #define irq_save    ROM_FN(0xC5C, u32 (*)(void))
 #define irq_restore ROM_FN(0xC64, void (*)(u32))
 
-enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED, OP_NESTED };
+enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED, OP_NESTED, OP_SNAP };
 
 // Captured frames: regs = TX/RX status (0x5C5D0), 0x5C588, 0x5C58C, 0x5C598, 0x5C5A0 (RX bytes).
 #define N_FRAMES   8
@@ -293,6 +294,29 @@ static int auth(const u8 *key, u32 uid, u32 nr, u32 code, const u8 *frame, u32 l
 	return 1;
 }
 
+// Framer snapshot (OP_SNAP): on the next frame-log NTF (6F 09, FRAME_LOG on) of the armed RF mode,
+// 0x5C540-0x5C5BC, 0x5C640-0x5C6CC and 0x5C780-0x5C7BC go into the capture ring (free while not
+// capturing), as words. Shows how the ROM set the framer up for a technology (NOTES.md, NFC-V).
+static u32 snap_mode, snap_count;
+
+static void snap_range(u32 *dst, u32 a, u32 n)
+{
+	for (u32 i = 0; i < n; i++) dst[i] = REG(a + 4 * i);
+}
+
+static int send_hook(u8 *pkt)
+{
+	if (snap_mode && pkt[0] == 0x6F && pkt[1] == 0x09 && pkt[3 + 5] == snap_mode) {
+		u32 *d = (u32 *)capture.ring;
+		snap_range(d, 0x5C540, 32);
+		snap_range(d + 32, 0x5C640, 36);
+		snap_range(d + 68, 0x5C780, 16);
+		snap_mode = 0;
+		snap_count++;
+	}
+	return 0;
+}
+
 static int hook(u8 *msg)
 {
 	if ((msg[0] & 0xF) != 0xF || (msg[1] & 0x3F) != OID_DEBUG) return 0;
@@ -389,6 +413,13 @@ static int hook(u8 *msg)
 		reply(0, buf, 4);
 		return 1;
 	}
+	case OP_SNAP: // addr = RF mode to snapshot on (0 = off) -> ring address, snapshots taken so far
+		snap_mode = addr;
+		SEND_HOOK = (u32)send_hook;
+		put32(buf, (u32)capture.ring);
+		put32(buf + 4, snap_count);
+		reply(0, buf, 8);
+		return 1;
 	case OP_TXSCHED:
 		if (n < 5 || n < 5u + 10 * arg[4]) break;
 		put32(buf, txsched(arg, arg + 5, arg[4], arg + 5 + 10 * arg[4], n - 5 - 10 * arg[4]));

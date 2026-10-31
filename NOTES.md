@@ -608,3 +608,20 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - Next: find the ROM's per-tech framer setup (likely table-driven, e.g. the store sequence around
   0xE62C writing 0x5C550 / 0x5C674 from a struct), hook it or call it from the monitor with tech 4, then
   sniff our own frames with pm3 `hf iclass sniff` and look for the card's SOF answer to ACTALL (0A).
+- memrw OP_SNAP (10, addr = frame-log RF mode): the NCI send hook 0x38714 snapshots 0x5C540-5BC,
+  0x5C640-6CC, 0x5C780-7BC into the capture ring on the next frame-log TX NTF of that mode (FRAME_LOG
+  on). memrw.bin 3300 of 3364 bytes. At TX time A / B / V differ only in: 0x5C554 16 / 13 / 18,
+  0x5C570 0 / 0 / 1, 0x5C574 1 / 2 / 5 (0x5C568 length code 7 / 0 / 0). The rest is the same: 0x5C550
+  8, 0x5C55C 22 (post-TX), 0x5C5B8 1C (idle: C), 0x5C5BC 3, 0x5C640 42, 0x5C64C 9, 0x5C674 4, 0x5C678 3,
+  0x5C6AC 80, 0x5C6C4 2, 0x5C7A8 1C, 0x5C7AC 8 (all 0 when idle).
+- Stall (capture on before RF_DISCOVER 76): RF block configured like V TX (same 0x5C640+ values,
+  0x5C5B8 1C), only 0x5C554 10 / 0x5C574 11 / 0x5C55C 23 differ. A few 1-byte "frames" (0x5C588 50/51)
+  land in the ring right after the ROM's poll.
+- Raw V TX from the stall: txraw(r570 1, r574 5, code 0x10) + 0x5C554 = 18 -> IRQ log: our TX start,
+  then TX/RX status 0x20 (RX timeout), no answer to ACTALL 0A / IDENTIFY 0C. Sweep 0x5C554 10-1F x
+  r570 0/1 x r574 4-7: no answer anywhere, no chip hang.
+- pm3 `hf sniff` (raw HF envelope, waits for a field > 180, cancellable over USB, no button needed):
+  started after the stall, it triggered (field present) but the 32700 averaged samples (avg of 32) are
+  flat: no visible modulation from our raw V TX in that window. Next: sratio 1 (less averaging) to see
+  10%-ASK pulses, and compare with the ROM's own V poll envelope (1-of-256) to learn what a V frame
+  looks like on this pm3 at all.
