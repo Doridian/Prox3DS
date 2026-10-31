@@ -118,30 +118,50 @@ int iso14aTx(const u8 *data, u32 len, u8 code, MonFrame *ans, int max)
 	return waitFrames(ans, max);
 }
 
-int iso14aSelect(void)
-{
-	MonFrame f[4];
-	u8 hlta[4] = { 0x50, 0x00 }, wupa = 0x52, sel[7] = { 0x93, 0x70 };
-	if (card.uidLen != 4) return -1;
-	crcA(hlta, 2, hlta + 2);
-	if (iso14aTx(hlta, 4, 0, f, 4) < 0) return -2;
-	int n = iso14aTx(&wupa, 1, 0x07, f, 4);
-	if (n < 0) return -2;
-	if (!n || f[n - 1].len != 2) return -1;
-	memcpy(card.atqa, f[n - 1].data, 2);
-	memcpy(sel + 2, card.uid, 4);
-	sel[6] = card.uid[0] ^ card.uid[1] ^ card.uid[2] ^ card.uid[3];
-	n = iso14aTx(sel, 7, 0, f, 4); // the hardware adds SELECT's CRC
-	if (n < 0) return -2;
-	return n && f[n - 1].len ? f[n - 1].data[0] : -1;
-}
-
 // Data-mode TX (r574 = 0): the HW frames whole bytes, adds parity and (code 0) appends CRC.
 // Returns the answer count, -1 on a monitor error.
 static int dataTx(const u8 *data, u32 len, MonFrame *ans, int max)
 {
 	if (!monTxraw(data, len, 0, 0, 0, 0x88)) return -1;
 	return waitFrames(ans, max);
+}
+
+// The UID Crypto1 uses: the last cascade level's 4 bytes.
+static u32 cardUid(void)
+{
+	const u8 *u = card.uid + card.uidLen - 4;
+	return u[0] << 24 | u[1] << 16 | u[2] << 8 | u[3];
+}
+
+int iso14aSelect(void)
+{
+	MonFrame f[4];
+	u8 hlta[4] = { 0x50, 0x00 }, wupa = 0x52, cl[2][4];
+	if (card.uidLen != 4 && card.uidLen != 7) return -1;
+	crcA(hlta, 2, hlta + 2);
+	if (iso14aTx(hlta, 4, 0, f, 4) < 0) return -2;
+	int n = iso14aTx(&wupa, 1, 0x07, f, 4);
+	if (n < 0) return -2;
+	if (!n || f[n - 1].len != 2) return -1;
+	memcpy(card.atqa, f[n - 1].data, 2);
+	// 7-byte UID: cascade tag 88 + 3 bytes at level 1, the other 4 at level 2
+	int levels = card.uidLen == 7 ? 2 : 1, sak = -1;
+	if (levels == 2) {
+		cl[0][0] = 0x88;
+		memcpy(cl[0] + 1, card.uid, 3);
+	}
+	memcpy(cl[levels - 1], card.uid + card.uidLen - 4, 4);
+	for (int l = 0; l < levels; l++) {
+		u8 sel[7] = { l ? 0x95 : 0x93, 0x70 };
+		memcpy(sel + 2, cl[l], 4);
+		sel[6] = cl[l][0] ^ cl[l][1] ^ cl[l][2] ^ cl[l][3];
+		// The bit-mode framer CRCs 93 70 by itself; level 2 goes in data mode, which CRCs any frame.
+		n = l ? dataTx(sel, 7, f, 4) : iso14aTx(sel, 7, 0, f, 4);
+		if (n < 0) return -2;
+		if (!n || !f[n - 1].len) return -1;
+		sak = f[n - 1].data[0];
+	}
+	return sak;
 }
 
 // Gen1a "magic" backdoor unlock: HLTA, then 0x40 (7-bit) and 0x43, each ACKed with a 4-bit 0x0a.
@@ -295,12 +315,12 @@ int mfGen4Config(const u8 pwd[4], u8 *out, u32 max)
 	return gen4Cmd(pwd, &cmd, 1, out, max);
 }
 
-// Config bytes a write may change: 6 shadow mode, 7 ATS length, 8-23 ATS, 24-25 ATQA (swapped), 26
-// SAK. The rest (protocol, UID length, password, UL mode, max sectors) must stay, so a write can't
-// lock us out: our SELECT only does 4-byte UIDs, and a lost password is a lost card.
+// Config bytes a write may change: 1 UID length (4 or 7 bytes: what our SELECT does), 6 shadow mode,
+// 7 ATS length, 8-23 ATS, 24-25 ATQA (swapped), 26 SAK. The rest (protocol, password, UL mode, max
+// sectors) must stay, so a write can't lock us out: a lost password is a lost card.
 static bool gen4CfgChangeable(int i)
 {
-	return i >= 6 && i <= 26;
+	return i == 1 || (i >= 6 && i <= 26);
 }
 
 int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG])
@@ -311,6 +331,7 @@ int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG])
 	if (n != MF_GEN4_CFG) FAIL(0, "config is %d bytes, not %d", n, MF_GEN4_CFG);
 	for (int i = 0; i < MF_GEN4_CFG; i++)
 		if (cfg[i] != cur[i] && !gen4CfgChangeable(i)) FAIL(0, "config byte %d may not change", i);
+	if (cfg[1] > 1) FAIL(0, "UID length %02X (only 4 or 7 bytes)", cfg[1]);
 	if (cfg[6] > 4) FAIL(0, "shadow mode %02X", cfg[6]);
 	if (cfg[7] > 16) FAIL(0, "ATS length %d", cfg[7]);
 	// F0 only: F1 would fuse the config for good.
@@ -386,7 +407,7 @@ static int authCmd(u8 authc, u8 block, const u8 key[6], Crypto1 *c, u32 *ntOut)
 	crcA(cmd, 2, cmd + 2);
 	u32 n = mfPack(cmd, 4, NULL, raw, &code);
 	if (monFrames(f, 4) < 0) FAIL(-1, "frames");
-	u32 uid = card.uid[0] << 24 | card.uid[1] << 16 | card.uid[2] << 8 | card.uid[3];
+	u32 uid = cardUid();
 	u32 nt, odd, even;
 	int r = monAuth(key, uid, 0x12345678, raw, n, code, NRAR_TX, &nt, &odd, &even);
 	if (r < 0) FAIL(-1, "auth op");
@@ -446,7 +467,7 @@ static int nestedCapture(u8 ac, u8 kb, const u8 key[6], u8 nc0, u8 tb, u32 *nt0,
 	if (iso14aSelect() < 0) FAIL(0, "select");
 	if (!iso14aParity(false)) FAIL(-1, "parity off");
 	monFrames(f, 4); // drop the activation/select frames
-	u32 uid = card.uid[0] << 24 | card.uid[1] << 16 | card.uid[2] << 8 | card.uid[3];
+	u32 uid = cardUid();
 	int r = monNested(key, uid, 0x12345678, frame, flen, code, nc, NRAR_TX, nt0);
 	if (r < 0) FAIL(-1, "nested op");
 	if (!r) FAIL(0, "no nt0");
@@ -479,10 +500,6 @@ static void keyBytes(u64 k, u8 key[6])
 	for (int i = 0; i < 6; i++) key[i] = k >> (40 - 8 * i);
 }
 
-static u32 cardUid(void)
-{
-	return card.uid[0] << 24 | card.uid[1] << 16 | card.uid[2] << 8 | card.uid[3];
-}
 
 const u8 mfBackdoorKeys[][6] = {
 	{ 0xA3, 0x96, 0xEF, 0xA4, 0xE2, 0x4F }, // FM11RF08S
@@ -616,6 +633,15 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 		ks2 = enc ^ ntTb;
 	}
 	u64 k = crapto1_nested(uid, ntTa, ks1, ntTb, ks2);
+	if (!k && nt0b != nt0) { // a PRNG that steps differently (emulated ones: GTU): measure, like pm3
+		u32 d;
+		if ((r = calibrate(kb, key, knownB, false, &d)) <= 0) return r;
+		logp("  nested: no key at distance %d, calibrated %lu\n", NESTED_DIST, d);
+		ntTa = prngSuccessor(nt0, d);
+		ntTb = prngSuccessor(nt0b, d);
+		k = crapto1_nested(uid, ntTa, enc1 ^ ntTa, ntTb, enc ^ ntTb);
+		if (!k) FAIL(0, "no key (calibrated distance %lu)", d);
+	}
 	if (!k) FAIL(0, "no key (wrong distance?)");
 	for (int i = 0; i < 6; i++) keyOut[i] = k >> (40 - 8 * i);
 	return 1;

@@ -463,3 +463,18 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - Verified on the 3DS: detect "gen1a, uscuid", config read = pm3; identical rewrite VERIFIED; CUID on
   -> `magic gen2` reports gen2, off -> gone; SAK 08 -> 18 seen on rescan, restored; guard refused bytes
   3 and 9. Config back to 7AFF...08.
+
+## 7-byte UIDs (cascade level 2) -- 2026-10-31
+- iso14aSelect: 7-byte UID = level 1 `93 70 88 u0 u1 u2 BCC` (bit mode, HW CRCs 93 70) + level 2
+  `95 70 u3..u6 BCC` in DATA mode (code 0 CRCs any frame; untested whether bit mode CRCs 95 70).
+  Crypto1 uses the last cascade level's 4 bytes (cardUid(): uid[len-4..]), everywhere.
+- Test card: the GTU switched to 7 bytes from the 3DS. Block 0 = 04A1B2C3D4E5F6 08 4400 6263..67 (UID
+  from bytes 0-6, BCC computed by the card), config byte 1 = 01 and ATQA 4400 (pm3 preset "1k S50
+  7-byte"). The GTU config guard now allows UID length 00 <-> 01 (not 02: no cascade level 3 yet).
+- Verified: scan ATQA 0044 UID 04A1B2C3D4E5F6; encrypted mfread (auth with uid[3..6]); mfdump 32/32
+  keys in 3 s. GTU restored to 4 bytes, card identical to gview.txt.
+- GTU quirk, NOT 7-byte related: nested fails on the GTU in both UID modes. The decrypted nested nonce
+  into the known sector is on no PRNG distance from nt0 ("calibration: no distance"), i.e. the GTU's
+  nested nonces are not LFSR successors of the first nonce. (pm3 "Prng weak" only checks the first
+  nonce.) Untested: whether pm3 `hf mf nested` works on it. mfNestedRecover now calibrates (like pm3)
+  when the fixed distance 160 finds no key, and reports the calibrated distance.
