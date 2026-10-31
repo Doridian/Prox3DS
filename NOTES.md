@@ -368,3 +368,19 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - On-device: `mfdump` with no keys recovered 31/32 keys in 1:51 (5A5A5A000001 by reuse across
   sectors 0,3-15; FF by dictionary). Only sector 1 A (2A2C13CC242A, used nowhere else) is open. All 64
   blocks match the pm3 dump except block 7 (that trailer's key A field, the open key).
+
+## Plain static nonce (Fudan, first nonce always 01200145) -- 2026-10-30
+- Test card UID 4ACF2F0C (Fudan based, pm3 `hf mf info`: "Static nonce 01200145", no backdoor). All
+  keys FF; sector 5 set to A0B1C2D3E4F5 / B1C2D3E4F5A6 with the pm3 for testing.
+- The PRNG restarts at select and steps per AUTH EVENT, not with time: OP_NESTED gives the target
+  nonce at distance 160 every time, and a delay before the nested command (tried up to 5000 TIMER
+  ticks) changes nothing. One nested capture therefore always repeats the same (nt, ks) -- useless
+  for intersecting, and crapto1_nested then just accepts its first candidate (a wrong key).
+- Second nonce like pm3 MifareStaticNested: first auth, a COMPLETE nested auth into the known sector
+  ({nr}{ar} from the host with code 0x78, check {at}), then the target's nested AUTH -> distance 320.
+  Host-driven, but event-based stepping makes the round trips harmless (calibrated 320 every time).
+- tools/staticnonce.py (calib / attack) proved it; native: mfNestedRecover notices the static first
+  nonce (both captures share nt0), calibrates both distances on the known sector (calibrate(),
+  nestedNonce2), takes the second target nonce one nested auth later, and intersects as usual.
+- On-device: `nested 0 FF.. 20` / `... tb` recover A0B1C2D3E4F5 / B1C2D3E4F5A6; `mfdump` with no
+  keys: 32/32 in 49 s (sector 5 via static nested, rest dictionary).
