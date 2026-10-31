@@ -7,7 +7,7 @@
 #include "probe.h"
 #include "memrw_ncd_bin.h"
 
-#define N_FRAMES   16
+#define N_FRAMES   8
 #define FRAME_SIZE 56 // seq, regs[5], len, data[28], pad[3]
 
 static u32 ringAddr, seen;
@@ -188,5 +188,25 @@ int monAuth(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code
 	*nt = get32(out);
 	*odd = get32(out + 4);
 	*even = get32(out + 8);
+	return 1;
+}
+
+int monNested(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code,
+	const u8 nestedCmd[4], u32 nrarTx, u32 *nt0)
+{
+	u8 arg[19 + 16], out[4];
+	if (flen > 16) return -1;
+	memcpy(arg, key, 6);
+	for (int i = 0; i < 4; i++) {
+		arg[6 + i] = uid >> (24 - 8 * i);
+		arg[10 + i] = nr >> (24 - 8 * i);
+	}
+	arg[14] = code;
+	memcpy(arg + 15, nestedCmd, 4);
+	memcpy(arg + 19, frame, flen);
+	int r = monDo(MON_NESTED, nrarTx, arg, 19 + flen, out, sizeof(out));
+	if (r == MON_STATUS(2) || r == MON_STATUS(3)) return 0;
+	if (r != 4) return -1;
+	*nt0 = get32(out);
 	return 1;
 }

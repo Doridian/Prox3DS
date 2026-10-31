@@ -60,10 +60,10 @@ typedef unsigned char u8;
 #define irq_save    ROM_FN(0xC5C, u32 (*)(void))
 #define irq_restore ROM_FN(0xC64, void (*)(u32))
 
-enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED };
+enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED, OP_NESTED };
 
 // Captured frames: regs = TX/RX status (0x5C5D0), 0x5C588, 0x5C58C, 0x5C598, 0x5C5A0 (RX bytes).
-#define N_FRAMES   16
+#define N_FRAMES   8
 #define FRAME_DATA 28
 struct frame {
 	u32 seq; // 0 = empty
@@ -359,6 +359,34 @@ static int hook(u8 *msg)
 		put32(buf + 4, c1_odd);
 		put32(buf + 8, c1_even);
 		reply(0, buf, 12);
+		return 1;
+	}
+	case OP_NESTED: {
+		// arg: key[6] uid(4 BE) nr(4 BE) code(u8) nested-cmd plaintext[4] | auth1 frame...
+		// Does auth1 on-chip, waits for {at}, then sends the nested AUTH command (encrypted with the
+		// session cipher) at fixed cycles so the PRNG distance nt0->nt_T is stable. Returns nt0; the
+		// host reads the encrypted nested nonce from the capture ring.
+		if (n < 19) break;
+		u32 nt0;
+		if (!auth(arg, get32be(arg + 6), get32be(arg + 10), arg[14], arg + 19, n - 19,
+			addr & 0xFFFF ? addr & 0xFFFF : 0x178, &nt0)) {
+			reply(2, 0, 0);
+			return 1;
+		}
+		u32 seen = capture.count; // wait for {at}, then advance the cipher past it
+		for (u32 t0 = TIMER; *(volatile u32 *)&capture.count == seen;)
+			if (t0 - TIMER > 20000) { reply(3, 0, 0); return 1; }
+		for (int i = 0; i < 32; i++) c1_bit(0);
+		static u8 nf[5];
+		for (int i = 0; i < 5; i++) nf[i] = 0;
+		for (int i = 0; i < 4; i++) { // encrypt the 4-byte nested command with encrypted parity
+			u32 b = arg[15 + i], c = c1_byte(0) ^ b;
+			for (int k = 0; k < 8; k++) putbit(nf, 9 * i + k, c >> k & 1);
+			putbit(nf, 9 * i + 8, c1_filter() ^ 1 ^ parity(b));
+		}
+		txraw(0, 1, 0x44, 0x88, nf, 5);
+		put32(buf, nt0);
+		reply(0, buf, 4);
 		return 1;
 	}
 	case OP_TXSCHED:

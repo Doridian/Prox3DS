@@ -17,7 +17,8 @@ import mkpatch
 import nfcnet
 
 CHIP = __file__.rsplit("/", 2)[0] + "/chip/"
-OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED = range(9)
+(OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED,
+ OP_NESTED) = range(10)
 CHUNK = 0xF0
 
 
@@ -96,7 +97,7 @@ class Mon:
 
     def frames(self):
         """New captured frames since the last call: [(regs[5], data)]."""
-        n_frames, size = 16, 4 + 20 + 1 + 28 + 3
+        n_frames, size = 8, 4 + 20 + 1 + 28 + 3
         raw = self.read(self.ring, 4 + n_frames * size)
         count, out = struct.unpack_from("<I", raw)[0], []
         for seq in range(max(self.seen + 1, count - n_frames + 1), count + 1):
@@ -131,6 +132,18 @@ class Mon:
                 return None
             raise
         return struct.unpack("<III", p)
+
+    def nested(self, key, uid, nr, frame, code, nested_cmd, nrar_tx=0):
+        """On-chip nested auth (memrw OP_NESTED): auth1 with the known key, then the nested AUTH
+        command (nested_cmd = 4 plaintext bytes, 60/61 target + CRC) encrypted with the session
+        cipher and sent at fixed cycles so the PRNG distance is stable. Returns nt0 (the known
+        auth's plaintext nonce) or None; read the encrypted nested nonce from frames()."""
+        arg = bytes(key) + struct.pack(">IIB", uid, nr, code) + bytes(nested_cmd) + frame
+        try:
+            p = self._do(OP_NESTED, nrar_tx, arg)
+        except MonError:
+            return None
+        return struct.unpack("<I", p)[0]
 
     def irqs(self):
         """Framer interrupt log: [(timer, group, status)], oldest first (group 0 = 0x5C5C4,

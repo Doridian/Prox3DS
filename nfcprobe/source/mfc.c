@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 
 #include "mfc.h"
+#include "crapto1.h"
 #include "nfchw.h"
 #include "probe.h"
 
@@ -272,6 +273,48 @@ int mfReadBlock(Crypto1 *c, u8 block, u8 out[16])
 	crcA(d, 16, crc);
 	if (memcmp(crc, d + 16, 2)) return 0;
 	memcpy(out, d, 16);
+	return 1;
+}
+
+#define NESTED_DIST 160 // on-chip OP_NESTED gives this fixed PRNG distance nt0 -> nt_T (NOTES.md)
+
+// One nested nonce: select, then auth1 (known key) + the nested target AUTH on-chip at fixed timing.
+// Reads nt0 (known auth nonce) and the encrypted nested nonce. 1 ok, 0 no answer, -1 monitor error.
+static int nestedNonce(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u32 *nt0, u32 *encNt)
+{
+	MonFrame f[4];
+	u8 a1[4] = { knownB ? 0x61 : 0x60, kb }, frame[8], code, nc[4] = { tgtB ? 0x61 : 0x60, tb };
+	crcA(a1, 2, a1 + 2);
+	crcA(nc, 2, nc + 2);
+	u32 flen = mfPack(a1, 4, NULL, frame, &code);
+	if (!iso14aParity(true)) FAIL(-1, "parity on");
+	if (iso14aSelect() < 0) FAIL(0, "select");
+	if (!iso14aParity(false)) FAIL(-1, "parity off");
+	monFrames(f, 4); // drop the activation/select frames
+	u32 uid = card.uid[0] << 24 | card.uid[1] << 16 | card.uid[2] << 8 | card.uid[3];
+	int r = monNested(key, uid, 0x12345678, frame, flen, code, nc, NRAR_TX, nt0);
+	if (r < 0) FAIL(-1, "nested op");
+	if (!r) FAIL(0, "no nt0");
+	int n = monFrames(f, 4);
+	if (n < 1) FAIL(0, "no nested nonce");
+	u8 b[4];
+	if (mfUnpack(f[n - 1].data, f[n - 1].len, 4, b, 4) != 4) FAIL(0, "short nonce");
+	*encNt = b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3];
+	return 1;
+}
+
+int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 keyOut[6])
+{
+	u32 nt0, enc, uid = card.uid[0] << 24 | card.uid[1] << 16 | card.uid[2] << 8 | card.uid[3];
+	int r = nestedNonce(kb, key, knownB, tb, tgtB, &nt0, &enc);
+	if (r <= 0) return r;
+	u32 ntTa = prngSuccessor(nt0, NESTED_DIST), ks1 = enc ^ ntTa;
+	r = nestedNonce(kb, key, knownB, tb, tgtB, &nt0, &enc);
+	if (r <= 0) return r;
+	u32 ntTb = prngSuccessor(nt0, NESTED_DIST), ks2 = enc ^ ntTb;
+	u64 k = crapto1_nested(uid, ntTa, ks1, ntTb, ks2);
+	if (!k) FAIL(0, "no key (wrong distance?)");
+	for (int i = 0; i < 6; i++) keyOut[i] = k >> (40 - 8 * i);
 	return 1;
 }
 

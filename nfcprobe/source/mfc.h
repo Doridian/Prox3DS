@@ -38,6 +38,10 @@ u32 mfUnpack(const u8 *raw, u32 rawLen, u32 off, u8 *out, u32 n);
 // 1 = ok, 0 = refused / no valid answer, -1 = monitor error (reload with iso14aStart)
 int mfAuth(u8 block, const u8 key[6], bool keyB, Crypto1 *c);
 int mfReadBlock(Crypto1 *c, u8 block, u8 out[16]);
+// Nested attack: recover a target sector's key from a known key in another sector (two nested
+// nonces, crapto1). 1 = recovered (keyOut set), 0 = no answer / not recovered, -1 = monitor error.
+int mfNestedRecover(u8 knownBlock, const u8 knownKey[6], bool knownKeyB, u8 targetBlock,
+	bool targetKeyB, u8 keyOut[6]);
 // Encrypted WRITE in an authenticated session (mixed-parity data frame, NOTES.md). 1 = ACKed,
 // 0 = NAK / no answer, -1 = monitor error, 2 = this keystream has no usable parity pair (nothing
 // sent; re-auth and try again). WRITES THE CARD.

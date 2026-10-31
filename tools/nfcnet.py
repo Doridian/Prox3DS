@@ -11,6 +11,7 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST mfdump [KEY...] [-o OUT]     dump with keys (+ keys.txt + defaults), also saved to SD
        nfcnet.py HOST gen1awrite BLOCK HEX32       Gen1a backdoor write of 16 bytes (WRITES THE CARD)
        nfcnet.py HOST mfwrite BLOCK KEY HEX32 [b]  Mifare Classic encrypted write + read-back (WRITES THE CARD)
+       nfcnet.py HOST nested KBLK KKEY TBLK [kb][tb]  recover TBLK's key from a known key (nested attack)
 """
 import socket
 import struct
@@ -19,7 +20,7 @@ import sys
 PORT = 8020
 OP_PING, OP_TAKEOVER, OP_POWER, OP_WRITE, OP_READ, OP_XFER, OP_GPIO, OP_RELEASE = range(8)
 (OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
- OP_GEN1A_WRITE, OP_MF_WRITE) = range(0x10, 0x17)
+ OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED) = range(0x10, 0x18)
 NO_CARD = 1  # card op result: no card / auth refused
 
 CORE_RESET = bytes.fromhex("1020000101")
@@ -117,6 +118,13 @@ class Nfc:
             raise ValueError("data must be 16 bytes")
         p = self.card_call(OP_MF_WRITE, bytes([block, key_b]) + bytes(key) + bytes(data), 30)
         return p is not None
+
+    def mf_nested(self, known_block, known_key, target_block, known_b=False, target_b=False):
+        """Nested attack: recover target_block's key from a known key in another sector. Returns the
+        6-byte key, or None (reason in self.why)."""
+        arg = (bytes([known_block, 1 if known_b else 0]) + bytes(known_key)
+               + bytes([target_block, 1 if target_b else 0]))
+        return self.card_call(OP_MF_NESTED, arg, 60)
 
     def takeover(self):
         self.call(OP_TAKEOVER)
@@ -250,6 +258,12 @@ def main():
             print(f"{i:3}: {d.hex(' ') if d else '??'}")
         if out:
             open(out, "wb").write(b"".join(d or bytes(16) for d in blocks))
+    elif what == "nested":
+        # nested KNOWN_BLOCK KNOWN_KEY TARGET_BLOCK [kb] [tb]
+        kblk, kkey, tblk = int(args[0]), bytes.fromhex(args[1]), int(args[2])
+        flags = args[3:]
+        key = nfc.mf_nested(kblk, kkey, tblk, "kb" in flags, "tb" in flags)
+        print(f"recovered key for block {tblk}: {key.hex()}" if key else f"failed: {nfc.why}")
     elif what == "gen1awrite":
         blk, data = int(args[0]), bytes.fromhex(args[1])
         ok = nfc.gen1a_write(blk, data)

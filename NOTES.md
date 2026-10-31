@@ -291,3 +291,30 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
 - The ROM's RF_INTF_ACTIVATED_NTF always reports SENS_RES 00 00 (e.g. `61 05 .. 09 00 00 04
   c1 c1 c1 c1 01 88`); a raw WUPA right after gets 04 00 = ATQA 0x0004. The app now takes the ATQA
   from the WUPA in iso14aSelect and selects once after activation. (rawa.py still prints the NTF value.)
+
+## Nested: crapto1 recovery ported + validated (tools/crapto1.py) -- 2026-10-30
+- lfsr_recovery32 + lfsr_rollback_word + crypto1_get_lfsr ported fresh from crapto1, same odd/even
+  split as crypto1.py. recover_keys(uid, nt, ks) with ks = enc_nt ^ nt (32 target-keystream bits).
+- Synthetic self-test: recovers each known key from one nonce (~70k candidates, ~20 s in Python);
+  two nonces (same key, different nt) intersect to the UNIQUE key.
+- Real card: captured 2 nested nonces to sector 1, recovered c1c1c1000001 uniquely. (scratchpad
+  real_recover.py; here nt_T was brute-forced via the known key just to feed recovery.)
+- REMAINING for an unknown-key attack: predict nt_T. Host timing can't (jitter). Need an on-chip
+  nested op (auth1 then the nested command at fixed cycles) so the PRNG distance nt0->nt_T is stable;
+  then nt_T = prng_successor(nt0, D) for a calibrated D (+/- small jitter), recover, intersect.
+  Then port crapto1 recover to C on the ARM11 (Proxmark does it <1 s) + net op + app.
+
+## Nested attack WORKS end-to-end (on-chip OP_NESTED + crapto1) -- 2026-10-30
+- memrw.c OP_NESTED (op 9): auth1 with the known key on-chip, wait for {at}, advance the cipher 32
+  bits, then send the nested AUTH command (4 plaintext bytes, encrypted with the session cipher) at
+  fixed cycles. Returns nt0; host reads the encrypted nested nonce from the ring (RX offset 4).
+  (N_FRAMES cut 16->8 to fit; power-of-two required -- % N_FRAMES must be a mask, not a divide.)
+- On-chip timing makes the PRNG distance DETERMINISTIC: nt_T = prng_successor(nt0, 160), EXACTLY 160
+  every time (vs 1183..63378 with host round-trips). Same distance for different target blocks.
+- Full attack (tools, scratchpad nested_attack.py): auth known sector 0 (key FF), nested to target,
+  predict nt_T via dist 160, ks = enc_nt ^ nt_T, crapto1 recover_keys -> ~50k candidates; a 2nd
+  nested nonce intersects to the UNIQUE key. Recovered sector 1 c1c1c1000001 and sector 2
+  c1c1c1000002 from ONLY the sector 0 key. ~20 s/nonce in Python (C/ARM11 will be fast).
+- chipmon.py nested(); crapto1.py recover_keys(uid, nt, ks).
+- TODO (native): port crapto1 recover to C on the ARM11, mfc.c mfNested + mfNestedRecover, net op,
+  and a "recover keys from one known key" button; then feed recovered keys into the dump.

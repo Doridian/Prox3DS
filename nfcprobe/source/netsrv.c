@@ -40,6 +40,8 @@ enum {
 	OP_GEN1A_WRITE = 0x15, // block u8, data[16] -> empty ok; on failure payload = reason. WRITES CARD
 	OP_MF_WRITE   = 0x16, // block u8, keyB u8, key[6], data[16] -> empty ok (read back); on failure
 	                      // payload = reason. Encrypted WRITE (NOTES.md). WRITES THE CARD
+	OP_MF_NESTED  = 0x17, // knownBlock u8, knownKeyB u8, knownKey[6], tgtBlock u8, tgtKeyB u8
+	                      // -> recovered key[6]; on failure payload = reason (nested attack, NOTES.md)
 	                      // -> sectors u8, per sector: found u8 (1 = A, 2 = B) keyA[6] keyB[6],
 	                      //    per block: ok u8, data[16]
 };
@@ -183,6 +185,21 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		int r = mfWrite(in[0], in + 2, in[1], in + 8);
 		iso14aParity(true);
 		if (r == 1) return 0; // verified
+		*outLen = strlen(mfWhy());
+		memcpy(out, mfWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_MF_NESTED: {
+		if (inLen < 10) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		u8 key[6];
+		int r = mfNestedRecover(in[0], in + 2, in[1], in[8], in[9], key);
+		iso14aParity(true);
+		if (r == 1) {
+			memcpy(out, key, 6);
+			*outLen = 6;
+			return 0;
+		}
 		*outLen = strlen(mfWhy());
 		memcpy(out, mfWhy(), *outLen);
 		return r < 0 ? -1 : 1;
