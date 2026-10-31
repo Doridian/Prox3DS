@@ -60,6 +60,8 @@ enum {
 	                       // = reason. WRITES THE CARD CONFIG
 	OP_USC_CONFIG  = 0x1C, // [config[16]] -> USCUID config read; with config: write it (guarded,
 	                       // mfc.h), read back; on failure payload = reason. WRITES THE CARD CONFIG
+	OP_MF_CLONE    = 0x1D, // force u8, per block: valid u8, data[16] -> empty ok; on failure payload =
+	                       // reason (mfCloneToMagic). WRITES THE CARD
 };
 
 #define OUT_MAX 0x2000
@@ -263,6 +265,23 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 			*outLen = inLen ? 0 : MF_USC_CFG;
 			return 0;
 		}
+		*outLen = strlen(mfWhy());
+		memcpy(out, mfWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_MF_CLONE: {
+		static u8 data[MF_MAX_BLOCKS][16];
+		static bool valid[MF_MAX_BLOCKS];
+		int nb = (inLen - 1) / 17;
+		if (inLen < 1 || (inLen - 1) % 17 || nb > MF_MAX_BLOCKS) return -3;
+		for (int b = 0; b < nb; b++) {
+			valid[b] = in[1 + 17 * b];
+			memcpy(data[b], in + 2 + 17 * b, 16);
+		}
+		if (!card.active && !iso14aStart()) return 1;
+		int r = mfCloneToMagic((const u8 (*)[16])data, valid, nb, in[0]);
+		iso14aParity(true);
+		if (r == 1) return 0;
 		*outLen = strlen(mfWhy());
 		memcpy(out, mfWhy(), *outLen);
 		return r < 0 ? -1 : 1;

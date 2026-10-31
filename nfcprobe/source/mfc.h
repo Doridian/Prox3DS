@@ -121,3 +121,11 @@ int mfSectorsFromSak(u8 sak);
 // extra keys, then MF_KEYS, then the defaults, without duplicates
 int mfKeyList(u8 (*out)[6], int max, const u8 (*extra)[6], int nextra);
 bool mfSaveDump(const MfDump *d, char *path, u32 pathMax); // MF_DIR/dumps/<UID>.bin + .keys.txt
+
+// Writes a dump onto a magic card: Gen4 GTU (default password) and Gen1a/USCUID through their
+// backdoors, Gen2 with normal writes and the card's current keys (found like mfDumpCard). Refuses
+// unsent: a 4-byte block 0 with a bad BCC (not on the GTU: it computes its own), broken access
+// bits, and on Gen2 (unless force) a trailer that would freeze its sector. Sector 0 goes last
+// (block 0 changes the UID). Every block is read back (Gen2 trailers: the new key A must auth).
+// 1 = done, 0 = refused (mfWhy), -1 = monitor error. WRITES THE CARD.
+int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool force);

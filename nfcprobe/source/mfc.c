@@ -1122,3 +1122,112 @@ bool mfSaveDump(const MfDump *d, char *path, u32 pathMax)
 	}
 	return true;
 }
+
+// Access bits are stored twice (inverted); a broken copy locks a real sector for good.
+static bool aclValid(const u8 *t)
+{
+	return (t[7] >> 4) == (~t[6] & 0xF) && (t[8] & 0xF) == (~t[6] >> 4 & 0xF) && (t[8] >> 4) == (~t[7] & 0xF);
+}
+
+// C1 C2 C3 of the trailer itself: 001 and 011 leave keys and access bits writable (key A / key B).
+static bool trailerRewritable(const u8 *t)
+{
+	u8 c = (t[7] >> 7 & 1) << 2 | (t[8] >> 3 & 1) << 1 | (t[8] >> 7 & 1);
+	return c == 1 || c == 3;
+}
+
+enum { CLONE_GEN4, CLONE_GEN1A, CLONE_GEN2 };
+
+// Gen2 trailer: write with the current key, then the new key A has to auth (keys read back as zeros).
+static int gen2Trailer(const MfDump *tgt, int sec, u8 t, const u8 data[16])
+{
+	for (int kb = 0; kb < 2; kb++) {
+		if (!tgt->keyFound[sec][kb]) continue;
+		int r = 2;
+		for (int i = 0; i < 16 && r == 2; i++) {
+			Crypto1 c;
+			if ((r = mfAuth(t, tgt->keys[sec][kb], kb, &c)) <= 0) break;
+			r = mfWriteBlock(&c, t, data);
+		}
+		if (r < 0) return -1;
+		if (r != 1) continue;
+		Crypto1 c;
+		for (int i = 0; i < 3; i++)
+			if ((r = mfAuth(t, data, false, &c)) != 0) return r < 0 ? -1 : 1;
+		FAIL(0, "sector %d: new key A does not auth", sec);
+	}
+	FAIL(0, "sector %d: trailer write refused", sec);
+}
+
+static int cloneBlock(int type, const MfDump *tgt, int sec, u8 b, const u8 data[16])
+{
+	if (type == CLONE_GEN4) return mfGen4Write(mfGen4DefaultPwd, b, data);
+	if (type == CLONE_GEN1A) return mfGen1aWrite(b, data);
+	for (int kb = 0; kb < 2; kb++) {
+		if (!tgt->keyFound[sec][kb]) continue;
+		int r = mfWrite(b, tgt->keys[sec][kb], kb, data);
+		if (r) return r;
+	}
+	FAIL(0, "block %d: write refused", b);
+}
+
+int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool force)
+{
+	int sectors = 0;
+	while (sectors < 40 && mfFirstBlock(sectors) < nblocks) sectors++;
+	if (mfFirstBlock(sectors) != nblocks) FAIL(0, "%d blocks: not whole sectors", nblocks);
+	if (sectors > mfSectorsFromSak(card.sak)) FAIL(0, "dump has %d sectors, the card %d", sectors, mfSectorsFromSak(card.sak));
+	for (int sec = 0; sec < sectors; sec++) {
+		int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
+		if (valid[t] && !aclValid(data[t])) FAIL(0, "sector %d: broken access bits", sec);
+	}
+
+	MfMagic m;
+	if (mfMagicDetect(mfGen4DefaultPwd, false, &m) < 0) return -1;
+	int type = m.flags & MF_MAGIC_GEN4 ? CLONE_GEN4 : m.flags & MF_MAGIC_GEN1A ? CLONE_GEN1A : CLONE_GEN2;
+	// The GTU computes its BCC; the others send block 0's as it is, and a wrong one breaks anticollision.
+	if (type != CLONE_GEN4 && valid[0] && card.uidLen == 4
+	    && (data[0][0] ^ data[0][1] ^ data[0][2] ^ data[0][3]) != data[0][4])
+		FAIL(0, "block 0: bad BCC");
+	static MfDump tgt;
+	if (type == CLONE_GEN2) {
+		int r = gen2Test();
+		if (r < 0) return -1;
+		if (!r) FAIL(0, "not a magic card");
+		for (int sec = 0; sec < sectors && !force; sec++) {
+			int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
+			if (valid[t] && !trailerRewritable(data[t]))
+				FAIL(0, "sector %d: trailer freezes it on Gen2 (force)", sec);
+		}
+		// Normal writes need the target's current keys: the dump's own trailer keys first.
+		static u8 keys[MF_MAX_KEYS][6], extra[80][6];
+		int nextra = 0;
+		for (int sec = 0; sec < sectors; sec++) {
+			int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
+			if (!valid[t]) continue;
+			memcpy(extra[nextra++], data[t], 6);
+			memcpy(extra[nextra++], data[t] + 10, 6);
+		}
+		int nkeys = mfKeyList(keys, MF_MAX_KEYS, (const u8 (*)[6])extra, nextra);
+		if (mfDumpCard(&tgt, sectors, (const u8 (*)[6])keys, nkeys) < 0) return -1;
+	}
+	logp("clone %d sectors onto %s\n", sectors, type == CLONE_GEN4 ? "gen4 GTU" : type == CLONE_GEN1A ? "gen1a" : "gen2");
+
+	// Sector 0 last: block 0 changes the UID (later SELECTs use the new one), its trailer after it.
+	for (int i = 1; i <= sectors; i++) {
+		int sec = i % sectors, b0 = mfFirstBlock(sec), nb = mfSectorBlocks(sec), t = b0 + nb - 1, r;
+		if (type == CLONE_GEN2 && !tgt.keyFound[sec][0] && !tgt.keyFound[sec][1]) FAIL(0, "sector %d: no key", sec);
+		for (int b = b0 + (sec == 0); b < t; b++)
+			if (valid[b] && (r = cloneBlock(type, &tgt, sec, b, data[b])) != 1) return r;
+		if (sec == 0 && valid[0]) {
+			if ((r = cloneBlock(type, &tgt, 0, 0, data[0])) != 1) return r;
+			memcpy(card.uid, data[0], card.uidLen);
+		}
+		if (valid[t]) {
+			r = type == CLONE_GEN2 ? gen2Trailer(&tgt, sec, t, data[t]) : cloneBlock(type, &tgt, sec, t, data[t]);
+			if (r != 1) return r;
+		}
+		logp("  sector %2d done\n", sec);
+	}
+	return 1;
+}

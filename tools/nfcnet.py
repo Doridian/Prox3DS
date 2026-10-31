@@ -17,6 +17,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                    Gen2 by rewriting block 0 with its own data (WRITES)
        nfcnet.py HOST g4read BLOCK [N] [PWD]       Gen4 GTU read without keys (PWD default 00000000)
        nfcnet.py HOST g4write BLOCK HEX32 [PWD]    Gen4 GTU write + read-back (WRITES THE CARD)
+       nfcnet.py HOST clone FILE [force]           write a dump (.bin) onto a magic card (GTU, Gen1a/USCUID,
+                                                   Gen2), each block read back (WRITES THE CARD)
        nfcnet.py HOST uscconfig [HEX32]            USCUID (Gen4 GDM) config via the Gen1a wakeup: read and
                                                    decode; with HEX32 write it (guarded; WRITES CONFIG)
        nfcnet.py HOST g4config [HEX60] [PWD]       Gen4 GTU config: read and decode; with HEX60 write it
@@ -33,7 +35,7 @@ PORT = 8020
 UPDATE_CHUNK = 0x7000
 (OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
- OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG) = range(0x10, 0x1D)
+ OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE) = range(0x10, 0x1E)
 GEN4_PWD = bytes(4)
 NO_CARD = 1  # card op result: no card / auth refused
 
@@ -179,6 +181,12 @@ class Nfc:
             self.call(OP_UPDATE, struct.pack("<I", o) + data[o:o + UPDATE_CHUNK])
             log(f"  {min(o + UPDATE_CHUNK, len(data))}/{len(data)}")
         self.call(OP_UPDATE_DONE, struct.pack("<I", len(data)))
+
+    def mf_clone(self, blocks, force=False):
+        """Write blocks (16 bytes each, None = skip) onto a magic card. True if done, False if
+        refused (reason in self.why). WRITES THE CARD."""
+        p = bytes([force]) + b"".join(bytes([1]) + b if b else bytes(17) for b in blocks)
+        return self.card_call(OP_MF_CLONE, p, None) is not None
 
     def takeover(self):
         self.call(OP_TAKEOVER)
@@ -354,6 +362,12 @@ def main():
         blk, data = int(args[0]), bytes.fromhex(args[1])
         ok = nfc.gen4_write(blk, data, bytes.fromhex(args[2]) if len(args) > 2 else GEN4_PWD)
         print("VERIFIED" if ok else f"write failed: {nfc.why}")
+    elif what == "clone":
+        raw = open(args[0], "rb").read()
+        if len(raw) % 16:
+            sys.exit("dump size is not whole blocks")
+        ok = nfc.mf_clone([raw[i:i + 16] for i in range(0, len(raw), 16)], "force" in args[1:])
+        print("CLONED (every block read back)" if ok else f"clone failed: {nfc.why}")
     elif what == "uscconfig":
         if args:
             ok = nfc.usc_config(bytes.fromhex(args[0]))

@@ -479,3 +479,23 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   nonce.) pm3 fails too: `hf mf nested --blk 0 -a -k FF.. --tblk 20 --ta` -> 3 key candidates, "No
   valid key found" (target key is FF). So it's the card. mfNestedRecover now calibrates (like pm3)
   when the fixed distance 160 finds no key, and reports the calibrated distance.
+
+## Clone a dump onto a magic card -- 2026-10-31
+- mfCloneToMagic / net op 0x1D OP_MF_CLONE (force u8, per block valid u8 + data[16]) / `nfcnet.py
+  clone FILE [force]`. Target detected: Gen4 GTU (CD writes, default password), Gen1a/USCUID
+  (backdoor A0 writes), else Gen2 (gen2Test, then normal encrypted writes with the target's current
+  keys: mfDumpCard with the dump's own trailer keys + keys.txt + defaults, nested if needed).
+- Order: sectors 1..N-1, then sector 0 (blocks 1, 2, then 0, which changes the UID -> card.uid
+  updated for later SELECTs, then its trailer). Data blocks before each trailer. Every block is read
+  back; a Gen2 trailer is checked by authing with the new key A (keys read back as zeros); key A
+  write tried first, then key B.
+- Refused unsent: dump not whole sectors / bigger than the card; broken access bits (the inverted copy
+  must match); on Gen1a/Gen2 a 4-byte block 0 with a bad BCC (those send block 0 as is during
+  anticollision); on Gen2 (unless force) a trailer whose own C1C2C3 is not 001/011 (keys/access bits
+  no longer writable = sector frozen). NOT on the GTU: it computes its BCC and ignores block 0 byte 4
+  (its original block 0 is 11223344 1C.., BCC would be 44).
+- Verified: GTU test dump (UID DEADBEEF, sector 1 text, sector 2 keys 4B3A29180716 / 7C6D5E4F3021)
+  in 2.9 s, key dump == file; original cloned back == gview.txt. Gen2 5A11E21B: test dump + sector 3
+  trailer with ACL 0F00FF (trailer bits 011, key B writes) cloned, key dump == file; real freeze
+  (778F08, trailer bits 110) refused; original cloned back in 1:49 (sector 2 keys recovered by
+  nested first, sector 3 written with key B) == backup. Bad BCC and broken ACL dumps refused.
