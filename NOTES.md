@@ -413,6 +413,9 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   Gen1a/Gen4 answer); mfdump 32/32 keys + 64 blocks in 3 s; `magic gen2` -> gen2 (block 0 rewrite
   ACKed and verified); rescan + mfread block 0 unchanged (5A11E21B B2 08 0400 6263...69).
 - Gen1a card UID F5F7BF02 (keys FF): `magic` -> gen1a; mfdump 32/32 + 64 blocks in 2.4 s, identical
-  to an independent backdoor dump (tools/rawa.py gen1a-dump).
+  to an independent backdoor dump (tools/rawa.py gen1a-dump). Screen shows "gen1a magic: reading
+  without keys". Keyless key pickup proven: sector 5 re-keyed through the backdoor to 4B3A29180716 /
+  7C6D5E4F3021 (in no dictionary), mfdump with no keys -> both keys in 3.3 s (no nested). Restored;
+  card identical to before.
 - Not done: GTU config writes (CF pwd F0/F1, mode changes) on purpose -- easy to make a GTU hard to
   recover.
