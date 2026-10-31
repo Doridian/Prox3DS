@@ -13,7 +13,7 @@ enum { MON_READ8, MON_WRITE8, MON_CALL, MON_READ32, MON_WRITE32, MON_CAPTURE, MO
 typedef struct {
 	u32 regs[5]; // TX/RX status, 0x5C588, 0x5C58C, 0x5C598, 0x5C5A0
 	u8 len;
-	u8 data[28];
+	u8 data[36];
 } MonFrame;
 
 bool monLoad(void); // power cycle, download memrw, CORE_RESET / GET_PATCH_VERSION / CORE_INIT

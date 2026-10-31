@@ -97,7 +97,7 @@ class Mon:
 
     def frames(self):
         """New captured frames since the last call: [(regs[5], data)]."""
-        n_frames, size = 8, 4 + 20 + 1 + 28 + 3
+        n_frames, size = 8, 4 + 20 + 1 + 36 + 3
         raw = self.read(self.ring, 4 + n_frames * size)
         count, out = struct.unpack_from("<I", raw)[0], []
         for seq in range(max(self.seen + 1, count - n_frames + 1), count + 1):

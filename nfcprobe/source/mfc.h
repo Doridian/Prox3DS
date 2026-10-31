@@ -31,6 +31,24 @@ bool mfGen1aUnlock(void);
 // -1 = monitor/no answer. The reason is in mfWhy(). WRITES THE CARD.
 int mfGen1aWrite(u8 block, const u8 data[16]);
 
+// Gen4 GTU "magic": plaintext CF <pwd> commands after SELECT, no auth (NOTES.md). 1 = ok (write:
+// read back and verified), 0 = no / bad answer (wrong password, not a GTU), -1 = monitor error; the
+// reason is in mfWhy(). The config read returns its length (30 or 32 bytes).
+extern const u8 mfGen4DefaultPwd[4];
+int mfGen4Read(const u8 pwd[4], u8 block, u8 out[16]);
+int mfGen4Write(const u8 pwd[4], u8 block, const u8 data[16]); // WRITES THE CARD
+int mfGen4Config(const u8 pwd[4], u8 *out, u32 max);
+
+// Magic card detection. Gen2 (CUID) is only tested when asked: it rewrites block 0 with its own
+// contents through a normal authenticated WRITE (a default key A for sector 0 must work).
+enum { MF_MAGIC_GEN1A = 1, MF_MAGIC_GEN2 = 2, MF_MAGIC_GEN4 = 4 };
+typedef struct {
+	u8 flags;
+	u8 cfgLen;
+	u8 cfg[32]; // Gen4 config (C6)
+} MfMagic;
+int mfMagicDetect(const u8 pwd[4], bool testGen2, MfMagic *m); // flags, -1 on a monitor error
+
 // Parity-off framing: bytes + parity bits <-> raw bit stream (9 bits per byte, LSB first).
 u32 mfPack(const u8 *data, u32 len, const u8 *par, u8 *out, u8 *code);
 u32 mfUnpack(const u8 *raw, u32 rawLen, u32 off, u8 *out, u32 n);

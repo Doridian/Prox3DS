@@ -37,13 +37,18 @@ enum {
 	OP_14A_TX     = 0x12, // code u8 (0 = whole bytes), frame -> per answer: len u8, raw bytes
 	OP_MF_READ    = 0x13, // block u8, keyB u8, key[6], count u8 -> per block: ok u8, data[16]
 	OP_MF_DUMP    = 0x14, // sectors u8 (0 = from SAK), keys[6]... (+ keys.txt + defaults), saved to SD
+	                      // -> sectors u8, per sector: found u8 (1 = A, 2 = B) keyA[6] keyB[6],
+	                      //    per block: ok u8, data[16]
 	OP_GEN1A_WRITE = 0x15, // block u8, data[16] -> empty ok; on failure payload = reason. WRITES CARD
 	OP_MF_WRITE   = 0x16, // block u8, keyB u8, key[6], data[16] -> empty ok (read back); on failure
 	                      // payload = reason. Encrypted WRITE (NOTES.md). WRITES THE CARD
 	OP_MF_NESTED  = 0x17, // knownBlock u8, knownKeyB u8, knownKey[6], tgtBlock u8, tgtKeyB u8
 	                      // -> recovered key[6]; on failure payload = reason (nested attack, NOTES.md)
-	                      // -> sectors u8, per sector: found u8 (1 = A, 2 = B) keyA[6] keyB[6],
-	                      //    per block: ok u8, data[16]
+	OP_MF_MAGIC   = 0x18, // gen2 u8 (1 = also test Gen2: rewrites block 0 with its own data), [pwd[4]]
+	                      // -> flags u8 (1 = Gen1a, 2 = Gen2, 4 = Gen4 GTU), Gen4 config
+	OP_GEN4_READ  = 0x19, // pwd[4], block u8, count u8 -> per block: ok u8, data[16]
+	OP_GEN4_WRITE = 0x1A, // pwd[4], block u8, data[16] -> empty ok (read back); on failure payload
+	                      // = reason. WRITES THE CARD
 };
 
 #define OUT_MAX 0x2000
@@ -184,6 +189,40 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		if (!card.active && !iso14aStart()) return 1;
 		int r = mfWrite(in[0], in + 2, in[1], in + 8);
 		iso14aParity(true);
+		if (r == 1) return 0; // verified
+		*outLen = strlen(mfWhy());
+		memcpy(out, mfWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_MF_MAGIC: {
+		if (inLen < 1) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		MfMagic m;
+		int r = mfMagicDetect(inLen >= 5 ? in + 1 : mfGen4DefaultPwd, in[0], &m);
+		iso14aParity(true);
+		if (r < 0) return -1;
+		out[0] = m.flags;
+		memcpy(out + 1, m.cfg, m.cfgLen);
+		*outLen = 1 + m.cfgLen;
+		return 0;
+	}
+	case OP_GEN4_READ: {
+		if (inLen < 6 || in[5] > 64) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		for (int i = 0; i < in[5]; i++) {
+			u8 *p = out + 17 * i;
+			int r = mfGen4Read(in, in[4] + i, p + 1);
+			if (r < 0) return -1;
+			p[0] = r;
+			if (!r) memset(p + 1, 0, 16);
+		}
+		*outLen = 17 * in[5];
+		return 0;
+	}
+	case OP_GEN4_WRITE: {
+		if (inLen < 21) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		int r = mfGen4Write(in, in[4], in + 5);
 		if (r == 1) return 0; // verified
 		*outLen = strlen(mfWhy());
 		memcpy(out, mfWhy(), *outLen);

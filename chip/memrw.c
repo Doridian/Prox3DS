@@ -64,7 +64,7 @@ enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW
 
 // Captured frames: regs = TX/RX status (0x5C5D0), 0x5C588, 0x5C58C, 0x5C598, 0x5C5A0 (RX bytes).
 #define N_FRAMES   8
-#define FRAME_DATA 28
+#define FRAME_DATA 36 // room for a GTU config read (32 + CRC)
 struct frame {
 	u32 seq; // 0 = empty
 	u32 regs[5];

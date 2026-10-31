@@ -12,6 +12,10 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST gen1awrite BLOCK HEX32       Gen1a backdoor write of 16 bytes (WRITES THE CARD)
        nfcnet.py HOST mfwrite BLOCK KEY HEX32 [b]  Mifare Classic encrypted write + read-back (WRITES THE CARD)
        nfcnet.py HOST nested KBLK KKEY TBLK [kb][tb]  recover TBLK's key from a known key (nested attack)
+       nfcnet.py HOST magic [gen2] [PWD]           detect Gen1a / Gen4 GTU (+ config); gen2 = also test
+                                                   Gen2 by rewriting block 0 with its own data (WRITES)
+       nfcnet.py HOST g4read BLOCK [N] [PWD]       Gen4 GTU read without keys (PWD default 00000000)
+       nfcnet.py HOST g4write BLOCK HEX32 [PWD]    Gen4 GTU write + read-back (WRITES THE CARD)
 """
 import socket
 import struct
@@ -20,7 +24,9 @@ import sys
 PORT = 8020
 OP_PING, OP_TAKEOVER, OP_POWER, OP_WRITE, OP_READ, OP_XFER, OP_GPIO, OP_RELEASE = range(8)
 (OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
- OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED) = range(0x10, 0x18)
+ OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
+ OP_GEN4_WRITE) = range(0x10, 0x1B)
+GEN4_PWD = bytes(4)
 NO_CARD = 1  # card op result: no card / auth refused
 
 CORE_RESET = bytes.fromhex("1020000101")
@@ -125,6 +131,26 @@ class Nfc:
         arg = (bytes([known_block, 1 if known_b else 0]) + bytes(known_key)
                + bytes([target_block, 1 if target_b else 0]))
         return self.card_call(OP_MF_NESTED, arg, 60)
+
+    def mf_magic(self, gen2=False, pwd=GEN4_PWD):
+        """-> ({'gen1a', 'gen2', 'gen4'}, gen4 config bytes) or None (no card). gen2=True rewrites
+        block 0 with its own data to test it (WRITES THE CARD)."""
+        p = self.card_call(OP_MF_MAGIC, bytes([gen2]) + bytes(pwd), 60)
+        if p is None:
+            return None
+        return {n for i, n in enumerate(("gen1a", "gen2", "gen4")) if p[0] >> i & 1}, p[1:]
+
+    def gen4_read(self, block, count=1, pwd=GEN4_PWD):
+        """Gen4 GTU read without keys -> [16 bytes or None per block], None if no card."""
+        p = self.card_call(OP_GEN4_READ, bytes(pwd) + bytes([block, count]), 30)
+        return p and [p[i + 1:i + 17] if p[i] else None for i in range(0, len(p), 17)]
+
+    def gen4_write(self, block, data, pwd=GEN4_PWD):
+        """Gen4 GTU write of 16 bytes + read-back. True if verified, False if refused (reason in
+        self.why). WRITES THE CARD."""
+        if len(data) != 16:
+            raise ValueError("data must be 16 bytes")
+        return self.card_call(OP_GEN4_WRITE, bytes(pwd) + bytes([block]) + bytes(data), 30) is not None
 
     def takeover(self):
         self.call(OP_TAKEOVER)
@@ -271,6 +297,28 @@ def main():
     elif what == "mfwrite":
         blk, key, data = int(args[0]), bytes.fromhex(args[1]), bytes.fromhex(args[2])
         ok = nfc.mf_write(blk, key, data, len(args) > 3 and args[3] == "b")
+        print("VERIFIED" if ok else f"write failed: {nfc.why}")
+    elif what == "magic":
+        gen2 = "gen2" in args
+        pwd = next((bytes.fromhex(a) for a in args if len(a) == 8), GEN4_PWD)
+        r = nfc.mf_magic(gen2, pwd)
+        if r is None:
+            sys.exit("no card")
+        print("magic:", ", ".join(sorted(r[0])) or "none", "" if gen2 else "(gen2 not tested)")
+        if r[1]:
+            print(f"gen4 config ({len(r[1])} bytes): {r[1].hex()}")
+    elif what == "g4read":
+        blk = int(args[0])
+        n = int(args[1]) if len(args) > 1 and len(args[1]) != 8 else 1
+        pwd = bytes.fromhex(args[-1]) if len(args) > 1 and len(args[-1]) == 8 else GEN4_PWD
+        r = nfc.gen4_read(blk, n, pwd)
+        if r is None:
+            sys.exit("no card")
+        for i, d in enumerate(r):
+            print(f"{blk + i:3}: {d.hex(' ') if d else 'read failed'}")
+    elif what == "g4write":
+        blk, data = int(args[0]), bytes.fromhex(args[1])
+        ok = nfc.gen4_write(blk, data, bytes.fromhex(args[2]) if len(args) > 2 else GEN4_PWD)
         print("VERIFIED" if ok else f"write failed: {nfc.why}")
     else:
         sys.exit(__doc__)

@@ -8,7 +8,7 @@
 #include "memrw_ncd_bin.h"
 
 #define N_FRAMES   8
-#define FRAME_SIZE 56 // seq, regs[5], len, data[28], pad[3]
+#define FRAME_SIZE 64 // seq, regs[5], len, data[36], pad[3]
 
 static u32 ringAddr, seen;
 
@@ -130,7 +130,7 @@ int monFrames(MonFrame *out, int max)
 		if (!monRead(ringAddr + 4 + ((seq - 1) % N_FRAMES) * FRAME_SIZE, f, sizeof(f))) return -1;
 		if (get32(f) != seq) continue;
 		for (int i = 0; i < 5; i++) out[n].regs[i] = get32(f + 4 + 4 * i);
-		out[n].len = f[24] > 28 ? 28 : f[24];
+		out[n].len = f[24] > sizeof(out[n].data) ? sizeof(out[n].data) : f[24];
 		memcpy(out[n].data, f + 25, out[n].len);
 		n++;
 	}

@@ -92,14 +92,19 @@ bool iso14aParity(bool on)
 }
 
 // Answers come within a millisecond; a monitor round trip takes longer than that.
-static int waitFrames(MonFrame *ans, int max)
+static int waitFramesN(MonFrame *ans, int max, int tries)
 {
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < tries; i++) {
 		int n = monFrames(ans, max);
 		if (n) return n;
 		svcSleepThread(MS(2));
 	}
 	return 0;
+}
+
+static int waitFrames(MonFrame *ans, int max)
+{
+	return waitFramesN(ans, max, 4);
 }
 
 int iso14aTx(const u8 *data, u32 len, u8 code, MonFrame *ans, int max)
@@ -183,6 +188,72 @@ int mfGen1aWrite(u8 block, const u8 data[16])
 	if (gen1aRead(block, back) != 1) FAIL(-1, "verify read");
 	if (memcmp(back, data, 16)) FAIL(0, "verify mismatch");
 	return 1;
+}
+
+const u8 mfGen4DefaultPwd[4] = { 0, 0, 0, 0 };
+
+// One Gen4 GTU command: CF pwd[4] cmd... in data mode (HW parity + CRC). Tried as is first, then
+// once more after a SELECT (a failed or Crypto1 exchange leaves the card idle or mid-session).
+// A write answers only after its flash write, so waits longer; a late answer must not be taken for
+// the next command's, so stale frames are dropped first. A wrong password mutes the card until the
+// field is reset (not even WUPA). Returns the answer length without its CRC, 0 = no / bad answer,
+// -1 = monitor error.
+static int gen4Cmd(const u8 pwd[4], const u8 *cmd, u32 len, u8 *out, u32 outMax)
+{
+	MonFrame f[2];
+	u8 buf[0x20] = { 0xCF }, crc[2];
+	if (5 + len > sizeof(buf)) return 0;
+	memcpy(buf + 1, pwd, 4);
+	memcpy(buf + 5, cmd, len);
+	if (!iso14aParity(true)) FAIL(-1, "parity on");
+	for (int t = 0; t < 2; t++) {
+		if (t) {
+			int sak = iso14aSelect();
+			if (sak == -2) FAIL(-1, "select: monitor");
+			if (sak < 0) FAIL(0, "card mute (wrong password? rescan)");
+		}
+		if (monFrames(f, 2) < 0 || !monTxraw(buf, 5 + len, 0, 0, 0, 0x88)) FAIL(-1, "CF tx");
+		int n = waitFramesN(f, 2, cmd[0] == 0xCD ? 25 : 4);
+		if (n < 0) FAIL(-1, "CF rx");
+		if (!n) continue;
+		const MonFrame *a = &f[n - 1];
+		if (a->len < 3 || a->len < a->regs[4]) continue; // a 4-bit NAK, or truncated
+		crcA(a->data, a->len - 2, crc);
+		if (memcmp(crc, a->data + a->len - 2, 2)) continue;
+		u32 m = a->len - 2 < outMax ? a->len - 2 : outMax;
+		memcpy(out, a->data, m);
+		return m;
+	}
+	FAIL(0, "no gen4 answer");
+}
+
+int mfGen4Read(const u8 pwd[4], u8 block, u8 out[16])
+{
+	u8 cmd[2] = { 0xCE, block }, buf[16];
+	int n = gen4Cmd(pwd, cmd, 2, buf, sizeof(buf));
+	if (n <= 0) return n;
+	if (n != 16) FAIL(0, "gen4 read: %d bytes", n);
+	memcpy(out, buf, 16);
+	return 1;
+}
+
+int mfGen4Write(const u8 pwd[4], u8 block, const u8 data[16])
+{
+	u8 cmd[18] = { 0xCD, block }, ans[4], back[16];
+	memcpy(cmd + 2, data, 16);
+	int n = gen4Cmd(pwd, cmd, sizeof(cmd), ans, sizeof(ans));
+	if (n <= 0) return n;
+	if (n != 2 || ans[0] != 0x90 || ans[1] != 0x00) FAIL(0, "gen4 write: nak");
+	int r = mfGen4Read(pwd, block, back);
+	if (r <= 0) return r;
+	if (memcmp(back, data, 16)) FAIL(0, "verify mismatch");
+	return 1;
+}
+
+int mfGen4Config(const u8 pwd[4], u8 *out, u32 max)
+{
+	u8 cmd = 0xC6;
+	return gen4Cmd(pwd, &cmd, 1, out, max);
 }
 
 u32 mfPack(const u8 *data, u32 len, const u8 *par, u8 *out, u8 *code)
@@ -612,6 +683,42 @@ const u8 mfDefaultKeys[][6] = {
 };
 const int mfNumDefaultKeys = sizeof(mfDefaultKeys) / 6;
 
+// Gen2 (CUID): block 0 takes a normal WRITE. Rewrites it with what it holds, so nothing changes.
+static int gen2Test(void)
+{
+	for (int k = 0; k < mfNumDefaultKeys; k++)
+		for (int kb = 0; kb < 2; kb++) {
+			Crypto1 c;
+			u8 b0[16];
+			int r = mfAuth(0, mfDefaultKeys[k], kb, &c);
+			if (r < 0) return -1;
+			if (!r) continue;
+			if ((r = mfReadBlock(&c, 0, b0)) <= 0) return r;
+			if ((r = mfWrite(0, mfDefaultKeys[k], kb, b0)) < 0) return -1;
+			logp("gen2 test (block 0 rewrite, key %c): %s\n", kb ? 'B' : 'A', r ? "ok" : mfWhy());
+			return r;
+		}
+	logp("gen2 test: no default key for sector 0\n");
+	return 0;
+}
+
+int mfMagicDetect(const u8 pwd[4], bool testGen2, MfMagic *m)
+{
+	memset(m, 0, sizeof(*m));
+	int r = mfGen4Config(pwd, m->cfg, sizeof(m->cfg));
+	if (r < 0) return -1;
+	if (r > 0) {
+		m->flags |= MF_MAGIC_GEN4;
+		m->cfgLen = r;
+	}
+	if (mfGen1aUnlock()) m->flags |= MF_MAGIC_GEN1A;
+	if (testGen2) {
+		if ((r = gen2Test()) < 0) return -1;
+		if (r) m->flags |= MF_MAGIC_GEN2;
+	}
+	return m->flags;
+}
+
 int mfFirstBlock(int sector)
 {
 	return sector < 32 ? sector * 4 : 128 + (sector - 32) * 16;
@@ -747,15 +854,46 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	return 1;
 }
 
+// Magic cards read without keys: Gen4 GTU (default password), then the Gen1a backdoor. The trailers
+// hold the real keys; they go into the dictionary, which the sweep then confirms by auth.
+static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
+{
+	int nb = mfFirstBlock(sectors), r = mfGen4Read(mfGen4DefaultPwd, 0, d->data[0]);
+	if (r < 0) return -1;
+	bool gen4 = r;
+	if (!gen4 && !mfGen1aUnlock()) return 0;
+	logp("%s magic: reading without keys\n", gen4 ? "gen4 GTU" : "gen1a");
+	for (int b = 0; b < nb; b++) {
+		for (int t = 0; t < 3; t++) {
+			if (gen4) {
+				if ((r = mfGen4Read(mfGen4DefaultPwd, b, d->data[b])) < 0) return -1;
+			} else {
+				r = gen1aRead(b, d->data[b]); // -1 is no answer here, not a monitor error
+				if (r != 1) mfGen1aUnlock();
+			}
+			if (r == 1) break;
+		}
+		d->valid[b] = r == 1;
+	}
+	for (int sec = 0; sec < sectors; sec++) {
+		int t = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
+		if (!d->valid[t]) continue;
+		*ndict = addKey(dict, *ndict, MF_MAX_KEYS, d->data[t]);
+		*ndict = addKey(dict, *ndict, MF_MAX_KEYS, d->data[t] + 10);
+	}
+	return 1;
+}
+
 int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 {
 	memset(d, 0, sizeof(*d));
 	d->sectors = sectors;
 	// Running dictionary: the supplied keys plus every key we recover (a key reused by
-	// another sector is far cheaper to auth than to recover again).
+	// another sector is far cheaper to auth than to recover again). Magic cards' trailer keys go first.
 	static u8 dict[MF_MAX_KEYS][6];
-	int ndict = nkeys < MF_MAX_KEYS ? nkeys : MF_MAX_KEYS;
-	memcpy(dict, keys, ndict * 6);
+	int ndict = 0;
+	if (magicPass(d, sectors, dict, &ndict) < 0) return -1;
+	for (int k = 0; k < nkeys; k++) ndict = addKey(dict, ndict, MF_MAX_KEYS, keys[k]);
 	bool nestedTried[40][2] = { 0 };
 	int tried[40][2] = { 0 }; // dict entries already attempted per cell (so each is tried once)
 	int pivotSec = -1; bool pivotB = false; // first confirmed key, used as the nested known key

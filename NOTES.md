@@ -384,3 +384,31 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   nestedNonce2), takes the second target nonce one nested auth later, and intersects as usual.
 - On-device: `nested 0 FF.. 20` / `... tb` recover A0B1C2D3E4F5 / B1C2D3E4F5A6; `mfdump` with no
   keys: 32/32 in 49 s (sector 5 via static nested, rest dictionary).
+
+## Magic: Gen4 GTU + Gen2 (CUID) -- 2026-10-31
+- Test card: Gen4 GTU, UID 11223344, MFC 1K mode, password 00000000, shadow mode 02 (off), keys FF.
+  pm3 `hf mf info` calls it both "Gen 2 / CUID" and "Gen 4 GTU"; `hf mf ginfo` config (30 bytes):
+  0000000000000200 0978009102DABC191010111213141516 040008004F6B.
+- GTU commands are plaintext ISO14443A frames after SELECT (no auth): CF pwd[4] CE blk -> 16 + CRC;
+  CF pwd[4] CD blk data[16] -> 90 00 + CRC (FD 07); CF pwd[4] C6 -> config, 30 bytes + CRC here.
+  They need DATA mode (r574 = 0, HW CRC): bit-mode length codes stop at 7 bytes (0x90 = short frame).
+- The write answers only after the flash write, later than the usual 4 frame polls. Missing it
+  leaves a stale frame that the NEXT command then takes as its answer (a "read" of old data).
+  gen4Cmd drops stale frames first and polls 25 times for CD.
+- A wrong password mutes the card completely (no answer to WUPA/SELECT either) until the field
+  resets; rescan (iso14aStart) to recover.
+- Capture ring frames were 28 data bytes: the config read (32 incl. CRC) got cut. FRAME_DATA is now
+  36 (chip/memrw.c, mon.c FRAME_SIZE 64, chipmon.py); memrw.bin 3148 of 3364 bytes. The RX FIFO
+  itself delivers all 32 bytes.
+- App: mfGen4Read / mfGen4Write (read-back verified) / mfGen4Config, mfMagicDetect (Gen4 config,
+  Gen1a unlock, Gen2 optional: rewrites block 0 with its own data through a normal encrypted WRITE,
+  key from the defaults). mfDumpCard starts with magicPass: Gen4 (default password) or Gen1a reads
+  every block without keys; the trailer keys go first in the dictionary, the sweep confirms them.
+- Net ops 0x18 OP_MF_MAGIC, 0x19 OP_GEN4_READ, 0x1A OP_GEN4_WRITE; nfcnet.py magic [gen2] [PWD],
+  g4read BLOCK [N] [PWD], g4write BLOCK HEX32 [PWD].
+- Verified on-device: config matches pm3 byte for byte; mfdump 32/32 keys + 64 blocks in 3 s,
+  identical to pm3 `hf mf gview`; g4write block 1 VERIFIED (and seen by an encrypted mfread), then
+  restored; `magic gen2` -> gen2, gen4; wrong password -> mute until rescan.
+- Not done: GTU config writes (CF pwd F0/F1, mode changes) on purpose -- easy to make a GTU hard to
+  recover. Gen1a dump through magicPass is untested on-device since the change (the Gen1a card was not
+  on the 3DS).
