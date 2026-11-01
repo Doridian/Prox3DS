@@ -9,6 +9,7 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
   Card ops implemented in the app (nfcprobe mfc.c):
        nfcnet.py HOST scan                         activate a card, show ATQA/SAK/UID
        nfcnet.py HOST mfread BLOCK KEY [b] [N]     Mifare Classic auth + read N blocks
+       nfcnet.py HOST mfchk BLOCK a|b KEY...       on-chip key check (pm3 fchk style), which key fits
        nfcnet.py HOST mfdump [KEY...] [-o OUT]     dump with keys (+ keys.txt + defaults), also saved to SD
        nfcnet.py HOST gen1awrite BLOCK HEX32       Gen1a backdoor write of 16 bytes (WRITES THE CARD)
        nfcnet.py HOST mfwrite BLOCK KEY HEX32 [b]  Mifare Classic encrypted write + read-back (WRITES THE CARD)
@@ -58,7 +59,7 @@ UPDATE_CHUNK = 0x7000
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
 GEN4_PWD = bytes(4)
-OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25
+OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF, OP_MF_CHK = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
 DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
 
@@ -457,6 +458,14 @@ def main():
             sys.exit("dump size is not whole blocks")
         ok = nfc.mf_clone([raw[i:i + 16] for i in range(0, len(raw), 16)], "force" in args[1:])
         print("CLONED (every block read back)" if ok else f"clone failed: {nfc.why}")
+    elif what == "mfchk":
+        blk, kb = int(args[0]), args[1] == "b"
+        keys = b"".join(bytes.fromhex(k) for k in args[2:])
+        r = nfc.card_call(OP_MF_CHK, bytes([blk, kb]) + keys, 60)
+        if r is None:
+            sys.exit(f"no card: {nfc.why}")
+        i = r[0] | r[1] << 8
+        print("none fits" if i == 0xFFFF else f"key {i} fits: {args[2 + i]}")
     elif what == "mfudump":
         out = args[args.index("-o") + 1] if "-o" in args else None
         pwd = next((bytes.fromhex(a) for a in args if len(a) in (8, 32) and a != out), None)

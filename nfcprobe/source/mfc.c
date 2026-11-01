@@ -1,6 +1,7 @@
 // Raw ISO14443A and Mifare Classic over the chip monitor, see mfc.h and NOTES.md.
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -153,7 +154,7 @@ int iso14aSelect(void)
 	u8 hlta[4] = { 0x50, 0x00 }, wupa = 0x52, cl[3][4];
 	if (card.uidLen != 4 && card.uidLen != 7 && card.uidLen != 10) return -1;
 	crcA(hlta, 2, hlta + 2);
-	if (iso14aTx(hlta, 4, 0, f, 4) < 0) return -2;
+	if (!monTxraw(hlta, 4, 4 << 4, 0, 1, 0x88)) return -2; // never answered: no wait
 	int n = iso14aTx(&wupa, 1, 0x07, f, 4);
 	if (n < 0) return -2;
 	if (!n || f[n - 1].len != 2) return -1;
@@ -418,8 +419,51 @@ int mfAuth(u8 block, const u8 key[6], bool keyB, Crypto1 *c)
 	return authCmd(keyB ? 0x61 : 0x60, block, key, c, NULL);
 }
 
+int mfChkKeys(u8 block, bool keyB, const u8 (*keys)[6], int n)
+{
+	if (card.uidLen != 4 && card.uidLen != 7 && card.uidLen != 10) FAIL(-2, "no card");
+	u8 a[250], *p = a;
+	u32 uid = cardUid(), nr = 0x12345678;
+	for (int i = 0; i < 4; i++) *p++ = uid >> (24 - 8 * i);
+	for (int i = 0; i < 4; i++) *p++ = nr >> (24 - 8 * i);
+	*p++ = MF_AT_WAIT & 0xFF, *p++ = MF_AT_WAIT >> 8;
+	int levels = card.uidLen / 3;
+	*p++ = 2 + levels;
+	// HLTA (no answer), WUPA (7 bits), a SELECT per cascade level: as iso14aSelect sends them
+	*p++ = 1, *p++ = 0x40, *p++ = 0, *p++ = 4, *p++ = 0x50, *p++ = 0x00;
+	crcA(p - 2, 2, p);
+	p += 2;
+	*p++ = 1, *p++ = 0x07, *p++ = 1, *p++ = 1, *p++ = 0x52;
+	for (int l = 0; l < levels; l++) {
+		u8 *sel = p + 4;
+		*p++ = l ? 0 : 1, *p++ = l ? 0 : 0x70, *p++ = 1, *p++ = 7; // level 1 bit mode, the rest data mode
+		sel[0] = 0x93 + 2 * l, sel[1] = 0x70;
+		if (l < levels - 1) sel[2] = 0x88, memcpy(sel + 3, card.uid + 3 * l, 3);
+		else memcpy(sel + 2, card.uid + card.uidLen - 4, 4);
+		sel[6] = sel[2] ^ sel[3] ^ sel[4] ^ sel[5];
+		p += 7;
+	}
+	u8 cmd[4] = { keyB ? 0x61 : 0x60, block }, code;
+	crcA(cmd, 2, cmd + 2);
+	u32 fl = mfPack(cmd, 4, NULL, p + 2, &code);
+	p[0] = code, p[1] = fl;
+	p += 2 + fl;
+	int per = (a + sizeof(a) - p - 1) / 6;
+	for (int base = 0; base < n; base += per) {
+		int m = n - base < per ? n - base : per;
+		u8 *q = p, out[3];
+		*q++ = m;
+		memcpy(q, keys[base], 6 * m);
+		if (monChkKeys(a, q + 6 * m - a, NRAR_TX, out) < 0) FAIL(-3, "chkkeys: monitor");
+		if (out[0] != 0xFF) return base + out[0];
+		if (out[2] == out[1]) FAIL(-2, "chkkeys: no card");
+	}
+	FAIL(-1, "no key fits");
+}
+
 // mfAuth with the raw AUTH command byte (0x64/0x65 = the FM11RF08S backdoor variants); ntOut gets
 // the card nonce (NULL = don't care)
+
 static int authCmd(u8 authc, u8 block, const u8 key[6], Crypto1 *c, u32 *ntOut)
 {
 	MonFrame f[4];
@@ -1017,6 +1061,65 @@ static int readSectorRetry(MfDump *d, int sec, const u8 key[6], bool kb)
 	return 0;
 }
 
+// FM11RF08S: the static nonces of key A and key B of a sector both come from one 16-bit seed, which
+// each key's nonce gives back (pm3 tools/mfc/card_only/staticnested_2x1nt_rf08s*.c, eprint 2024/1275).
+// So a sector's known key filters the other key's candidates down to a handful.
+static u16 prev8Lfsr16[1 << 16], prev14Lfsr16[1 << 16];
+
+static void seedTables(void)
+{
+	static bool init;
+	if (init) return;
+	u16 buf[16] = { 0 }, x = 1;
+	for (u32 i = 0; i < 65536 + 16; ++i) {
+		prev8Lfsr16[buf[(i + 8) % 16]] = buf[i % 16];
+		prev14Lfsr16[buf[(i + 14) % 16]] = buf[i % 16];
+		x = x >> 1 | (x ^ x >> 2 ^ x >> 3 ^ x >> 5) << 15;
+		buf[i % 16] = (x & 0xFF) << 8 | x >> 8;
+	}
+	init = true;
+}
+
+static u16 staticSeed(u32 nt, u64 key)
+{
+	static const u8 a[] = { 0, 8, 9, 4, 6, 11, 1, 15, 12, 5, 2, 13, 10, 14, 3, 7 };
+	static const u8 b[] = { 0, 13, 1, 14, 4, 10, 15, 7, 5, 3, 8, 6, 9, 2, 12, 11 };
+	u16 n = prev14Lfsr16[nt >> 16];
+	for (int i = 0, odd = 1; i < 48; i += 8, odd ^= 1) {
+		u8 lo = key >> i & 0xF, hi = key >> (i + 4) & 0xF;
+		n ^= odd ? a[lo] | b[hi] << 4 : b[lo] | a[hi] << 4;
+		n = prev8Lfsr16[n];
+	}
+	return n;
+}
+
+// A cell's key candidates (crapto1_static, ~20 s on the 3DS), computed once per staticPass.
+static u64 *candCache[40][2];
+static int candN[40][2];
+
+static void candFree(void)
+{
+	for (int i = 0; i < 80; i++) {
+		free(candCache[i / 2][i % 2]);
+		candCache[i / 2][i % 2] = NULL;
+	}
+}
+
+static int cellCands(u32 uid, const MfStatic *s, int sec, int kb, const u64 **out)
+{
+	static u64 tmp[1 << 18];
+	if (!candCache[sec][kb]) {
+		int n = crapto1_static(uid, s->nt, s->ntEnc, s->par, tmp, 1 << 18);
+		u64 *p = mfCancel ? NULL : malloc(8 * (n + 1)); // a cancelled list is partial: not kept
+		*out = tmp;
+		if (!p) return n;
+		memcpy(p, tmp, 8 * n);
+		candCache[sec][kb] = p, candN[sec][kb] = n;
+	}
+	*out = candCache[sec][kb];
+	return candN[sec][kb];
+}
+
 // FM11RF08S family (NOTES.md): with a backdoor key, collect every sector's static nonce and solve
 // keys offline -- dictionary keys and reuse are checked against the nonces with no RF traffic, and
 // only matches cost an auth. A candidate of one cell that fits another cell is a reused key. Keys used
@@ -1031,6 +1134,8 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 		bd[0], bd[1], bd[2], bd[3], bd[4], bd[5]);
 	static MfStatic st[40][2];
 	static u64 cand[1 << 18];
+	const u64 *cl;
+	candFree();
 	bool done[40][2] = { 0 }, expanded[40][2] = { 0 };
 	u32 uid = cardUid();
 	progOp("Static nonces (backdoor)");
@@ -1062,7 +1167,7 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 				progOp("Static nonce: sector %d key %c candidates", sec, kb ? 'B' : 'A');
 				mfProg.key[sec][kb] = MF_KEY_TRYING;
 				crapto1_tick = solveTick;
-				int n = crapto1_static(uid, s->nt, s->ntEnc, s->par, cand, 1 << 18);
+				int n = cellCands(uid, s, sec, kb, &cl);
 				if (mfCancel) break;
 				if (!d->keyFound[sec][kb]) mfProg.key[sec][kb] = MF_KEY_OPEN;
 				logp("sector %2d %c: %d candidates\n", sec, kb ? 'B' : 'A', n);
@@ -1072,10 +1177,10 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 					for (int os = 0; os < sectors && !progress; os++)
 						for (int ok = 0; ok < 2; ok++) {
 							if ((os == sec && ok == kb) || !OPEN(os, ok)) continue;
-							if (crapto1_nt_decrypt(cand[i], uid, st[os][ok].ntEnc) != st[os][ok].nt)
+							if (crapto1_nt_decrypt(cl[i], uid, st[os][ok].ntEnc) != st[os][ok].nt)
 								continue;
 							u8 key[6];
-							keyBytes(cand[i], key);
+							keyBytes(cl[i], key);
 							logp("  reused key %02X%02X%02X%02X%02X%02X (sector %d %c)\n", key[0], key[1],
 								key[2], key[3], key[4], key[5], os, ok ? 'B' : 'A');
 							*ndict = addKey(dict, *ndict, MF_MAX_KEYS, key);
@@ -1085,6 +1190,75 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 				}
 			}
 	}
+	seedTables();
+	// Both keys of a sector used only there: pair the two candidate lists by seed (keeps about half of
+	// each), then auth key A's that pair up, one by one (pm3 fchk's them the same way); key B follows
+	// from the seed filter below. Two passes: a right key can be refused once (cold-auth flake).
+	static u8 seen[1 << 13];
+	for (int sec = 0; sec < sectors && !mfCancel; sec++) {
+		MfStatic *a = &st[sec][0], *b = &st[sec][1];
+		if (!OPEN(sec, 0) || !OPEN(sec, 1) || a->nt == b->nt) continue;
+		progOp("Static nonce: sector %d, both keys", sec);
+		mfProg.key[sec][0] = mfProg.key[sec][1] = MF_KEY_TRYING;
+		crapto1_tick = solveTick;
+		const u64 *cb;
+		int m = cellCands(uid, b, sec, 1, &cb);
+		memset(seen, 0, sizeof(seen));
+		for (int j = 0; j < m && !mfCancel; j++) {
+			u16 sd = staticSeed(b->nt, cb[j]);
+			seen[sd >> 3] |= 1 << (sd & 7);
+		}
+		int n = mfCancel ? 0 : cellCands(uid, a, sec, 0, &cl), k = 0;
+		for (int i = 0; i < n; i++) {
+			u16 sd = staticSeed(a->nt, cl[i]);
+			if (seen[sd >> 3] >> (sd & 7) & 1) cand[k++] = cl[i];
+		}
+		logp("sector %2d: %d A + %d B candidates, %d A keys pair up: trying them\n", sec, n, m, k);
+		u64 t0 = osGetTime();
+		for (int pass = 0; pass < 2 && OPEN(sec, 0) && !mfCancel; pass++) {
+			progOp("Static nonce: sector %d key A, %d to try%s", sec, k, pass ? " (again)" : "");
+			u64 tb = osGetTime();
+			for (int i = 0; i < k && OPEN(sec, 0) && !mfCancel; i += 64) {
+				progStep(i, k);
+				if (i && !(i & 1023)) logp("  %d tried, %lu/s\n", i, (u32)(1000ULL * i / (osGetTime() - tb)));
+				u8 keys[64][6];
+				int m = k - i < 64 ? k - i : 64;
+				for (int j = 0; j < m; j++) keyBytes(cand[i + j], keys[j]);
+				int h = mfChkKeys(mfFirstBlock(sec), false, keys, m);
+				if (h == -3) return -1;
+				if (h == -2 && !iso14aStart()) return -1; // card lost: once more after a reactivation
+				if (h == -2) h = mfChkKeys(mfFirstBlock(sec), false, keys, m);
+				if (h < -1) return -1;
+				if (h >= 0 && readSectorRetry(d, sec, keys[h], false) < 0) return -1;
+			}
+		}
+		logp("sector %2d A: %s after %lu s\n", sec, OPEN(sec, 0) ? "not found" : "found", (u32)((osGetTime() - t0) / 1000));
+		for (int kb = 0; kb < 2; kb++)
+			if (!d->keyFound[sec][kb]) mfProg.key[sec][kb] = MF_KEY_OPEN;
+	}
+	// A key used only here whose sector's other key is known: the seed filter, then auths.
+	for (int sec = 0; sec < sectors && !mfCancel; sec++)
+		for (int kb = 0; kb < 2; kb++) {
+			MfStatic *s = &st[sec][kb], *o = &st[sec][!kb];
+			if (!OPEN(sec, kb) || !d->keyFound[sec][!kb] || !done[sec][!kb] || s->nt == o->nt) continue;
+			progOp("Static nonce: sector %d key %c from key %c", sec, kb ? 'B' : 'A', kb ? 'A' : 'B');
+			mfProg.key[sec][kb] = MF_KEY_TRYING;
+			crapto1_tick = solveTick;
+			int n = cellCands(uid, s, sec, kb, &cl);
+			u16 seed = staticSeed(o->nt, key48(d->keys[sec][!kb]));
+			int fit = 0;
+			for (int i = 0; i < n && OPEN(sec, kb) && !mfCancel; i++) {
+				if (staticSeed(s->nt, cl[i]) != seed) continue;
+				u8 key[6];
+				keyBytes(cl[i], key);
+				fit++;
+				if ((r = readSectorRetry(d, sec, key, kb)) < 0) return -1;
+			}
+			logp("sector %2d %c: %d candidates, %d fit key %c's seed%s\n", sec, kb ? 'B' : 'A', n, fit, kb ? 'A' : 'B',
+				OPEN(sec, kb) ? "" : ": found");
+			if (!d->keyFound[sec][kb]) mfProg.key[sec][kb] = MF_KEY_OPEN;
+		}
+	candFree();
 	if (mfCancel) return 1; // stopped: nothing is known to be unrecoverable, and no slow backdoor reads
 	for (int sec = 0; sec < sectors; sec++)
 		for (int kb = 0; kb < 2; kb++)
@@ -1184,12 +1358,23 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 					if (!d->keyFound[c / 2][c % 2]) left += ndict - tried[c / 2][c % 2];
 				mfProg.key[sec][kb] = MF_KEY_TRYING;
 				if (tried[sec][kb] < ndict) progOp("Dictionary: sector %d key %c", sec, kb ? 'B' : 'A');
-				for (int k = tried[sec][kb]; k < ndict && !d->keyFound[sec][kb] && !mfCancel; k++, left--) {
+				// 32 keys per on-chip check (mfChkKeys, ~150 keys/s), then the hit read the normal way;
+				// a card that doesn't answer the chip's own select gets them one by one.
+				for (int k = tried[sec][kb]; k < ndict && !d->keyFound[sec][kb] && !mfCancel;) {
 					progEta(dictDone, dictDone + left, left * (dictDone ? dictMs / dictDone : 60));
+					int m = ndict - k < 32 ? ndict - k : 32, done = m;
 					u64 t0 = osGetTime();
-					if (readSector(d, sec, dict[k], kb) < 0) return -1;
+					int h = mfChkKeys(mfFirstBlock(sec), kb, (const u8 (*)[6])dict[k], m);
+					if (h == -3) return -1;
+					if (h >= 0) {
+						if (readSector(d, sec, dict[k + h], kb) < 0) return -1;
+						if (!d->keyFound[sec][kb]) done = h + 1; // the chip's hit didn't read: go on after it
+					} else if (h == -2) {
+						for (int j = 0; j < m && !d->keyFound[sec][kb]; j++)
+							if (readSector(d, sec, dict[k + j], kb) < 0) return -1;
+					}
 					dictMs += osGetTime() - t0;
-					dictDone++;
+					dictDone += done, left -= done, k += done;
 				}
 				tried[sec][kb] = ndict;
 				if (!d->keyFound[sec][kb]) {

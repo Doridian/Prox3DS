@@ -210,3 +210,8 @@ int monNested(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 co
 	*nt0 = get32(out);
 	return 1;
 }
+
+int monChkKeys(const u8 *arg, u32 len, u32 nrarTx, u8 out[3])
+{
+	return monDo(MON_CHKKEYS, nrarTx, arg, len, out, 3) == 3 ? 0 : -1;
+}

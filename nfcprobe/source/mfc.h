@@ -81,6 +81,11 @@ u32 mfPack(const u8 *data, u32 len, const u8 *par, u8 *out, u8 *code);
 u32 mfUnpack(const u8 *raw, u32 rawLen, u32 off, u8 *out, u32 n);
 
 // 1 = ok, 0 = refused / no valid answer, -1 = monitor error (reload with iso14aStart)
+// pm3 fchk: tries keys on one block / key type with the whole auth on the chip (OP_CHKKEYS), a key
+// costs RF time only (~MF_AT_WAIT + the frames). Index of the first key whose {at} checks out, -1 =
+// none fits, -2 = the card didn't answer, -3 = monitor error.
+#define MF_AT_WAIT 1800 // timer ticks (~1 MHz) to wait for {at} after {nr}{ar}
+int mfChkKeys(u8 block, bool keyB, const u8 (*keys)[6], int n);
 int mfAuth(u8 block, const u8 key[6], bool keyB, Crypto1 *c);
 int mfReadBlock(Crypto1 *c, u8 block, u8 out[16]);
 // Nested attack: recover a target sector's key from a known key in another sector (two nested

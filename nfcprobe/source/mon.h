@@ -3,7 +3,8 @@
 
 // Chip-side debug monitor (chip/memrw.c, vendor command 2F 2C), see tools/chipmon.py.
 
-enum { MON_READ8, MON_WRITE8, MON_CALL, MON_READ32, MON_WRITE32, MON_CAPTURE, MON_TXRAW, MON_AUTH, MON_TXSCHED, MON_NESTED };
+enum { MON_READ8, MON_WRITE8, MON_CALL, MON_READ32, MON_WRITE32, MON_CAPTURE, MON_TXRAW, MON_AUTH, MON_TXSCHED, MON_NESTED,
+	MON_SNAP, MON_CHKKEYS };
 
 #define MON_CHUNK      0xF0
 #define MON_NO_ANSWER  (-1)
@@ -39,5 +40,8 @@ int monAuth(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code
 // On-chip nested auth (OP_NESTED): auth1 with the known key, then the nested AUTH command (nestedCmd,
 // 4 plaintext bytes) at fixed timing. Returns 1 with nt0 set (read the encrypted nested nonce from
 // the ring), 0 if auth1 got no nt, -1 on a monitor error.
+// On-chip key check (OP_CHKKEYS, chip/memrw.c: arg layout there): out = key index that worked (0xFF =
+// none), keys tried, keys the card didn't select for. 0 = ok, -1 = monitor error.
+int monChkKeys(const u8 *arg, u32 len, u32 nrarTx, u8 out[3]);
 int monNested(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code,
 	const u8 nestedCmd[4], u32 nrarTx, u32 *nt0);

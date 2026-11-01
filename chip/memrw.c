@@ -61,7 +61,7 @@ typedef unsigned char u8;
 #define irq_save    ROM_FN(0xC5C, u32 (*)(void))
 #define irq_restore ROM_FN(0xC64, void (*)(u32))
 
-enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED, OP_NESTED, OP_SNAP };
+enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED, OP_NESTED, OP_SNAP, OP_CHKKEYS };
 
 // Captured frames: regs = TX/RX status (0x5C5D0), 0x5C588, 0x5C58C, 0x5C598, 0x5C5A0 (RX bytes).
 #define N_FRAMES   8
@@ -266,7 +266,7 @@ static int auth(const u8 *key, u32 uid, u32 nr, u32 code, const u8 *frame, u32 l
 	for (u32 t0 = TIMER; *(volatile u32 *)&capture.count == seen;) // set by the RX interrupt
 		if (t0 - TIMER > 20000) return 0;
 	// nt, 4 bytes + parity; the RX bit stream continues where the 36-bit AUTH frame left off
-	struct frame *f = &capture.ring[(capture.count - 1) % N_FRAMES];
+	struct frame *f = &capture.ring[(*(volatile u32 *)&capture.count - 1) % N_FRAMES];
 	if (f->len < 5) return 0;
 	u32 nt = 0;
 	for (u32 j = 0; j < 4; j++)
@@ -292,6 +292,83 @@ static int auth(const u8 *key, u32 uid, u32 nr, u32 code, const u8 *frame, u32 l
 	}
 	txraw(0, nrar_tx >> 8 & 0xFF, nrar_tx & 0xFF, 0x88, out, 9);
 	return 1;
+}
+
+// OP_CHKKEYS: Mifare Classic key check, pm3 fchk style: per key a whole HLTA / WUPA / SELECT / AUTH
+// / {nr}{ar} and the {at} check here, so a key costs RF time only, not monitor round trips.
+#define PARITY_REG 0x5C560
+#define PARITY_OFF 0x08
+
+static void delay(u32 ticks)
+{
+	for (u32 t0 = TIMER; t0 - TIMER < ticks;)
+		;
+}
+
+static int wait_rx(u32 seen, u32 ticks)
+{
+	for (u32 t0 = TIMER; *(volatile u32 *)&capture.count == seen;)
+		if (t0 - TIMER > ticks) return 0;
+	return 1;
+}
+
+// arg: uid(4 BE) nr(4 BE) at_wait(u16 LE, timer ticks) nsteps(u8), per step: r574 code rx(0/1) len
+// bytes (parity on); then auth code, auth len, auth frame (parity off), nkeys, keys[6]. Returns the
+// index of the key whose {at} checked out (0xFF = none), keys tried, keys the card didn't select for.
+static u32 chkkeys(const u8 *arg, u32 n, u32 nrar, u8 *out)
+{
+	const u8 *end = arg + n, *q = arg + 11, *steps = q;
+	if (n < 11) return 0;
+	u32 uid = get32be(arg), nr = get32be(arg + 4), atw = arg[8] | arg[9] << 8, ns = arg[10];
+	for (u32 i = 0; i < ns; i++) {
+		if (q + 4 > end) return 0;
+		q += 4 + q[3];
+	}
+	if (q + 2 > end || q + 2 + q[1] + 1 > end) return 0;
+	u32 acode = q[0], alen = q[1];
+	const u8 *aframe = q + 2;
+	q += 2 + alen;
+	u32 nk = q[0], hit = 0xFF, nosel = 0, i;
+	const u8 *keys = q + 1;
+	if (keys + 6 * nk > end) return 0;
+	for (i = 0; i < nk && hit == 0xFF; i++) {
+		REG(PARITY_REG) = 0;
+		const u8 *s = steps;
+		u32 st;
+		for (st = 0; st < ns; st++, s += 4 + s[3]) {
+			u32 seen = capture.count;
+			txraw(0, s[0], s[1], 0x88, s + 4, s[3]);
+			if (!s[2]) delay(800); // HLTA: no answer, let it go out
+			else if (!wait_rx(seen, 5000)) break;
+		}
+		if (st < ns) {
+			nosel++;
+			continue;
+		}
+		REG(PARITY_REG) = PARITY_OFF;
+		u32 nt;
+		if (!auth(keys + 6 * i, uid, nr, acode, aframe, alen, nrar, &nt)) {
+			nosel++;
+			continue;
+		}
+		u32 seen = capture.count;
+		if (!wait_rx(seen, atw)) continue; // wrong key: the card stays silent
+		// volatile: the compiler would reuse the count from before the wait (the nt frame)
+		struct frame *f = &capture.ring[(*(volatile u32 *)&capture.count - 1) % N_FRAMES];
+		if (f->len < 4) continue;
+		u32 at = 0;
+		for (u32 j = 0; j < 4; j++) {
+			u32 b = 0;
+			for (u32 k = 0; k < 8; k++) b |= getbit(f->data, 9 * j + k) << k;
+			at |= (b ^ c1_byte(0)) << (24 - 8 * j);
+		}
+		if (at == prng_successor(nt, 96)) hit = i;
+	}
+	REG(PARITY_REG) = 0;
+	out[0] = hit;
+	out[1] = i;
+	out[2] = nosel;
+	return 3;
 }
 
 // Framer snapshot (OP_SNAP): on the next frame-log NTF (6F 09, FRAME_LOG on) of the armed RF mode,
@@ -418,6 +495,12 @@ static int hook(u8 *msg)
 		reply(0, buf, 4);
 		return 1;
 	}
+	case OP_CHKKEYS: {
+		u32 r = chkkeys(arg, n, addr & 0xFFFF ? addr & 0xFFFF : 0x178, buf);
+		if (!r) break;
+		reply(0, buf, r);
+		return 1;
+	}
 	case OP_SNAP: // addr = RF mode to snapshot on (0 = off) -> ring address, snapshots taken so far
 		snap_mode = addr;
 		snap_words = n >= 5 && arg[4] <= 128 ? arg[4] : 0;
@@ -440,6 +523,8 @@ static int hook(u8 *msg)
 // The ROM treats a nonzero return as failure; code must start right after the entry word.
 __attribute__((section(".text.init"))) int init(void)
 {
+	extern u32 __bss_start[], __bss_end[];
+	for (u32 *p = __bss_start; p < __bss_end; p++) *p = 0;
 	CMD_HOOK = (u32)hook;
 	return 0;
 }

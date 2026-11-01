@@ -974,3 +974,30 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   got that key). Without an auth they are now unread; a clone treats an all-zero key (pm3 dumps) as
   unknown -> factory key, and its verify skips the key pages (the auth checks them).
 - Darkside (#2): the user tested every magic card we have for the NACK bug on the pm3: none has it.
+
+## FM11RF08S: single-use keys (2x1nt seeds) + on-chip key checks (pm3 fchk) -- 2026-11-01
+- New card: FM11RF08S UID 5A5A0002 (Saflok-style data). Before: 31/32 keys, sector 1 A "used only here".
+- pm3 tools/mfc/card_only/staticnested_2x1nt_rf08s(_1key).c: a sector's key A and key B static nonces
+  come from one 16-bit seed, and seed16(nt, key) gives it back (prev14/prev8 LFSR16 tables, two nibble
+  S-boxes). mfc.c staticSeed(). Known sister key: 40918 candidates for sector 1 A -> 1 fits the seed ->
+  2A2C13CC242A (same as the other Saflok card). Both keys open: pair the two lists by seed (keeps ~half:
+  35315 A x 41355 B -> 16634 A), auth those, key B then by the 1-key filter.
+- Test: sector 10 (all-zero data) re-keyed to A 5A5A1234ABCD / B C3C3E0F01122, found, then restored to
+  5A5A5A000002 / FF..FF (verified by auth; full dump 32/32 in 71 s afterwards).
+- Speed. Host-driven auth was 11 keys/s: per attempt select 30 ms, parity + drain 9, monAuth 5, {at}
+  wait 40 ms -- every monitor request is an I2C write + IRQ + 2 reads through the i2c sysmodule,
+  ~6-8 ms. Also iso14aSelect waited 4 polls for an answer to HLTA (it has none): fixed (fire and forget).
+- OP_CHKKEYS (chip/memrw.c, mfChkKeys, net op 0x26 / nfcnet mfchk): host packs HLTA / WUPA / SELECT
+  frames + the AUTH frame + up to ~34 keys per request; the chip does per key: parity on, the select
+  steps (wait for each answer), parity off, auth() ({nr}{ar}), waits MF_AT_WAIT (1800 ticks; the
+  right key's {at} came 1.16 ms after) and checks {at} == suc96(nt) with its own Crypto1 state.
+  152 keys/s (pm3 fchk: 147). Brute-force phase 274 s -> 21 s. Also used by the dictionary sweep
+  (32 per request, the hit read by the normal path; no chip answer -> one by one as before).
+- Bug on the way: after the wait loop the compiler reused capture.count from before it (non-volatile
+  read) and decoded the nt frame as {at}: never matched. Volatile reads in chkkeys and auth().
+- The patch no longer fit (3924 of 3364 B). .bss (capture ring, reply buffer, irq log, ~900 B) now
+  lives in AON RAM 0x68100-0x68600 (NOLOAD, zeroed by init); the AON segment we load is 14 bytes at
+  0x68008, the stock AON code that used the rest isn't loaded. Image 3212 B.
+- Candidate lists cached per cell (malloc, ~320 KB each, freed after the pass): each crapto1_static is
+  ~20 s on the 3DS and phases recomputed them up to 8x. Whole dump with sector 10 both unknown:
+  10:09 -> 2:31.

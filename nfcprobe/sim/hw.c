@@ -50,6 +50,7 @@ bool monTxraw(const u8 *data, u32 len, u8 code, u8 r570, u8 r574, u8 r55c) { ret
 bool monTxsched(const u8 *data, u32 len, u8 code, const MonStore *st, u32 n) { return false; }
 int monAuth(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code, u32 nrarTx, u32 *nt, u32 *odd,
 	u32 *even) { return -1; }
+int monChkKeys(const u8 *arg, u32 len, u32 nrarTx, u8 out[3]) { return -1; }
 int monNested(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code, const u8 nestedCmd[4],
 	u32 nrarTx, u32 *nt0) { return -1; }
 

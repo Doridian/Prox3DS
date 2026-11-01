@@ -88,6 +88,8 @@ enum {
 	                       // (dfcrypto.h), key; 1 command: comm, hdr, command bytes -> status, answer; 2 ChangeKey:
 	                       // keyNo, picc, ver, type, key, [old type, old key]; 3 info: keys u8 -> the
 	                       // saved info file's text. MAY WRITE THE CARD
+	OP_MF_CHK      = 0x26, // block u8, keyB u8, keys[6]... -> u16 index of the key that worked (FFFF none);
+	                       // on-chip check (mfChkKeys). On failure payload = reason.
 };
 
 #define OUT_MAX 0x2000
@@ -163,6 +165,18 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 			memcpy(out + *outLen + 1, f[i].data, f[i].len);
 			*outLen += 1 + f[i].len;
 		}
+		return 0;
+	}
+	case OP_MF_CHK: {
+		if (inLen < 8 || (inLen - 2) % 6) return -3;
+		int r = mfChkKeys(in[0], in[1], (const u8 (*)[6])(in + 2), (inLen - 2) / 6);
+		if (r < -1) {
+			*outLen = strlen(mfWhy());
+			memcpy(out, mfWhy(), *outLen);
+			return r == -3 ? -1 : 1;
+		}
+		out[0] = r < 0 ? 0xFF : r, out[1] = r < 0 ? 0xFF : r >> 8;
+		*outLen = 2;
 		return 0;
 	}
 	case OP_MF_READ: {
