@@ -324,9 +324,9 @@ int mfuDumpCard(MfuDump *d, const u8 *key)
 		memcpy(d->data[t->cfg + 2], d->key, 4);
 		memcpy(d->data[t->cfg + 3], pack, 2);
 	}
-	if (d->pwdOk && ulc) { // the key pages never read
-		mfuUlcKeyPages(d->key, d->data + 0x2C);
-		for (int p = 0x2C; p < 0x30; p++) d->valid[p] = true;
+	if (ulc) { // the key pages read as zeros (a GTU: the key in clear): only the key that worked counts
+		if (d->pwdOk) mfuUlcKeyPages(d->key, d->data + 0x2C);
+		for (int p = 0x2C; p < 0x30; p++) d->valid[p] = d->pwdOk;
 	}
 	return 1;
 }
@@ -426,8 +426,13 @@ int mfuCloneToGtu(const MfuDump *d)
 	bool ulc = t == &mfuTypeULC;
 	u8 ulcKey[16], kp[4][4];
 	memcpy(ulcKey, ulcFactory, 16);
+	static const u8 zero[16];
 	if (ulc && d->pages >= 0x30 && d->valid[0x2C] && d->valid[0x2D] && d->valid[0x2E] && d->valid[0x2F])
 		mfuUlcKeyFromPages(d->data + 0x2C, ulcKey);
+	if (ulc && !memcmp(ulcKey, zero, 16)) { // what a dump without the key holds (pm3's too)
+		logp("gtu: key pages all zero (not read?): factory key\n");
+		memcpy(ulcKey, ulcFactory, 16);
+	}
 	mfuUlcKeyPages(ulcKey, kp);
 	int end = ulc ? 0x30 : d->pages;
 	progOp("Writing pages");
@@ -467,6 +472,7 @@ int mfuCloneToGtu(const MfuDump *d)
 	if (d->info.hasSig && memcmp(back.info.sig, d->info.sig, 32)) FAIL(0, "signature differs");
 	for (int p = 0; p < d->pages; p++) {
 		if (!d->valid[p] || (t->cfg && p >= t->cfg + 2 && p < t->cfg + 4)) continue; // PWD/PACK read as 00
+		if (ulc && p >= 0x2C) continue; // the key: checked by the auth above
 		if (!back.valid[p]) FAIL(0, "page %d does not read back", p);
 		if (memcmp(back.data[p], d->data[p], 4)) FAIL(0, "page %d differs", p);
 	}

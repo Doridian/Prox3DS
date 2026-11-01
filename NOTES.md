@@ -966,3 +966,11 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   MF0UL21 (41 pages), NTAG210 (20), NTAG212 (41), NTAG213 (45), NTAG216 (231): type, page count and
   PWD_AUTH right. (PACK = GTU page 13 on this version, as before.) NTAG203 can't be emulated (no mode).
 - GTU restored afterwards from a full backup: config + all 256 blocks identical, UID 11223344, Classic 1K.
+- pm3 `hf mfu sim -t 13` (RDV4 on the 3DS, dump via `hf mfu eload`) as a closer stand-in: NO answer to
+  GET_VERSION (the real detection path: 1A -> UL-C), a wrong key NAKed in step 2 ("wrong 3DES key
+  (refused)"), key pages read as zeros, AUTH0 not enforced either (pm3 TODO). Custom key: not in the
+  dictionary, right key reads, wrong one refused. Key change from the UI on it: new key works, old refused.
+- Fix from that: key pages that read as zeros were saved as a valid all-zero key (and a clone would have
+  got that key). Without an auth they are now unread; a clone treats an all-zero key (pm3 dumps) as
+  unknown -> factory key, and its verify skips the key pages (the auth checks them).
+- Darkside (#2): the user tested every magic card we have for the NACK bug on the pm3: none has it.
