@@ -37,3 +37,17 @@ void simMfuMenu(void)
 {
 	mfuOpenMenu();
 }
+
+void simMfuPick(const Card *c, const MfuDump *d)
+{
+	sc = *c;
+	sm = *d;
+	pickOpen();
+}
+
+void simMfuReadKey(const MfuDump *d, int result, const char *path, const MfuKey *cand)
+{
+	rdWithPwd = true;
+	rdCand = *cand;
+	simMfuRead(d, result, path);
+}

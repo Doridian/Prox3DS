@@ -12,6 +12,7 @@
 #include "app.h"
 #include "entry.h"
 #include "mfu.h"
+#include "mfukeys.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -33,14 +34,19 @@ static int mfuProbe(void)
 	if (r <= 0) return r;
 	const MfuType *t = sm.info.type;
 	sm.pages = t->pages;
-	int want[2] = { 0, t->cfg ? t->cfg : t == &mfuTypeULC ? 0x28 : -1 };
-	for (int i = 0; i < 2; i++) {
+	// pages 0-15 (pm3's fingerprints look at 0-12), the config pages, 0x21-0x23 (Philips password)
+	int want[6] = { 0, 4, 8, 12, t->cfg ? t->cfg : t == &mfuTypeULC ? 0x28 : -1, t->pages > 0x24 ? 0x20 : -1 };
+	for (int i = 0; i < 6; i++) {
 		if (want[i] < 0) continue;
 		if ((r = mfuRead(want[i], buf)) < 0) return -1;
 		for (int k = 0; r && k < 4 && want[i] + k < t->pages; k++) {
 			memcpy(sm.data[want[i] + k], buf + 4 * k, 4);
 			sm.valid[want[i] + k] = true;
 		}
+	}
+	if (t == &mfuTypeULC) { // no lockout: the dictionary is safe
+		if ((r = mfuUlcFindKey(sm.key)) < 0) return -1;
+		sm.pwdOk = r;
 	}
 	u8 cfg[32];
 	if ((r = mfGen4Config(mfGen4Pwd, cfg, sizeof(cfg))) < 0) return -1;
@@ -76,22 +82,44 @@ static MfuDump rd;
 static char rdPath[128];
 static int rdResult;
 static bool rdWithPwd;
-static u8 rdPwd[4] = { 0xFF, 0xFF, 0xFF, 0xFF }; // the last one entered
+static u8 rdKey[16] = { 0xFF, 0xFF, 0xFF, 0xFF }; // the password / UL-C key to send
+static Card rdCard; // with a key: the card it is meant for
+static const MfuType *rdType; // and its type (a GTU can change it under the same UID)
+static MfuKey rdCand; // the candidate picked (expected PACK)
 
 static void runRead(void)
 {
 	rdResult = -2;
 	rdPath[0] = 0;
 	if (!cardWait()) return;
+	if (rdWithPwd) { // nothing goes out unless it is the card the key was picked for: its AUTHLIM was looked at
+		MfuInfo now;
+		if (card.uidLen != rdCard.uidLen || memcmp(card.uid, rdCard.uid, card.uidLen)) {
+			rdResult = -3;
+			return;
+		}
+		if ((rdResult = mfuIdentify(&now)) <= 0) return;
+		if (now.type != rdType) {
+			rdResult = -3;
+			return;
+		}
+	}
 	sc = card;
-	rdResult = mfuDumpCard(&rd, rdWithPwd ? rdPwd : NULL);
+	rdResult = mfuDumpCard(&rd, rdWithPwd ? rdKey : NULL);
 	iso14aParity(true);
+	if (rdResult > 0 && rd.pwdOk)
+		mfuRememberKey(card.uid, card.uidLen, rd.key, rd.info.type == &mfuTypeULC ? 16 : 4);
 	if (rdResult > 0 && mfuSaveDump(&rd, rdPath, sizeof(rdPath))) logp("saved %s\n", rdPath);
 }
 
 static void doneRead(void)
 {
 	if (rdResult == -2) return;
+	if (rdResult == -3) {
+		msgBox("Read card", "Not the card the %s was picked for\n(%s, UID %02X%02X%02X%02X...): nothing sent.",
+			rdType == &mfuTypeULC ? "key" : "password", rdType->name, rdCard.uid[0], rdCard.uid[1], rdCard.uid[2], rdCard.uid[3]);
+		return;
+	}
 	if (rdResult < 0) {
 		msgBox("Read card", "Lost the card (or the chip stopped answering).");
 		return;
@@ -102,10 +130,22 @@ static void doneRead(void)
 	}
 	int got = 0;
 	for (int p = 0; p < rd.pages; p++) got += rd.valid[p];
+	bool ulc = rd.info.type == &mfuTypeULC;
+	char authMsg[96] = "";
+	if (ulc && rd.pwdOk)
+		snprintf(authMsg, sizeof(authMsg), "\n3DES key %s.", rdWithPwd ? "accepted" : "found in the dictionary");
+	else if (ulc)
+		snprintf(authMsg, sizeof(authMsg), "\n%s", rdWithPwd ? "3DES key refused." : "No 3DES key in the dictionary.");
+	else if (rdWithPwd && rd.pwdOk && rd.info.type->cfg) {
+		const u8 *pk = rd.data[rd.info.type->cfg + 3];
+		snprintf(authMsg, sizeof(authMsg), "\nPassword accepted, PACK %02X%02X%s.", pk[0], pk[1],
+			!rdCand.hasPack ? "" : memcmp(pk, rdCand.pack, 2) ? " (not the algorithm's)" : " (as expected)");
+	} else if (rdWithPwd)
+		snprintf(authMsg, sizeof(authMsg), "\nPassword %s.", rd.pwdOk ? "accepted" : "refused");
 	mfuEditorOpen(&rd, rdPath);
 	msgBox(mfCancel ? "Read card (stopped)" : "Read card", "%s: %d/%d pages read.%s%s\n%s", rd.info.type->name,
-		got, rd.pages, !rdWithPwd ? "" : rd.pwdOk ? "\nPassword accepted." : "\nPassword refused.",
-		got < rd.pages ? "\nThe rest is password-protected." : "", rdPath[0] ? rdPath : "Could not save the dump to the SD card!");
+		got, rd.pages, authMsg, got < rd.pages ? ulc ? "\nThe rest needs the 3DES key." : "\nThe rest is password-protected." : "",
+		rdPath[0] ? rdPath : "Could not save the dump to the SD card!");
 }
 
 static void startRead(void)
@@ -114,17 +154,213 @@ static void startRead(void)
 	jobStart("Reading card", runRead, doneRead, true);
 }
 
-static void pwdEntered(const u8 *b, u32 len)
+// --- password / 3DES key picker: for the card scanned last ---
+
+#define PICK_ROWS 10
+
+static MfuKey pk[MFU_MAX_KEYS];
+static int npk;
+static UiList pl;
+static u8 pkLen; // 4 = password (PWD_AUTH), 16 = UL-C 3DES key
+
+// AUTHLIM from CFG1: -1 = unknown (the config pages are read-protected)
+static int authLim(void)
 {
-	memcpy(rdPwd, b, 4);
+	const MfuType *t = sm.info.type;
+	return t->cfg && sm.valid[t->cfg + 1] ? sm.data[t->cfg + 1][0] & 7 : -1;
+}
+
+static void sendKey(void)
+{
 	rdWithPwd = true;
-	jobStart("Reading card with password", runRead, doneRead, true);
+	rdCard = sc;
+	rdType = sm.info.type;
+	jobStart(pkLen == 16 ? "Reading card with 3DES key" : "Reading card with password", runRead, doneRead, true);
+}
+
+// A password goes out once, after a confirm unless the card says wrong ones are not counted.
+static void sendAsk(const u8 *key)
+{
+	memcpy(rdKey, key, pkLen);
+	int lim = authLim();
+	if (pkLen == 16 || lim == 0) {
+		sendKey();
+		return;
+	}
+	char msg[200];
+	int n = snprintf(msg, sizeof(msg), "Send %02X%02X%02X%02X to this card once?\n", key[0], key[1], key[2], key[3]);
+	if (lim < 0)
+		snprintf(msg + n, sizeof(msg) - n, "Its AUTHLIM is unknown: a wrong password\nmay count towards locking it for good.");
+	else
+		snprintf(msg + n, sizeof(msg) - n, "AUTHLIM %d: %d wrong password%s in a row\nlock the protected area for good.", lim, lim,
+			lim == 1 ? "" : "s");
+	confirm("Send password", sendKey, "%s", msg);
+}
+
+static void keyEntered(const u8 *b, u32 len)
+{
+	memset(&rdCand, 0, sizeof(rdCand));
+	sendAsk(b);
+}
+
+static void pickInput(u32 kDown, u32 kRepeat)
+{
+	uiListNav(&pl, npk + 1, PICK_ROWS, kRepeat);
+	if (kDown & KEY_B) appBack();
+	if (kDown & KEY_A) {
+		if (pl.sel == 0 && pkLen == 16) {
+			entryHex("Ultralight C 3DES key", "The 16-byte 2K3DES key, as pm3 takes it (pages 2C-2F hold each half "
+				"byte-reversed). A wrong one costs nothing: the UL-C has no lockout.", 16, rdKey, keyEntered);
+		} else if (pl.sel == 0) {
+			entryHex("Ultralight / NTAG password", "The 4-byte PWD_AUTH password (EV1, NTAG21x). It is sent once "
+				"before reading: a wrong one counts against the card's AUTHLIM.", 4, rdKey, keyEntered);
+		} else {
+			rdCand = pk[pl.sel - 1];
+			sendAsk(rdCand.key);
+		}
+	}
+	if ((kDown & KEY_X) && pkLen == 16) startRead(); // the whole dictionary
+}
+
+static void pickDraw(void)
+{
+	char uid[32], hex[40];
+	uidHex(&sc, uid, "");
+	uiHeader(pkLen == 16 ? "Ultralight C: 3DES key" : "Ultralight / NTAG: password", uid);
+	float y = 26;
+	u32 warn = uiCol[COL_WARN], ok = uiCol[COL_OK];
+	int lim = authLim();
+	const MfuType *t = sm.info.type;
+	if (pkLen == 16) {
+		uiText(12, y, S_SMALL, ok, "No lockout on the Ultralight C: wrong keys cost nothing.");
+		if (sm.pwdOk) {
+			for (int i = 0; i < 16; i++) sprintf(hex + 2 * i, "%02X", sm.key[i]);
+			uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_TEXT], "The dictionary opened it: %s", hex);
+		} else {
+			uiText(12, y + SMALL_H, S_SMALL, warn, "No key in the dictionary opened it (" MFU_KEYS ").");
+		}
+	} else {
+		if (lim < 0) uiText(12, y, S_SMALL, warn, "AUTHLIM unknown (config protected): a wrong password may count.");
+		else if (lim == 0) uiText(12, y, S_SMALL, ok, "AUTHLIM 0: wrong passwords are not counted.");
+		else uiText(12, y, S_SMALL, warn, "AUTHLIM %d: %d wrong passwords in a row lock it for good.", lim, lim);
+		if (t->cfg && sm.valid[t->cfg])
+			uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_DIM], "%s, protected from page %d.", t->name,
+				sm.data[t->cfg][3]);
+		else
+			uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_DIM], "%s.", t->name);
+	}
+	y += 2 * SMALL_H + 4;
+	float hexX = pkLen == 16 ? UI_W - 10 - 32 * 6.0f : UI_W - 10 - 8 * MONO_W;
+	for (int i = 0; i < PICK_ROWS && pl.top + i <= npk; i++, y += LINE_H) {
+		int r = pl.top + i;
+		if (r == pl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		if (!r) {
+			uiText(10, y, S_BODY, uiCol[COL_ACCENT], pkLen == 16 ? "Type a 3DES key..." : "Type a password...");
+			continue;
+		}
+		const MfuKey *k = &pk[r - 1];
+		char label[48];
+		snprintf(label, sizeof(label), "%s", k->label);
+		uiText(10, y, S_BODY, uiCol[k->known ? COL_OK : k->match ? COL_ACCENT : COL_TEXT], "%s",
+			uiFit(label, hexX - 26, S_BODY));
+		for (int b = 0; b < k->len; b++) sprintf(hex + 2 * b, "%02X", k->key[b]);
+		if (pkLen == 16) uiMonoS(hexX, y + 2, 0.36f, 6.0f, uiCol[COL_TEXT], hex);
+		else uiMono(hexX, y + 1, uiCol[COL_TEXT], hex);
+	}
+	uiFooter(pkLen == 16 ? BTN_A " try this key   " BTN_X " try them all   " BTN_B " back"
+	                     : BTN_A " send it, once   " BTN_B " back");
+}
+
+static const Screen pickScreen = { NULL, pickInput, pickDraw };
+
+static void pickOpen(void)
+{
+	const MfuType *t = sm.info.type;
+	if (!t->pwd && t != &mfuTypeULC) {
+		msgBox("Read with password", "A %s has no password\nor key: Read card gets everything.", t->name);
+		return;
+	}
+	pkLen = t == &mfuTypeULC ? 16 : 4;
+	npk = mfuKeyList(sc.uid, sc.uidLen, &sm, pkLen, pk, MFU_MAX_KEYS);
+	pl.sel = pl.top = 0;
+	if (npk && (pk[0].known || pk[0].match)) pl.sel = 1;
+	appScreen(&pickScreen);
+}
+
+static void donePickScan(void)
+{
+	if (scanResult > 0) pickOpen();
+	else doneScan();
 }
 
 static void startPwdRead(void)
 {
-	entryHex("Ultralight / NTAG password", "The 4-byte PWD_AUTH password (EV1, NTAG21x). It is tried once before "
-		"reading: a wrong one counts against the card's AUTHLIM.", 4, rdPwd, pwdEntered);
+	jobStart("Scanning", runScan, donePickScan, true);
+}
+
+// --- Ultralight C: change the 3DES key (the card scanned last, its key found by the dictionary) ---
+
+static u8 ckKey[16];
+static int ckResult;
+static char ckWhy[64];
+
+static void runCk(void)
+{
+	ckResult = -2;
+	if (!cardWait()) return;
+	MfuInfo now;
+	if (card.uidLen != sc.uidLen || memcmp(card.uid, sc.uid, sc.uidLen)) {
+		ckResult = -3;
+		return;
+	}
+	if ((ckResult = mfuIdentify(&now)) > 0 && now.type != &mfuTypeULC) ckResult = -3;
+	if (ckResult > 0) ckResult = mfuUlcSetKey(sm.key, ckKey);
+	snprintf(ckWhy, sizeof(ckWhy), "%s", mfuWhy());
+	if (ckResult > 0) {
+		mfuRememberKey(card.uid, card.uidLen, ckKey, 16);
+		memcpy(sm.key, ckKey, 16);
+	}
+	iso14aParity(true);
+}
+
+static void doneCk(void)
+{
+	char k[33];
+	for (int i = 0; i < 16; i++) sprintf(k + 2 * i, "%02X", ckKey[i]);
+	if (ckResult == -2) return;
+	if (ckResult == -3) msgBox("Change 3DES key", "Not the Ultralight C scanned before:\nnothing written.");
+	else if (ckResult < 0) msgBox("Change 3DES key", "Lost the card. If it was mid-write,\nthe key may be half changed: try both keys.");
+	else if (!ckResult) msgBox("Change 3DES key", "Not done: %s", ckWhy);
+	else msgBox("Change 3DES key", "Done: the card takes the new key\n%s\n(remembered for this card).", k);
+}
+
+static void ckGo(void)
+{
+	jobStart("Changing the 3DES key", runCk, doneCk, false);
+}
+
+static void ckEntered(const u8 *b, u32 len)
+{
+	char k[33], o[33];
+	memcpy(ckKey, b, 16);
+	for (int i = 0; i < 16; i++) sprintf(k + 2 * i, "%02X", ckKey[i]), sprintf(o + 2 * i, "%02X", sm.key[i]);
+	confirm("Change 3DES key", ckGo, "Write the new key\n%s\n(now %s)?\nKeep the card on the reader: a half-written\nkey is one nobody knows.", k, o);
+}
+
+static void ckStart(void)
+{
+	if (!sm.pwdOk) {
+		msgBox("Change 3DES key", "The current key is needed first: it is not\nin the dictionary. Read with a key, then scan again.");
+		return;
+	}
+	entryHex("New Ultralight C 3DES key", "The new 16-byte 2K3DES key, as pm3 takes it. Written to pages 2C-2F after "
+		"authenticating with the current one, then checked.", 16, sm.key, ckEntered);
+}
+
+static void ulcMenu(void)
+{
+	static const MenuItem items[] = { { "Read with a key", pickOpen }, { "Change the 3DES key", ckStart } };
+	popup("Ultralight C", items, 2);
 }
 
 // Static lock bits (page 2 bytes 2-3): which of pages 3-15 are read-only.
@@ -166,8 +402,10 @@ static void cardDraw(void)
 	if (in->hasVersion)
 		uiText(14, y, S_SMALL, txt, "Version %02X%02X%02X%02X%02X%02X%02X%02X", in->version[0], in->version[1],
 			in->version[2], in->version[3], in->version[4], in->version[5], in->version[6], in->version[7]);
+	else if (in->zeroVersion)
+		uiText(14, y, S_SMALL, dim, "GET_VERSION answers zeros: taken as none");
 	else
-		uiText(14, y, S_SMALL, dim, "No GET_VERSION (Ultralight, Ultralight C or NTAG203)");
+		uiText(14, y, S_SMALL, dim, "No GET_VERSION (Ultralight, UL-C or NTAG203)");
 	if (smGtu) uiTextRight(UI_W - 14, y, S_SMALL, uiCol[COL_OK], "Magic: Gen4 GTU");
 	y += SMALL_H;
 	if (in->hasSig) {
@@ -182,6 +420,14 @@ static void cardDraw(void)
 			for (int i = 0; i < 16; i++) sprintf(s + 2 * i, "%02X", in->sig[16 * h + i]);
 			uiMonoS(80, y + 1, 0.36f, 6.0f, txt, s);
 		}
+	} else if (t == &mfuTypeULC) {
+		char k[33];
+		for (int i = 0; i < 16; i++) sprintf(k + 2 * i, "%02X", sm.key[i]);
+		uiText(14, y, S_SMALL, txt, "3DES key");
+		if (sm.pwdOk) uiMonoS(80, y + 1, 0.36f, 6.0f, txt, k);
+		uiTextRight(UI_W - 14, y, S_SMALL, uiCol[sm.pwdOk ? COL_OK : COL_WARN], "%s", sm.pwdOk ? "dictionary" : "not in the dictionary");
+		uiText(14, y + SMALL_H, S_SMALL, dim, "No signature on this type");
+		y += 2 * SMALL_H;
 	} else {
 		uiText(14, y, S_SMALL, dim, "Signature: %s", t->pwd ? "no answer" : "none on this type");
 		y += 2 * SMALL_H;
@@ -238,13 +484,14 @@ static void cardDraw(void)
 	} else {
 		uiText(14, y, S_SMALL, dim, "No config pages on this type");
 	}
-	uiFooter(BTN_A " scan again   " BTN_X " read card   " BTN_B " back");
+	uiFooter(BTN_A " scan again   " BTN_X " read card   " BTN_Y " with key   " BTN_B " back");
 }
 
 static void cardInput(u32 kDown, u32 kRepeat)
 {
 	if (kDown & KEY_A) startScan();
 	if (kDown & KEY_X) startRead();
+	if (kDown & KEY_Y) sm.info.type == &mfuTypeULC ? ulcMenu() : pickOpen();
 	if (kDown & KEY_B) appBack();
 }
 
@@ -476,7 +723,9 @@ static const MenuEntry mfuEntries[] = {
 	               "capability container and the password config.", startScan },
 	{ "Read card", "Dump every readable page (a password-protected area stays unread). Saved to the SD card "
 	               "in pm3's format and opened in the editor.", startRead },
-	{ "Read with password", "The same with a password (PWD_AUTH, 4 bytes) first: the protected pages read too.", startPwdRead },
+	{ "Read with password", "The same with a password (PWD_AUTH, 4 bytes) or an Ultralight C 3DES key first: the "
+	                        "protected pages read too. Offers the one that worked before, " MFU_KEYS ", passwords "
+	                        "derived from the UID (pm3 pwdgen) and the defaults, and shows the AUTHLIM.", startPwdRead },
 	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card, or clone them onto a Gen4 GTU.", openFiles },
 };
 

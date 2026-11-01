@@ -929,3 +929,40 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   ID card by UID (Format verified with UID 0821D0D6 after a scan with 08301910); saved info is named after
   the real UID.
 - Spare left formatted: no applications, PICC master key DES 00*8, random ID on.
+
+## Ultralight passwords (issue #7), Ultralight C on the GTU (issues #4, #5) -- 2026-11-01
+- Ultralight EV1 04A0A0A0A0A001 on the 3DS: signature verified (NXP Ultralight EV1 key) on the card screen.
+  Its password is still unknown; nothing was sent to it.
+- mfukeys.c: pm3 `hf mfu pwdgen` (common/generator.c) A-G, with its own SHA-1 / MD5 / CRC-16; all 7 of
+  pm3's self-test vectors match. pm3's fingerprints with a derived password (Amiibo, Amiibo Power Up band,
+  Lego Dimensions) put that one first. MFU_KEYS = sdmc:/nfcprobe/mfu_keys.txt (8 hex = password, 32 hex =
+  UL-C key, text after it = label), MFU_KNOWN = sdmc:/nfcprobe/mfu/known.txt (UID + key that worked,
+  written on every successful auth).
+- "Read with password" (menu, or Y on the card screen) scans, then opens a picker: type one, remembered,
+  file, derived, defaults. It shows AUTHLIM from CFG1 (unknown when the config pages are protected) and
+  confirms before a PWD_AUTH unless AUTHLIM is 0. The read re-identifies the card first and sends nothing
+  unless UID AND type match what the picker was opened for: a GTU switched from EV1 to UL-C under the
+  same UID once got the first 4 bytes of a 3DES key as PWD_AUTH (fixed, verified: "nothing sent").
+  Result shows the PACK and whether it is the algorithm's. Verified on the GTU as an EV1 with PWD =
+  Amiibo(UID) 8833CC77: picked from the list, "PACK 8080 (as expected)", remembered and preselected next time.
+- GTU in UL-C mode (config byte 27 = 02): GET_VERSION answers zeros (pages FA-FB, so whatever version a
+  previous clone left there!), 1A 00 -> AF ek(RndB), the 3DES exchange works with the key from pages
+  2C-2F (each 8-byte half byte-reversed: memory "BREAKMEIFYOUCAN!" = key 49454D4B41455242214E4143554F5946).
+  BUT: it answers the second step for ANY key (only the reader's RndA' check catches a wrong one), does
+  not enforce AUTH0, and reads the key pages in clear. A real UL-C NAKs GET_VERSION and the key pages.
+  RndB repeated once in a row. GTU in plain UL mode (03): version zeros, no answer to 1A, NAK on page
+  0x29 -> "MIFARE Ultralight"; reads past page 15 anyway.
+- mfuIdentify: an all-zero version counts as none. mfuUlcAuth (dfcrypto 2K3DES, RndA' checked),
+  mfuUlcFindKey (known, mfu_keys.txt, pm3 mfulc_default_keys.dic + zeros / FF: safe, the UL-C has no
+  lockout), run by the scan, by Read card and by mfuDumpCard without a key. Key pages are filled from
+  the key after an auth. DES parity bits: a key differing in a LSB is the same key (EEFF vs EEFE).
+- UL-C clone onto the GTU: key pages from the dump (pm3 dumps may stop at 44 pages: factory key then),
+  config pages 28-2B factory if missing, verified by authenticating the clone with that key. Verified with
+  a 48-page dump (custom key A0A1..B7, AUTH0 08) and a 44-page one (factory key found by the dictionary).
+- UL-C key change (card screen Y -> popup): auth with the dictionary's key, WRITE 2C-2F, reselect, auth
+  with the new one; remembered. GTU: factory -> 1000..00, new key authenticates, old refused, pages hold
+  it byte-reversed.
+- GTU as types we have no card of, synthetic dumps cloned and read back with the password: UL EV1
+  MF0UL21 (41 pages), NTAG210 (20), NTAG212 (41), NTAG213 (45), NTAG216 (231): type, page count and
+  PWD_AUTH right. (PACK = GTU page 13 on this version, as before.) NTAG203 can't be emulated (no mode).
+- GTU restored afterwards from a full backup: config + all 256 blocks identical, UID 11223344, Classic 1K.

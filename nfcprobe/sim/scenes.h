@@ -2,6 +2,7 @@
 // Hooks into the UI files' static state (hook_*.c include them), for scenes.c.
 #include "../source/app.h"
 #include "../source/desfire.h"
+#include "../source/mfukeys.h"
 
 void simReset(void); // root menu, no dialog / toast / job
 void simTag(const Card *c);
@@ -20,6 +21,8 @@ void simMfuRead(const MfuDump *d, int result, const char *path);
 void simMfuRestore(int result, int pages, const char *why);
 void simMfuClone(const MfuDump *d, int result, const char *why);
 void simMfuMenu(void);
+void simMfuPick(const Card *c, const MfuDump *d);
+void simMfuReadKey(const MfuDump *d, int result, const char *path, const MfuKey *cand);
 
 void simDfCard(const Card *c, const DfInfo *d, int result, const char *why);
 void simDfMenu(void);

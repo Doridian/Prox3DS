@@ -22,6 +22,7 @@ typedef struct {
 typedef struct {
 	const MfuType *type;
 	bool hasVersion, hasSig;
+	bool zeroVersion; // answered GET_VERSION with zeros (a GTU in UL-C / UL mode): taken as no version
 	u8 version[8];
 	u8 sig[32];
 	u8 cnt[3][4];   // counter (3 bytes, LSB first) + tearing flag (BD = intact), pm3's layout
@@ -40,7 +41,8 @@ typedef struct {
 	int pages;
 	u8 data[MFU_MAX_PAGES][4];
 	bool valid[MFU_MAX_PAGES];
-	bool pwdOk;     // read with a password (it's in the PWD page)
+	bool pwdOk;     // authenticated: the password (it's in the PWD page) or the UL-C key (pages 2C-2F)
+	u8 key[16];     // the password (4 bytes) or 3DES key it read with
 } MfuDump;
 
 const char *mfuWhy(void);
@@ -48,12 +50,28 @@ const char *mfuWhy(void);
 int mfuIdentify(MfuInfo *info);
 int mfuRead(u8 page, u8 out[16]);               // 4 pages from `page` (wrapping at the end of memory)
 int mfuPwdAuth(const u8 pwd[4], u8 pack[2]);
+// Ultralight C 3DES mutual authentication (1A 00 / AF): 1 = done and the card's answer (RndA') checked,
+// 0 = refused or a wrong key (the card is reselected), -1 = monitor error. No lockout counter on the
+// UL-C, unlike PWD_AUTH. A Gen4 GTU answers any key, only the RndA' check tells.
+int mfuUlcAuth(const u8 key[16]);
+// The 3DES key as pages 2C-2F hold it (each 8-byte half byte-reversed), and back.
+void mfuUlcKeyPages(const u8 key[16], u8 pages[4][4]);
+void mfuUlcKeyFromPages(const u8 pages[4][4], u8 key[16]);
+// UL-C: the dictionary (mfukeys.h: remembered for this UID, MFU_KEYS, defaults) until a key works.
+// 1 = found (into key, the card is authenticated), 0 = none, -1 = monitor error.
+int mfuUlcFindKey(u8 key[16]);
+// UL-C key change: authenticates with cur, writes key into pages 2C-2F, then checks that the card
+// takes it. 1 = done, 0 = refused (mfuWhy), -1 = monitor error. WRITES THE CARD: a key half written
+// (the card pulled away) is a key nobody knows.
+int mfuUlcSetKey(const u8 cur[16], const u8 key[16]);
 // Writes one user memory page (4 .. userEnd-1; anything else is refused unsent: lock bits and OTP
 // are one-way, config pages can lock the card) and reads it back. 1 = verified. WRITES THE CARD.
 int mfuWritePage(const MfuType *t, u8 page, const u8 data[4]);
-// Identify + every page that reads, with the password first if given. 1 = done (pages read or not
-// are in valid[]), 0 = no Ultralight / NTAG answer, -1 = monitor error.
-int mfuDumpCard(MfuDump *d, const u8 *pwd);
+// Identify + every page that reads, authenticated first with key if given: the password (4 bytes) on
+// EV1 / NTAG21x, the 3DES key (16 bytes) on an Ultralight C, which without a key gets the dictionary
+// (mfuUlcFindKey). 1 = done (pages read or not are in valid[]), 0 = no Ultralight / NTAG answer,
+// -1 = monitor error.
+int mfuDumpCard(MfuDump *d, const u8 *key);
 // Writes the dump's user pages onto the card on the reader (same or bigger type), skipping pages
 // that already match, every one read back. 1 = done, 0 = refused (mfuWhy), -1 = monitor error.
 // WRITES THE CARD.

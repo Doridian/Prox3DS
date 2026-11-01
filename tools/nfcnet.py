@@ -459,12 +459,12 @@ def main():
         print("CLONED (every block read back)" if ok else f"clone failed: {nfc.why}")
     elif what == "mfudump":
         out = args[args.index("-o") + 1] if "-o" in args else None
-        pwd = next((bytes.fromhex(a) for a in args if len(a) == 8 and a != out), None)
+        pwd = next((bytes.fromhex(a) for a in args if len(a) in (8, 32) and a != out), None)
         r = nfc.mfu_dump(pwd)
         if r is None:
             sys.exit(f"no Ultralight / NTAG: {nfc.why}")
         hdr, pwd_ok, pages, name = r
-        print(name, f"(password {'ok' if pwd_ok else 'refused'})" if pwd else "")
+        print(name, "(authenticated)" if pwd_ok else "(refused)" if pwd else "")
         print("version  ", hdr[:8].hex(), "\nsignature", hdr[12:44].hex())
         ev1 = "EV1" in name
         for i in range(3) if ev1 else [2] if name in ("NTAG213", "NTAG215", "NTAG216") else []:

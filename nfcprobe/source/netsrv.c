@@ -67,7 +67,7 @@ enum {
 	                       // mfc.h), read back; on failure payload = reason. WRITES THE CARD CONFIG
 	OP_MF_CLONE    = 0x1D, // force u8, per block: valid u8, data[16] -> empty ok; on failure payload =
 	                       // reason (mfCloneToMagic). WRITES THE CARD
-	OP_MFU_DUMP    = 0x1E, // [pwd[4]] -> Ultralight / NTAG dump (mfu.c, also saved to SD): pm3 header[56],
+	OP_MFU_DUMP    = 0x1E, // [pwd[4] / UL-C key[16]] -> Ultralight / NTAG dump (mfu.c, also saved to SD): pm3 header[56],
 	                       // pwdOk u8, per page: valid u8, data[4], then type name len u8, name
 	OP_MFU_WRITE   = 0x1F, // page u8, data[4] -> empty ok (read back); on failure payload = reason.
 	                       // User memory pages only. WRITES THE CARD
@@ -318,10 +318,12 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_MFU_DUMP: {
 		static MfuDump d;
-		if (inLen != 0 && inLen != 4) return -3;
+		u8 key[16] = { 0 };
+		if (inLen != 0 && inLen != 4 && inLen != 16) return -3;
+		memcpy(key, in, inLen);
 		if (!card.active && !iso14aStart()) return 1;
 		if (iso14aSelect() < 0 && !iso14aStart()) return 1;
-		int r = mfuDumpCard(&d, inLen ? in : NULL);
+		int r = mfuDumpCard(&d, inLen ? key : NULL);
 		if (r <= 0) {
 			*outLen = strlen(mfuWhy());
 			memcpy(out, mfuWhy(), *outLen);

@@ -239,6 +239,10 @@ static void sdSetup(void)
 	FILE *k = fopen(MF_KEYS, "w");
 	fprintf(k, "A0A1A2A3A4A5\nD3F7D3F7D3F7\n");
 	fclose(k);
+	k = fopen(MFU_KEYS, "w");
+	fprintf(k, "# Ultralight / NTAG passwords and UL-C keys\n1A2B3C4D # the NFC stickers from the shop\nCAFEBABE\n"
+		"00112233445566778899AABBCCDDEEFF # test UL-C\n");
+	fclose(k);
 	static const char *mfNames[] = { "9BB2092B.bin", "04C8E3BA064F80-10.bin", "04B1B1B1B1B1B11122334455-12.bin",
 		"hotel_keycard_from_the_conference_in_2025_backup.bin", "truncated.bin" };
 	time_t t0 = 1790000000;
@@ -320,6 +324,44 @@ static void mfuRestoreOk(void) { simMfuRestore(1, 12, ""); }
 static void mfuRestoreFail(void) { simMfuRestore(0, 3, "page 7 refused: NAK 0 (locked, or wrong password)"); }
 static void mfuCloneOk(void) { simMfuClone(&unk, 1, ""); }
 static void mfuCloneFail(void) { simMfuClone(&n215, 0, "GTU config write refused: wrong password (not 00000000?)"); }
+static void pickEv1Locked(void) { MfuDump d = ev1; d.valid[d.info.type->cfg] = d.valid[d.info.type->cfg + 1] = false; simMfuPick(&card7, &d); }
+static void pickN215(void) { simMfuPick(&card7, &n215); }
+static void pickAmiibo(void)
+{
+	MfuDump d = n215;
+	memcpy(d.data[2], "\x73\x48\x0F\xE0", 4);
+	memcpy(d.data[3], "\xF1\x10\xFF\xEE", 4);
+	memcpy(d.data[4], "\xA5\x00\x00\x00", 4);
+	d.data[d.info.type->cfg + 1][0] = 0x00; // AUTHLIM 0
+	simMfuPick(&card7, &d);
+}
+static void pickUlc(void) { MfuDump d = ulc; d.pwdOk = false; simMfuPick(&card7, &d); }
+static void cardUlcKey(void)
+{
+	MfuDump d = ulc;
+	d.pwdOk = true;
+	d.info.hasSig = false;
+	memcpy(d.key, "\x49\x45\x4D\x4B\x41\x45\x52\x42\x21\x4E\x41\x43\x55\x4F\x59\x46", 16);
+	simMfuCard(&card7, &d, true);
+}
+static void readPwdPack(void)
+{
+	MfuDump d = n215;
+	d.pwdOk = true;
+	int c = d.info.type->cfg;
+	memcpy(d.data[c + 2], "\x1A\x2B\x3C\x4D", 4);
+	memcpy(d.data[c + 3], "\x80\x80\x00\x00", 4);
+	d.valid[c + 2] = d.valid[c + 3] = true;
+	MfuKey k = { "Amiibo", { 0x1A, 0x2B, 0x3C, 0x4D }, 4, { 0x80, 0x80 }, true };
+	simMfuReadKey(&d, 1, MFU_DIR "/04C8E3BA064F80-3.bin", &k);
+}
+static void readUlcKey(void)
+{
+	MfuDump d = ulc;
+	d.pwdOk = true;
+	MfuKey k = { "typed", { 0 }, 16 };
+	simMfuReadKey(&d, 1, MFU_DIR "/04C8E3BA064F80-4.bin", &k);
+}
 static void edN215(void) { mfuEditorOpen(&n215, MFU_DIR "/amiibo_super_mario_odyssey_wedding_peach_backup_2.bin"); }
 static void edUlc(void) { mfuEditorOpen(&ulc, MFU_DIR "/04C8E3BA064F80.bin"); }
 static void edEv1(void) { mfuEditorOpen(&ev1, MFU_DIR "/04C8E3BA064F80-2.bin"); }
@@ -413,7 +455,13 @@ static const SimStep script[] = {
 	SHOT("mfu_files_clone_confirm"), B, D, D, A, SHOT("mfu_files_bad"), B,
 	CALL(reset), CALL(mfuN215), SHOT("mfu_card_ntag215_gtu"), CALL(mfuEv1), SHOT("mfu_card_ev1"),
 	CALL(mfuUlc), SHOT("mfu_card_ulc"), CALL(mfuPlain), SHOT("mfu_card_plain"), CALL(mfuUnk), SHOT("mfu_card_unknown"),
-	CALL(mfuCfgLocked), SHOT("mfu_card_cfg_locked"),
+	CALL(mfuCfgLocked), SHOT("mfu_card_cfg_locked"), CALL(cardUlcKey), SHOT("mfu_card_ulc_key"), Y, SHOT("mfu_card_ulc_menu"), D, A, A, SHOT("mfu_ulc_newkey_confirm"), B,
+	CALL(reset), CALL(pickEv1Locked), SHOT("mfu_pick_ev1_unknown"), D, D, A, SHOT("mfu_pick_confirm_unknown"), B,
+	U, U, A, SHOT("mfu_pick_entry"), B,
+	CALL(reset), CALL(pickN215), SHOT("mfu_pick_n215_lim5"), D, A, SHOT("mfu_pick_confirm_lim5"), B,
+	CALL(reset), CALL(pickAmiibo), SHOT("mfu_pick_amiibo"), D, D, D, D, D, D, D, D, D, D, SHOT("mfu_pick_scrolled"),
+	CALL(reset), CALL(pickUlc), SHOT("mfu_pick_ulc"), A, SHOT("mfu_pick_ulc_entry"), B,
+	CALL(reset), CALL(readPwdPack), SHOT("mfu_read_pwd_pack"), CALL(reset), CALL(readUlcKey), SHOT("mfu_read_ulc_key"),
 	CALL(reset), CALL(mfuReadOk), SHOT("mfu_read_done"), CALL(reset), CALL(mfuRestoreOk), SHOT("mfu_restore_ok"),
 	CALL(reset), CALL(mfuRestoreFail), SHOT("mfu_restore_fail"), CALL(reset), CALL(mfuCloneOk), SHOT("mfu_clone_ok"),
 	CALL(reset), CALL(mfuCloneFail), SHOT("mfu_clone_fail"),
@@ -475,6 +523,7 @@ int main(int argc, char **argv)
 	fillMfu(&n215, vN215, 0, NULL);
 	fillMfu(&ev1, vEv1, 0, NULL);
 	fillMfu(&ulc, NULL, 0, &mfuTypeULC);
+	ulc.info.hasSig = false;
 	fillMfu(&ulPlain, NULL, 0, mfuTypeForPages(16));
 	fillMfu(&unk, vUnk, 0, NULL);
 	fillDf();

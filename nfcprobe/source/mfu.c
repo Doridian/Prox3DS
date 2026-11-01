@@ -1,10 +1,13 @@
 // MIFARE Ultralight / NTAG over the chip monitor, see mfu.h.
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
+#include "dfcrypto.h"
 #include "mfu.h"
+#include "mfukeys.h"
 #include "nxpsig.h"
 #include "probe.h"
 
@@ -118,6 +121,87 @@ int mfuPwdAuth(const u8 pwd[4], u8 pack[2])
 	return expect(c, 5, pack, 2, "pwd auth");
 }
 
+void mfuUlcKeyPages(const u8 key[16], u8 pages[4][4])
+{
+	for (int i = 0; i < 16; i++) pages[i / 4][i % 4] = key[(i / 8) * 8 + 7 - i % 8];
+}
+
+void mfuUlcKeyFromPages(const u8 pages[4][4], u8 key[16])
+{
+	for (int i = 0; i < 16; i++) key[(i / 8) * 8 + 7 - i % 8] = pages[i / 4][i % 4];
+}
+
+int mfuUlcAuth(const u8 key[16])
+{
+	// 2K3DES CBC: RndB = D(ek(RndB)), then E(RndA || RndB<<8) chained on, the card's E(RndA<<8) last
+	u8 c[17] = { 0x1A, 0x00 }, a[9], b[8], iv[8] = { 0 }, ra[8];
+	int r = expect(c, 2, a, 9, "3DES auth");
+	if (r <= 0) return r;
+	if (a[0] != 0xAF) {
+		snprintf(why, sizeof(why), "3DES auth: answer %02X", a[0]);
+		return reselect() < 0 ? -1 : 0;
+	}
+	DfCipher k;
+	dfCipherInit(&k, DF_2K3DES, key);
+	memcpy(b, a + 1, 8);
+	dfCbc(&k, iv, b, 8, false);
+	for (int i = 0; i < 8; i++) ra[i] = rand();
+	c[0] = 0xAF;
+	memcpy(c + 1, ra, 8);
+	for (int i = 0; i < 8; i++) c[9 + i] = b[(i + 1) % 8];
+	dfCbc(&k, iv, c + 1, 16, true);
+	if ((r = expect(c, 17, a, 9, "3DES auth")) <= 0) {
+		snprintf(why, sizeof(why), "wrong 3DES key (refused)");
+		return r;
+	}
+	dfCbc(&k, iv, a + 1, 8, false);
+	for (int i = 0; i < 8; i++)
+		if (a[0] || a[1 + i] != ra[(i + 1) % 8]) {
+			snprintf(why, sizeof(why), "wrong 3DES key");
+			return reselect() < 0 ? -1 : 0;
+		}
+	return 1;
+}
+
+int mfuUlcFindKey(u8 key[16])
+{
+	static MfuKey keys[MFU_MAX_KEYS];
+	int n = mfuKeyList(card.uid, card.uidLen, NULL, 16, keys, MFU_MAX_KEYS);
+	for (int i = 0; i < n && !mfCancel; i++) {
+		int r = mfuUlcAuth(keys[i].key);
+		if (r < 0) return -1;
+		if (r) {
+			memcpy(key, keys[i].key, 16);
+			logp("3DES key: %s\n", keys[i].label);
+			return 1;
+		}
+	}
+	snprintf(why, sizeof(why), "no 3DES key in the dictionary");
+	logp("3DES key: none of %d in the dictionary\n", n);
+	return 0;
+}
+
+int mfuUlcSetKey(const u8 cur[16], const u8 key[16])
+{
+	if (!iso14aParity(true)) FAIL(-1, "parity on");
+	int r = mfuUlcAuth(cur);
+	if (r <= 0) return r;
+	u8 pg[4][4], back[16];
+	mfuUlcKeyPages(key, pg);
+	for (int i = 0; i < 4; i++) {
+		u8 c[6] = { 0xA2, 0x2C + i };
+		memcpy(c + 2, pg[i], 4);
+		if ((r = cmd(c, 6, back, sizeof(back), 10)) < 0) FAIL(-1, "write %X: monitor", 0x2C + i);
+		if (r != ACK4(0xA)) {
+			snprintf(why, sizeof(why), "write %X: %s (after %d of 4 pages)", 0x2C + i, r >= ACK4(0) ? "NAK" : "no ACK", i);
+			return reselect() < 0 ? -1 : 0;
+		}
+	}
+	if ((r = reselect()) <= 0) return r; // a fresh session for the check
+	if ((r = mfuUlcAuth(key)) == 0) snprintf(why, sizeof(why), "written, but the card refuses the new key");
+	return r;
+}
+
 int mfuIdentify(MfuInfo *in)
 {
 	memset(in, 0, sizeof(*in));
@@ -125,6 +209,8 @@ int mfuIdentify(MfuInfo *in)
 	u8 c[2] = { 0x60 }, buf[16];
 	int r = expect(c, 1, in->version, 8, "version");
 	if (r < 0) return -1;
+	static const u8 zero[8];
+	if (r && !memcmp(in->version, zero, 8)) in->zeroVersion = true, r = 0;
 	if (r) {
 		in->hasVersion = true;
 		const MfuType *t = in->type = mfuTypeFromVersion(in->version);
@@ -181,17 +267,27 @@ int mfuWritePage(const MfuType *t, u8 page, const u8 data[4])
 	return 1;
 }
 
-int mfuDumpCard(MfuDump *d, const u8 *pwd)
+static int auth(MfuDump *d, u8 pack[2])
+{
+	return d->info.type == &mfuTypeULC ? mfuUlcAuth(d->key) : mfuPwdAuth(d->key, pack);
+}
+
+int mfuDumpCard(MfuDump *d, const u8 *key)
 {
 	memset(d, 0, sizeof(*d));
 	int r = mfuIdentify(&d->info);
 	if (r <= 0) return r;
 	const MfuType *t = d->info.type;
+	bool ulc = t == &mfuTypeULC;
 	u8 pack[2] = { 0 }, buf[16];
-	if (pwd && t->pwd) {
-		if ((r = mfuPwdAuth(pwd, pack)) < 0) return -1;
+	if (key && (t->pwd || ulc)) {
+		memcpy(d->key, key, ulc ? 16 : 4);
+		if ((r = auth(d, pack)) < 0) return -1;
 		d->pwdOk = r;
-		logp("password %02X%02X%02X%02X: %s\n", pwd[0], pwd[1], pwd[2], pwd[3], r ? "ok" : mfuWhy());
+		logp("%s: %s\n", ulc ? "3DES key" : "password", r ? "ok" : mfuWhy());
+	} else if (ulc) {
+		if ((r = mfuUlcFindKey(d->key)) < 0) return -1;
+		d->pwdOk = r;
 	}
 	d->pages = t->pages;
 	progOp("Reading pages");
@@ -199,7 +295,7 @@ int mfuDumpCard(MfuDump *d, const u8 *pwd)
 		progStep(p, d->pages);
 		if ((r = mfuRead(p, buf)) < 0) return -1;
 		if (!r) { // once more: a lost answer must not end the dump (the reselect dropped the auth)
-			if (d->pwdOk && mfuPwdAuth(pwd, pack) < 0) return -1;
+			if (d->pwdOk && auth(d, pack) < 0) return -1;
 			if ((r = mfuRead(p, buf)) < 0) return -1;
 		}
 		if (r) {
@@ -213,7 +309,7 @@ int mfuDumpCard(MfuDump *d, const u8 *pwd)
 		if (t == &tOther) d->pages = p; // the end of memory, or the protected area
 		// The protected area runs from AUTH0 to the end. A READ that starts below it but reaches into
 		// it rolls over to page 0 instead, so the last 4 pages are read again one at a time.
-		if (d->pwdOk && mfuPwdAuth(pwd, pack) < 0) return -1;
+		if (d->pwdOk && auth(d, pack) < 0) return -1;
 		for (int q = p - 3 > 0 ? p - 3 : 1; q < p && d->valid[q]; q++) {
 			if ((r = mfuRead(q, buf)) < 0) return -1;
 			if (!r) {
@@ -225,8 +321,12 @@ int mfuDumpCard(MfuDump *d, const u8 *pwd)
 		break;
 	}
 	if (d->pwdOk && t->cfg) { // PWD and PACK read as zeros
-		memcpy(d->data[t->cfg + 2], pwd, 4);
+		memcpy(d->data[t->cfg + 2], d->key, 4);
 		memcpy(d->data[t->cfg + 3], pack, 2);
+	}
+	if (d->pwdOk && ulc) { // the key pages never read
+		mfuUlcKeyPages(d->key, d->data + 0x2C);
+		for (int p = 0x2C; p < 0x30; p++) d->valid[p] = true;
 	}
 	return 1;
 }
@@ -318,12 +418,29 @@ int mfuCloneToGtu(const MfuDump *d)
 	// Config pages the dump lacks (read-protected on the original) get the factory defaults: no
 	// password protection, not whatever the GTU held there.
 	static const u8 cfgDefault[2][4] = { { 0x00, 0x00, 0x00, 0xFF }, { 0x00, 0x05, 0x00, 0x00 } };
+	// UL-C: the key pages from the dump (pm3 dumps may stop before them), else the factory key;
+	// lock / counter / AUTH0 / AUTH1 the dump lacks: factory (AUTH0 30 = no auth needed)
+	static const u8 ulcDefault[4][4] = { { 0 }, { 0 }, { 0x30 }, { 0 } };
+	static const u8 ulcFactory[16] = { 0x49, 0x45, 0x4D, 0x4B, 0x41, 0x45, 0x52, 0x42, 0x21, 0x4E, 0x41, 0x43, 0x55,
+		0x4F, 0x59, 0x46 };
+	bool ulc = t == &mfuTypeULC;
+	u8 ulcKey[16], kp[4][4];
+	memcpy(ulcKey, ulcFactory, 16);
+	if (ulc && d->pages >= 0x30 && d->valid[0x2C] && d->valid[0x2D] && d->valid[0x2E] && d->valid[0x2F])
+		mfuUlcKeyFromPages(d->data + 0x2C, ulcKey);
+	mfuUlcKeyPages(ulcKey, kp);
+	int end = ulc ? 0x30 : d->pages;
 	progOp("Writing pages");
-	for (int p = 2; p < d->pages; p++) {
+	for (int p = 2; p < end; p++) {
 		if (mfCancel) FAIL(0, "stopped");
-		progStep(p - 2, d->pages - 2);
+		progStep(p - 2, end - 2);
 		const u8 *data = t->cfg && p == t->cfg + 2 ? pwd : d->data[p];
-		if (!d->valid[p] && t->cfg && p >= t->cfg && p < t->cfg + 2) {
+		if (ulc && p >= 0x2C) {
+			data = kp[p - 0x2C];
+		} else if (ulc && p >= 0x28 && !(p < d->pages && d->valid[p])) {
+			logp("gtu: page %d not in the dump, factory default\n", p);
+			data = ulcDefault[p - 0x28];
+		} else if (!d->valid[p] && t->cfg && p >= t->cfg && p < t->cfg + 2) {
 			logp("gtu: page %d not in the dump, factory default\n", p);
 			data = cfgDefault[p - t->cfg];
 		} else if (!d->valid[p] && !(t->cfg && p >= t->cfg + 2 && p < t->cfg + 4)) {
@@ -344,8 +461,9 @@ int mfuCloneToGtu(const MfuDump *d)
 	// Read it back as a reader would.
 	if (!iso14aStart()) FAIL(-1, "reactivate after the clone");
 	static MfuDump back;
-	if ((r = mfuDumpCard(&back, t->pwd ? pwd : NULL)) <= 0) return r;
+	if ((r = mfuDumpCard(&back, t->pwd ? pwd : ulc ? ulcKey : NULL)) <= 0) return r;
 	if (back.info.type != t) FAIL(0, "reads back as %s", back.info.type->name);
+	if (ulc && !back.pwdOk) FAIL(0, "the clone refuses the 3DES key");
 	if (d->info.hasSig && memcmp(back.info.sig, d->info.sig, 32)) FAIL(0, "signature differs");
 	for (int p = 0; p < d->pages; p++) {
 		if (!d->valid[p] || (t->cfg && p >= t->cfg + 2 && p < t->cfg + 4)) continue; // PWD/PACK read as 00
