@@ -36,6 +36,46 @@ void logp(const char *fmt, ...)
 	}
 }
 
+Progress prog;
+
+void progJob(void)
+{
+	memset(&prog, 0, sizeof(prog));
+	prog.start = prog.opStart = osGetTime();
+}
+
+void progOp(const char *fmt, ...)
+{
+	va_list va;
+	va_start(va, fmt);
+	vsnprintf(prog.op, sizeof(prog.op), fmt, va);
+	va_end(va);
+	prog.done = prog.total = prog.eta = 0;
+	prog.opStart = osGetTime();
+}
+
+void progEta(u32 done, u32 total, u32 etaMs)
+{
+	prog.done = done;
+	prog.total = total;
+	prog.eta = etaMs;
+	prog.etaAt = osGetTime();
+}
+
+void progStep(u32 done, u32 total)
+{
+	u64 el = osGetTime() - prog.opStart;
+	// A rate needs some time behind it: the first steps of an op are often the odd ones out.
+	progEta(done, total, done && done < total && el >= 1000 ? (u32)(el * (total - done) / done) : 0);
+}
+
+u32 progLeft(void)
+{
+	if (!prog.eta) return 0;
+	u64 past = osGetTime() - prog.etaAt;
+	return past < prog.eta ? prog.eta - past : 1; // overdue: "any moment now"
+}
+
 static void logHex(const char *prefix, const u8 *buf, u32 len)
 {
 	logp("%s", prefix);

@@ -65,6 +65,23 @@ void uiRect(float x, float y, float w, float h, u32 color)
 	C2D_DrawRectSolid(x, y, 0.5f, w, h, color);
 }
 
+void uiLine(float x0, float y0, float x1, float y1, float thick, u32 color)
+{
+	C2D_DrawLine(x0, y0, color, x1, y1, color, thick, 0.5f);
+}
+
+void uiBar(float x, float y, float w, float h, float frac, u32 color)
+{
+	frac = frac < 0 ? 0 : frac > 1 ? 1 : frac;
+	uiRect(x, y, w, h, uiCol[COL_BG]);
+	uiRect(x, y, w * frac, h, color);
+}
+
+void uiTri(float x0, float y0, float x1, float y1, float x2, float y2, u32 color)
+{
+	C2D_DrawTriangle(x0, y0, color, x1, y1, color, x2, y2, color, 0.5f);
+}
+
 static float drawV(float x, float y, float scale, u32 color, u32 flags, const char *fmt, va_list va)
 {
 	char s[512];

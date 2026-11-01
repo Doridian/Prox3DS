@@ -115,6 +115,18 @@ typedef struct {
 	bool keyFound[40][2];
 } MfDump;
 
+// What the running mfDumpCard knows so far, for the UI (the worker writes it; display only).
+enum { MF_KEY_OPEN, MF_KEY_TRYING, MF_KEY_FOUND, MF_KEY_FAILED };
+typedef struct {
+	int sectors;
+	u8 key[40][2];  // MF_KEY_*; FAILED = every attack tried, none worked
+	u8 blocks[40];  // blocks read
+	bool pivot;     // a known key: nested can run for the open ones
+	u32 nestedMs, nestedRuns; // time the nested attacks took (for estimates)
+} MfDumpProgress;
+extern MfDumpProgress mfProg;
+#define MF_NESTED_MS 25000 // a typical nested recovery on the 3DS (crapto1 dominates), until measured
+
 int mfFirstBlock(int sector);
 int mfSectorBlocks(int sector);
 // Finds a key per sector (A, then B) from the list and reads what it can; trailers get the found

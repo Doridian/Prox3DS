@@ -32,6 +32,13 @@ static int bebit(uint32_t x, int n)
 	return (x >> (n ^ 24)) & 1;
 }
 
+int (*crapto1_tick)(int permille);
+
+static int tick(int permille)
+{
+	return crapto1_tick && crapto1_tick(permille);
+}
+
 // --- forward cipher (matches crypto1.py), for candidate filtering / verification ---
 
 typedef struct {
@@ -149,8 +156,8 @@ static Vec extend_table_simple(Vec in, int bit)
 	return o;
 }
 
-// Owns odd/even (frees them); appends final states to out.
-static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec *out, uint32_t inn)
+// Owns odd/even (frees them); appends final states to out. The top call's buckets report progress.
+static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec *out, uint32_t inn, int top)
 {
 	if (rem == -1) {
 		for (size_t ei = 0; ei < even.n; ei++) {
@@ -191,9 +198,11 @@ static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec
 		vpush(&eb[even.a[k] >> 24], even.a[k]);
 	free(odd.a);
 	free(even.a);
+	int stop = 0;
 	for (int b = 0; b < 256; b++) {
-		if (ob[b].n && eb[b].n) {
-			recover(ob[b], oks, eb[b], eks, rem, out, inn);
+		if (top && !stop) stop = tick(250 + 750 * b / 256); // the buckets take about the same time each
+		if (ob[b].n && eb[b].n && !stop) {
+			recover(ob[b], oks, eb[b], eks, rem, out, inn, 0);
 		} else {
 			free(ob[b].a);
 			free(eb[b].a);
@@ -211,6 +220,7 @@ static void lfsr_recovery32(uint32_t ks2, uint32_t inn, SVec *out)
 	for (int i = 30; i >= 0; i -= 2)
 		eks = eks << 1 | bebit(ks2, i);
 	Vec odd = {0}, even = {0};
+	tick(0);
 	odd.cap = even.cap = 1 << 20; // reserve to avoid realloc churn in the seed loop
 	odd.a = malloc(odd.cap * sizeof(uint32_t));
 	even.a = malloc(even.cap * sizeof(uint32_t));
@@ -220,6 +230,7 @@ static void lfsr_recovery32(uint32_t ks2, uint32_t inn, SVec *out)
 		if (filter(i) == (int)(eks & 1))
 			vpush(&even, i);
 	}
+	tick(100);
 	for (int r = 0; r < 4; r++) {
 		oks >>= 1;
 		eks >>= 1;
@@ -231,7 +242,8 @@ static void lfsr_recovery32(uint32_t ks2, uint32_t inn, SVec *out)
 		even = ne;
 	}
 	inn = (inn >> 16 & 0xff) | (inn << 16) | (inn & 0xff00);
-	recover(odd, oks, even, eks, 11, out, inn << 1);
+	recover(odd, oks, even, eks, 11, out, inn << 1, 1);
+	tick(1000);
 }
 
 static int rollback_bit(uint32_t *s, int in, int fb)

@@ -94,9 +94,63 @@ static void doneRead(void)
 		rdPath[0] ? rdPath : "Could not save the dump to the SD card!");
 }
 
+// The read job's key table: a column per sector (20 a row). The key square is split on its diagonal,
+// key A top left and key B bottom right: grey open, blue (blinking) being tried, green found, red
+// every attack failed. Under it, the sector's blocks read: grey none, yellow some, green all.
+static u32 keyColor(int st)
+{
+	if (st == MF_KEY_TRYING) return uiCol[(osGetTime() / 300) % 2 ? COL_ACCENT : COL_SEL];
+	return uiCol[st == MF_KEY_FOUND ? COL_OK : st == MF_KEY_FAILED ? COL_ERR : COL_BAR];
+}
+
+static float readView(float x, float y, float w)
+{
+	int n = mfProg.sectors;
+	if (!n) return 0;
+	int perRow = n > 20 ? 20 : n, keys = 0, blocks = 0, open = 0;
+	float lw = 28, cw = (w - lw) / perRow, y0 = y;
+	if (cw > 22) cw = 22;
+	float bx = cw > 19 ? 16 : cw - 3;
+	for (int r = 0; r * perRow < n; r++, y += 2 * bx + 18) {
+		uiText(x, y + 10 + bx / 2 - 6, S_SMALL, uiCol[COL_DIM], "keys");
+		uiText(x, y + 13 + 3 * bx / 2 - 6, S_SMALL, uiCol[COL_DIM], "data");
+		for (int i = 0; i < perRow && r * perRow + i < n; i++) {
+			int sec = r * perRow + i, nb = mfSectorBlocks(sec), got = mfProg.blocks[sec];
+			float cx = x + lw + i * cw + (cw - bx) / 2, cy = y + 10, dy = cy + bx + 3;
+			uiTextCenter(cx + bx / 2, y, 0.34f, uiCol[COL_DIM], "%d", sec);
+			uiTri(cx, cy, cx + bx, cy, cx, cy + bx, keyColor(mfProg.key[sec][0]));
+			uiTri(cx + bx, cy, cx + bx, cy + bx, cx, cy + bx, keyColor(mfProg.key[sec][1]));
+			uiLine(cx + bx, cy, cx, cy + bx, 1.5f, uiCol[COL_PANEL]);
+			for (int kb = 0; kb < 2; kb++) {
+				int st = mfProg.key[sec][kb];
+				keys += st == MF_KEY_FOUND;
+				open += st == MF_KEY_OPEN || st == MF_KEY_TRYING;
+			}
+			uiRect(cx, dy, bx, bx, uiCol[COL_BAR]);
+			float fh = bx * got / nb; // fills from the bottom
+			uiRect(cx, dy + bx - fh, bx, fh, uiCol[got == nb ? COL_OK : COL_WARN]);
+			blocks += got;
+		}
+	}
+	uiText(x, y, S_SMALL, uiCol[COL_TEXT], "Keys %d/%d   Blocks %d/%d", keys, 2 * n, blocks, mfFirstBlock(n));
+	if (open && mfProg.pivot) {
+		// Worst case: every open key needs the nested attack (a dictionary hit is far quicker).
+		u32 avg = mfProg.nestedRuns ? mfProg.nestedMs / mfProg.nestedRuns : MF_NESTED_MS;
+		bool nested = !strncmp(prog.op, "Nested", 6);
+		u32 ms = (open - nested) * avg + (nested ? progLeft() : 0);
+		char t[16];
+		fmtDuration(t, ms);
+		uiTextRight(x + w, y, S_SMALL, uiCol[COL_DIM], "up to ~%s more (nested ~%lus a key)", t, (avg + 500) / 1000);
+	} else if (open) {
+		uiTextRight(x + w, y, S_SMALL, uiCol[COL_DIM], "nested needs one known key");
+	}
+	return y + SMALL_H - y0;
+}
+
 static void startRead(void)
 {
-	jobStart("Reading card", runRead, doneRead, true);
+	memset(&mfProg, 0, sizeof(mfProg)); // no old table before the card is found
+	jobStartView("Reading card", runRead, doneRead, true, readView);
 }
 
 static void cardDraw(void)

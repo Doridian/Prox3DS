@@ -34,6 +34,11 @@ void toast(const char *fmt, ...); // a short note at the bottom of the screen
 // Runs run() on the worker with hwLock held, then done() on the UI thread. A cancellable job gets B
 // for mfCancel.
 void jobStart(const char *title, void (*run)(void), void (*done)(void), bool cancellable);
+// The same with a bigger busy box: view draws under the progress bar (inner x, y, width) and returns
+// the height it took; the log gets the rest.
+void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool cancellable,
+	float (*view)(float x, float y, float w));
+void fmtDuration(char *out, u32 ms); // "m:ss"
 bool cardWait(void); // in a job: take the chip, poll until a card is activated (or cancelled)
 
 // A menu screen: entries on the left, the selected one's help on the right, status lines below.

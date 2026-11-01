@@ -650,6 +650,13 @@ static int keyAuths(u64 k, u8 block, bool keyB)
 	return 0;
 }
 
+// crapto1 progress into the current op's bar; B stops it.
+static int solveTick(int permille)
+{
+	progStep(permille, 1000);
+	return mfCancel;
+}
+
 // Distance that last gave a key on this card (a calibrated one sticks for the card's other keys).
 static u32 nestedDist = NESTED_DIST, nestedDistUid;
 
@@ -677,16 +684,22 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 		ntTb = prngSuccessor(nt0b, d2);
 		ks2 = enc ^ ntTb;
 	}
+	crapto1_tick = solveTick;
 	u64 k = crapto1_nested(uid, ntTa, ks1, ntTb, ks2);
+	if (mfCancel) FAIL(0, "stopped");
 	// A wrong distance can still leave a (wrong) key in both candidate sets: only an auth proves it.
 	if ((r = keyAuths(k, tb, tgtB)) < 0) return -1;
 	if (!r && nt0b != nt0) { // a PRNG that steps differently: measure the distance, like pm3
 		u32 d;
 		if ((r = calibrate(kb, key, knownB, false, &d)) <= 0) return r;
 		logp("  nested: no key at distance %lu, calibrated %lu\n", nestedDist, d);
+		char op[sizeof(prog.op)];
+		snprintf(op, sizeof(op), "%s", prog.op);
+		progOp("%.50s, again", op); // a second solve: its own bar
 		ntTa = prngSuccessor(nt0, d);
 		ntTb = prngSuccessor(nt0b, d);
 		k = crapto1_nested(uid, ntTa, enc1 ^ ntTa, ntTb, enc ^ ntTb);
+		if (mfCancel) FAIL(0, "stopped");
 		if ((r = keyAuths(k, tb, tgtB)) < 0) return -1;
 		if (!r) FAIL(0, "no key (calibrated distance %lu)", d);
 		nestedDist = d;
@@ -951,6 +964,15 @@ static int sectorValid(const MfDump *d, int sec)
 	return have;
 }
 
+MfDumpProgress mfProg;
+
+static void progSector(const MfDump *d, int sec)
+{
+	for (int kb = 0; kb < 2; kb++)
+		if (d->keyFound[sec][kb]) mfProg.key[sec][kb] = MF_KEY_FOUND;
+	mfProg.blocks[sec] = sectorValid(d, sec);
+}
+
 // Auth a sector with the given key/type, record it, and read every block not read yet.
 // 1 = key authed (recorded), 0 = refused, -1 = monitor stall we couldn't recover from.
 static int readSector(MfDump *d, int sec, const u8 key[6], bool kb)
@@ -971,6 +993,7 @@ static int readSector(MfDump *d, int sec, const u8 key[6], bool kb)
 		}
 		if (r > 0) d->valid[b0 + i] = true;
 	}
+	progSector(d, sec);
 	return 1;
 }
 
@@ -1002,8 +1025,10 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	static u64 cand[1 << 18];
 	bool done[40][2] = { 0 }, expanded[40][2] = { 0 };
 	u32 uid = cardUid();
+	progOp("Static nonces (backdoor)");
 	for (int sec = 0; sec < sectors && !mfCancel; sec++)
 		for (int kb = 0; kb < 2; kb++) {
+			progStep(2 * sec + kb, 2 * sectors);
 			if ((r = mfStaticNonce(mfFirstBlock(sec), kb, bd, &st[sec][kb])) < 0) return -1;
 			done[sec][kb] = r == 1;
 		}
@@ -1021,7 +1046,12 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 				if (!OPEN(sec, kb) || expanded[sec][kb]) continue;
 				expanded[sec][kb] = true;
 				MfStatic *s = &st[sec][kb];
+				progOp("Static nonce: sector %d key %c candidates", sec, kb ? 'B' : 'A');
+				mfProg.key[sec][kb] = MF_KEY_TRYING;
+				crapto1_tick = solveTick;
 				int n = crapto1_static(uid, s->nt, s->ntEnc, s->par, cand, 1 << 18);
+				if (mfCancel) break;
+				if (!d->keyFound[sec][kb]) mfProg.key[sec][kb] = MF_KEY_OPEN;
 				logp("sector %2d %c: %d candidates\n", sec, kb ? 'B' : 'A', n);
 				for (int i = 0; i < n && !progress; i++)
 					for (int os = 0; os < sectors && !progress; os++)
@@ -1041,7 +1071,10 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	}
 	for (int sec = 0; sec < sectors; sec++)
 		for (int kb = 0; kb < 2; kb++)
-			if (OPEN(sec, kb)) logp("sector %2d %c: key used only here, not recovered\n", sec, kb ? 'B' : 'A');
+			if (OPEN(sec, kb)) {
+				logp("sector %2d %c: key used only here, not recovered\n", sec, kb ? 'B' : 'A');
+				mfProg.key[sec][kb] = MF_KEY_FAILED;
+			}
 #undef OPEN
 	// The backdoor also reads data: fill in blocks no recovered key could read.
 	for (int sec = 0; sec < sectors; sec++) {
@@ -1053,6 +1086,7 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 			if ((r = authCmd(0x64, b0, bd, &c, NULL)) < 0) return -1;
 		for (int i = 0; r && i < nb; i++)
 			if (!d->valid[b0 + i] && mfReadBlock(&c, b0 + i, d->data[b0 + i]) > 0) d->valid[b0 + i] = true;
+		progSector(d, sec);
 	}
 	return 1;
 }
@@ -1066,7 +1100,9 @@ static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	bool gen4 = r;
 	if (!gen4 && !mfGen1aUnlock()) return 0;
 	logp("%s magic: reading without keys\n", gen4 ? "gen4 GTU" : "gen1a");
+	progOp("Reading without keys (%s)", gen4 ? "Gen4 GTU" : "Gen1a");
 	for (int b = 0; b < nb && !mfCancel; b++) {
+		progStep(b, nb);
 		for (int t = 0; t < 3; t++) {
 			if (gen4) {
 				if ((r = mfGen4Read(mfGen4DefaultPwd, b, d->data[b])) < 0) return -1;
@@ -1077,7 +1113,9 @@ static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 			if (r == 1) break;
 		}
 		d->valid[b] = r == 1;
+		if (d->valid[b]) mfProg.blocks[b < 128 ? b / 4 : 32 + (b - 128) / 16]++;
 	}
+	progOp("Checking the trailer keys");
 	// The trailer keys are known to be right: confirm them with retries, so one flaky auth doesn't
 	// send a sector to the nested attack.
 	for (int sec = 0; sec < sectors; sec++) {
@@ -1086,6 +1124,7 @@ static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 		u8 keys[2][6];
 		memcpy(keys[0], d->data[t], 6);
 		memcpy(keys[1], d->data[t] + 10, 6);
+		progStep(sec, sectors);
 		for (int kb = 0; kb < 2; kb++) {
 			*ndict = addKey(dict, *ndict, MF_MAX_KEYS, keys[kb]);
 			if (readSectorRetry(d, sec, keys[kb], kb) < 0) return -1;
@@ -1098,6 +1137,8 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 {
 	memset(d, 0, sizeof(*d));
 	d->sectors = sectors;
+	memset(&mfProg, 0, sizeof(mfProg));
+	mfProg.sectors = sectors;
 	// Running dictionary: the supplied keys plus every key we recover (a key reused by
 	// another sector is far cheaper to auth than to recover again). Magic cards' trailer keys go first.
 	static u8 dict[MF_MAX_KEYS][6];
@@ -1113,36 +1154,63 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 
 	// Sweep until a full pass turns up nothing new: recover EVERY missing A/B key, folding each
 	// one back into the dictionary so later sectors can reuse it before falling back to nested.
+	// The dictionary's bar counts the auths still to try in this pass; its ETA, the time they took.
+	u32 dictDone = 0, dictMs = 0;
 	bool progress = true;
 	while (progress && !mfCancel) {
 		progress = false;
 		for (int sec = 0; sec < sectors && !mfCancel; sec++)
 			for (int kb = 0; kb < 2; kb++) {
 				if (d->keyFound[sec][kb]) continue;
-				for (int k = tried[sec][kb]; k < ndict && !d->keyFound[sec][kb]; k++)
+				u32 left = 0;
+				for (int c = 2 * sec + kb; c < 2 * sectors; c++)
+					if (!d->keyFound[c / 2][c % 2]) left += ndict - tried[c / 2][c % 2];
+				mfProg.key[sec][kb] = MF_KEY_TRYING;
+				if (tried[sec][kb] < ndict) progOp("Dictionary: sector %d key %c", sec, kb ? 'B' : 'A');
+				for (int k = tried[sec][kb]; k < ndict && !d->keyFound[sec][kb] && !mfCancel; k++, left--) {
+					progEta(dictDone, dictDone + left, left * (dictDone ? dictMs / dictDone : 60));
+					u64 t0 = osGetTime();
 					if (readSector(d, sec, dict[k], kb) < 0) return -1;
+					dictMs += osGetTime() - t0;
+					dictDone++;
+				}
 				tried[sec][kb] = ndict;
 				if (!d->keyFound[sec][kb]) {
-					if (pivotSec < 0 || nestedTried[sec][kb]) continue; // nested needs a known key
+					mfProg.key[sec][kb] = nestedTried[sec][kb] ? MF_KEY_FAILED : MF_KEY_OPEN;
+					if (pivotSec < 0 || nestedTried[sec][kb] || mfCancel) continue; // nested needs a known key
 					nestedTried[sec][kb] = true;
 					u8 rk[6];
 					logp("sector %2d %c: nested...\n", sec, kb ? 'B' : 'A');
+					mfProg.key[sec][kb] = MF_KEY_TRYING;
+					progOp("Nested attack: sector %d key %c", sec, kb ? 'B' : 'A');
+					u64 t0 = osGetTime();
 					int r = mfNestedRecover(mfFirstBlock(pivotSec), d->keys[pivotSec][pivotB],
 						pivotB, mfFirstBlock(sec), kb, rk);
 					if (r < 0) return -1;
-					if (!r) { logp("  nested: %s\n", mfWhy()); continue; }
+					if (!mfCancel) {
+						mfProg.nestedMs += osGetTime() - t0;
+						mfProg.nestedRuns++;
+					}
+					if (!r) {
+						logp("  nested: %s\n", mfWhy());
+						mfProg.key[sec][kb] = mfCancel ? MF_KEY_OPEN : MF_KEY_FAILED;
+						continue;
+					}
 					logp("  recovered %02X%02X%02X%02X%02X%02X\n",
 						rk[0], rk[1], rk[2], rk[3], rk[4], rk[5]);
 					if (readSector(d, sec, rk, kb) < 0) return -1;
 				}
 				if (d->keyFound[sec][kb]) {
-					if (pivotSec < 0) { pivotSec = sec; pivotB = kb; }
+					if (pivotSec < 0) { pivotSec = sec; pivotB = kb; mfProg.pivot = true; }
 					ndict = addKey(dict, ndict, MF_MAX_KEYS, d->keys[sec][kb]);
 					progress = true;
 				}
 			}
 	}
 	if (mfCancel) logp("cancelled\n");
+	for (int sec = 0; sec < sectors && !mfCancel; sec++)
+		for (int kb = 0; kb < 2; kb++)
+			if (!d->keyFound[sec][kb]) mfProg.key[sec][kb] = MF_KEY_FAILED;
 	// Fill trailer keys we know, tally, and log.
 	int total = 0;
 	for (int sec = 0; sec < sectors; sec++) {
@@ -1418,6 +1486,8 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 	for (int i = 1; i <= sectors; i++) {
 		int sec = i % sectors, b0 = mfFirstBlock(sec), nb = mfSectorBlocks(sec), t = b0 + nb - 1, r;
 		if (mfCancel) FAIL(0, "cancelled before sector %d", sec);
+		progOp("Writing sector %d", sec);
+		progStep(i - 1, sectors);
 		if (type == CLONE_GEN2 && !tgt.keyFound[sec][0] && !tgt.keyFound[sec][1]) FAIL(0, "sector %d: no key", sec);
 		for (int b = b0 + (sec == 0); b < t; b++)
 			if (valid[b] && (r = cloneBlock(type, &tgt, sec, b, data[b])) != 1) return r;

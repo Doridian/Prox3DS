@@ -189,7 +189,9 @@ int mfuDumpCard(MfuDump *d, const u8 *pwd)
 		logp("password %02X%02X%02X%02X: %s\n", pwd[0], pwd[1], pwd[2], pwd[3], r ? "ok" : mfuWhy());
 	}
 	d->pages = t->pages;
+	progOp("Reading pages");
 	for (int p = 0; p < d->pages && !mfCancel; p += 4) {
+		progStep(p, d->pages);
 		if ((r = mfuRead(p, buf)) < 0) return -1;
 		if (!r) { // once more: a lost answer must not end the dump (the reselect dropped the auth)
 			if (d->pwdOk && mfuPwdAuth(pwd, pack) < 0) return -1;
@@ -236,8 +238,10 @@ int mfuRestore(const MfuDump *d, int *written)
 	if (!t->userEnd) FAIL(0, "unknown card type");
 	if (end > t->userEnd) FAIL(0, "the dump has %d user pages, the card %d", end - 4, t->userEnd - 4);
 	u8 buf[16];
+	progOp("Writing pages");
 	for (int p = 4; p < end; p += 4) {
 		if (mfCancel) FAIL(0, "stopped");
+		progStep(p - 4, end - 4);
 		if ((r = mfuRead(p, buf)) <= 0) return r;
 		for (int k = 0; k < 4 && p + k < end; k++) {
 			int q = p + k;
@@ -309,8 +313,10 @@ int mfuCloneToGtu(const MfuDump *d)
 	// Config pages the dump lacks (read-protected on the original) get the factory defaults: no
 	// password protection, not whatever the GTU held there.
 	static const u8 cfgDefault[2][4] = { { 0x00, 0x00, 0x00, 0xFF }, { 0x00, 0x05, 0x00, 0x00 } };
+	progOp("Writing pages");
 	for (int p = 2; p < d->pages; p++) {
 		if (mfCancel) FAIL(0, "stopped");
+		progStep(p - 2, d->pages - 2);
 		const u8 *data = t->cfg && p == t->cfg + 2 ? pwd : d->data[p];
 		if (!d->valid[p] && t->cfg && p >= t->cfg && p < t->cfg + 2) {
 			logp("gtu: page %d not in the dump, factory default\n", p);

@@ -168,6 +168,7 @@ static volatile bool jobBusy, jobFinished;
 static const char *jobTitle;
 static void (*jobRun)(void), (*jobDone)(void);
 static bool jobCancellable;
+static float (*jobView)(float x, float y, float w);
 
 static void jobThread(void *arg)
 {
@@ -179,7 +180,15 @@ static void jobThread(void *arg)
 
 void jobStart(const char *title, void (*run)(void), void (*done)(void), bool cancellable)
 {
+	jobStartView(title, run, done, cancellable, NULL);
+}
+
+void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool cancellable,
+	float (*view)(float x, float y, float w))
+{
 	if (jobBusy) return;
+	jobView = view;
+	progJob();
 	jobTitle = title;
 	jobRun = run;
 	jobDone = done;
@@ -206,29 +215,59 @@ static void jobReap(void)
 }
 
 #define S_LOG 0.38f // 12 px lines
-#define LOG_W 368    // busy box text width + 16
+
+void fmtDuration(char *out, u32 ms)
+{
+	u32 s = (ms + 500) / 1000;
+	sprintf(out, "%lu:%02lu", s / 60, s % 60);
+}
+
+// The job's op and its bar (when it has steps), elapsed time and ETA; returns the y below.
+static float progressDraw(float x, float y, float w)
+{
+	char el[16], left[16];
+	fmtDuration(el, osGetTime() - prog.start);
+	uiTextRight(x + w, y, S_SMALL, uiCol[COL_DIM], "%s", el);
+	if (!*prog.op) return y + SMALL_H + 2;
+	uiText(x, y, S_SMALL, uiCol[COL_TEXT], "%s", prog.op);
+	y += SMALL_H + 2;
+	u32 done = prog.done, total = prog.total;
+	if (!total) return y + 2;
+	float frac = done >= total ? 1 : (float)done / total;
+	uiBar(x, y, w - 100, 9, frac, uiCol[COL_ACCENT]);
+	u32 ms = progLeft();
+	if (ms) fmtDuration(left, ms);
+	if (ms) uiTextRight(x + w, y - 2, S_SMALL, uiCol[COL_TEXT], "%d%%   ETA %s", (int)(frac * 100), left);
+	else uiTextRight(x + w, y - 2, S_SMALL, uiCol[COL_TEXT], "%d%%", (int)(frac * 100));
+	return y + 14;
+}
 
 static void busyDraw(void)
 {
-	float y = uiBox(372, 176, jobTitle), x = (UI_W - 372) / 2;
+	float w = jobView ? 392 : 372, h = jobView ? 226 : 176;
+	float y = uiBox(w, h, jobTitle), x = (UI_W - w) / 2, bottom = y - 22 + h;
 	static const char spin[] = "|/-\\";
-	if (jobCancellable) uiText(x + 10, y, S_SMALL, uiCol[COL_ACCENT], "Keep the card on the bottom screen.");
-	uiTextRight(x + 362, y, S_BODY, uiCol[COL_ACCENT], "%c", spin[(frame / 8) % 4]);
-	y += SMALL_H + 4;
-	uiRect(x + 6, y - 2, 360, 9 * 12 + 4, uiCol[COL_BG]);
-	// the log's tail, wrapped, the last line at the bottom
+	uiTextRight(x + w - 6, y - 21, S_BODY, uiCol[COL_ACCENT], "%c", spin[(frame / 8) % 4]);
+	y = progressDraw(x + 10, y, w - 20);
+	if (jobView) y += jobView(x + 10, y, w - 20) + 4;
+	// The log's tail fills what is left above the hints line, wrapped, the last line at the bottom.
+	int lines = (int)((bottom - 20 - y) / 12);
+	if (lines > 9) lines = 9;
+	if (lines > 0) uiRect(x + 6, y - 2, w - 12, lines * 12 + 4, uiCol[COL_BG]);
 	int n = uiLogCount(), rows = 0;
 	char line[100];
-	for (int idx = n - 1; idx >= 0 && rows < 9; idx--) {
+	for (int idx = n - 1; idx >= 0 && rows < lines; idx--) {
 		uiLogLine(idx, line, sizeof(line));
-		int k = uiWrapLines(LOG_W - 16, S_LOG, line);
-		if (rows + k > 9) break; // not half a line at the top
+		int k = uiWrapLines(w - 20, S_LOG, line);
+		if (rows + k > lines) break; // not half a line at the top
 		rows += k;
-		uiTextWrap(x + 10, y + 12 * (9 - rows), LOG_W - 16, S_LOG, uiCol[idx == n - 1 ? COL_TEXT : COL_DIM], line);
+		uiTextWrap(x + 10, y + 12 * (lines - rows), w - 20, S_LOG, uiCol[idx == n - 1 ? COL_TEXT : COL_DIM], line);
 	}
-	if (jobCancellable)
-		uiText(x + 10, y + 9 * 12 + 6, S_SMALL, uiCol[mfCancel ? COL_WARN : COL_DIM],
-			mfCancel ? "Stopping..." : BTN_B " stop");
+	float hy = bottom - 16;
+	if (jobCancellable) {
+		uiText(x + 10, hy, S_SMALL, uiCol[mfCancel ? COL_WARN : COL_DIM], mfCancel ? "Stopping..." : BTN_B " stop");
+		uiTextRight(x + w - 10, hy, S_SMALL, uiCol[COL_DIM], "Keep the card on the bottom screen.");
+	}
 }
 
 bool cardWait(void)

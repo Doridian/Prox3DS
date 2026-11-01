@@ -38,6 +38,9 @@ void uiFrameBegin(void);
 void uiFrameEnd(void);
 
 void uiRect(float x, float y, float w, float h, u32 color);
+void uiLine(float x0, float y0, float x1, float y1, float thick, u32 color);
+void uiBar(float x, float y, float w, float h, float frac, u32 color); // progress bar, frac 0..1
+void uiTri(float x0, float y0, float x1, float y1, float x2, float y2, u32 color);
 float uiText(float x, float y, float scale, u32 color, const char *fmt, ...); // returns the width
 void uiTextRight(float right, float y, float scale, u32 color, const char *fmt, ...);
 // Word-wrapped at w (and at '\n'), lines SMALL_H apart at S_SMALL (in proportion otherwise); -> y below it

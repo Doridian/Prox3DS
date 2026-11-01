@@ -4,6 +4,11 @@
 // Crypto1 key recovery (crapto1 port), running on the ARM11. See tools/crapto1.py for the reference
 // and NOTES.md for the nested attack. ks = enc_nt ^ nt_T (32 target-cipher keystream bits).
 
+// Progress hook for the long recoveries (all but crapto1_nt_decrypt / crapto1_ks32), may be NULL:
+// called with 0..1000 as the work goes (about a quarter is the table setup); returning nonzero stops
+// the recovery early (no candidates then).
+extern int (*crapto1_tick)(int permille);
+
 // Candidate 48-bit keys from one nested nonce; returns the count written to out (capped at max).
 int crapto1_recover(uint32_t uid, uint32_t nt, uint32_t ks, uint64_t *out, int max);
 
