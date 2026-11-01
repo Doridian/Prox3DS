@@ -746,3 +746,9 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   check uses the same two tests. `nfcnet.py magic` now tests Gen2 by default (`nogen2` skips).
 - Verified: CUID card 9BB2092B (SAK 08, key A not a default, key B FF): no ATS; key B WRITE 0 ACK ->
   Gen2 / CUID; `magic` 1.3 s. Block 0 afterwards intact (9BB2092B 0B 08 0400 ..., BCC ok).
+- ATS path verified on the GTU (11223344): as shipped, config byte 7 = 00 -> no ATS, Gen2 via key A
+  WRITE 0 ACK. GTU config byte 7 is the ATS LENGTH, not an on/off flag: 01 -> the GTU sends just
+  "09" + CRC (093FCC). With 09: RATS -> 0978009102DABC1910 F005 = pm3's first entry -> "known Gen2",
+  ACK test skipped; reselect + mfread fine afterwards. Config restored to ...0200 0978..., read back.
+- Net op 0x24 OP_LOG (lines u32 -> last log lines, no hwLock); `nfcnet.py HOST log [N]` (net client
+  lines cut). Remote keys don't scroll the on-screen log, so use this for remote tests.

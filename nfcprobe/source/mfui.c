@@ -453,7 +453,7 @@ static void openFiles(void)
 }
 
 static const MenuEntry mfcEntries[] = {
-	{ "Scan card", "Read the card's UID, ATQA/SAK and magic generation (Gen1a, Gen4 GTU, USCUID) and the GTU / "
+	{ "Scan card", "Read the card's UID, ATQA/SAK and magic generation (Gen1a, Gen2 / CUID, Gen4 GTU, USCUID) and the GTU / "
 	               "USCUID config.", startScan },
 	{ "Read card", "Dump every sector. Keys from the dictionary, then the nested and static-nonce attacks and the "
 	               "magic backdoors. Saved to the SD card and opened in the editor.", startRead },

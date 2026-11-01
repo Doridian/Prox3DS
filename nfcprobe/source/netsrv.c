@@ -20,6 +20,7 @@
 #include "mfu.h"
 #include "nfchw.h"
 #include "probe.h"
+#include "ui.h"
 
 #define SOC_BUFFERSIZE 0x100000
 #define MS(x)          ((s64)(x) * 1000000LL)
@@ -78,6 +79,8 @@ enum {
 	                       // payload = reason (mfuCloneToGtu). WRITES THE CARD AND ITS CONFIG
 	OP_ISODEP      = 0x23, // activate u8, [INF (an APDU)] -> with activate: ATS (TL first), then the
 	                       // answer; on failure payload = reason (isodep.c)
+	// UI debugging, served without hwLock:
+	OP_LOG         = 0x24, // lines u32 -> the last that many log lines (fewer if OUT_MAX fills), \n each
 };
 
 #define OUT_MAX 0x2000
@@ -408,6 +411,19 @@ static Result handleDebug(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		netKeys |= v;
 		return 0;
 	}
+	if (op == OP_LOG) {
+		int n = uiLogCount(), i = n - (int)v < 0 ? 0 : n - (int)v;
+		char line[128];
+		for (; i < n; i++) {
+			uiLogLine(i, line, sizeof(line));
+			u32 k = strlen(line);
+			if (*outLen + k + 1 > OUT_MAX) break;
+			memcpy(out + *outLen, line, k);
+			*outLen += k;
+			out[(*outLen)++] = '\n';
+		}
+		return 0;
+	}
 	u16 w, h;
 	u8 *fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &w, &h);
 	u32 size = w * h * 3;
@@ -508,7 +524,7 @@ static void serveClient(int fd)
 		if (len > sizeof(in) || !recvAll(fd, in, len)) return;
 		u16 outLen = 0;
 		Result res;
-		if (hdr[0] == OP_SHOT || hdr[0] == OP_KEYS) {
+		if (hdr[0] == OP_SHOT || hdr[0] == OP_KEYS || hdr[0] == OP_LOG) {
 			res = handleDebug(hdr[0], in, len, out, &outLen);
 		} else {
 			LightLock_Lock(&hwLock);

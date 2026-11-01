@@ -32,6 +32,7 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST apdu [-a] HEX [HEX...]       ISO-DEP (nfcprobe isodep.c): -a = DESELECT + reselect + RATS
                                                    first (shows the ATS); each HEX one command, its answer
        nfcnet.py HOST shot [OUT.png]               grab the top screen (default shot.png; needs Pillow)
+       nfcnet.py HOST log [N]                      the app log's last N lines (default 50), net client lines cut
        nfcnet.py HOST keys KEY [KEY...]            press buttons in the UI, one frame each, ~0.1 s apart
                                                    (a b x y l r up down left right start select)
 """
@@ -48,7 +49,7 @@ UPDATE_CHUNK = 0x7000
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
 GEN4_PWD = bytes(4)
-OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP = 0x20, 0x21, 0x22, 0x23
+OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG = 0x20, 0x21, 0x22, 0x23, 0x24
 KEYS = {"a": 1 << 0, "b": 1 << 1, "select": 1 << 2, "start": 1 << 3, "right": 1 << 4, "left": 1 << 5,
         "up": 1 << 6, "down": 1 << 7, "r": 1 << 8, "l": 1 << 9, "x": 1 << 10, "y": 1 << 11}
 NO_CARD = 1  # card op result: no card / auth refused
@@ -236,6 +237,10 @@ class Nfc:
         img = Image.frombytes("RGB", (240, len(raw) // 720), raw, "raw", "BGR")
         return img.transpose(Image.Transpose.ROTATE_90)
 
+    def log(self, lines=50):
+        """The last `lines` lines of the app log."""
+        return self.call(OP_LOG, struct.pack("<I", lines)).decode(errors="replace")
+
     def keys(self, mask):
         self.call(OP_KEYS, struct.pack("<I", mask))
 
@@ -355,6 +360,10 @@ def main():
         out = args[0] if args else "shot.png"
         nfc.shot().save(out)
         print("saved", out)
+    elif what == "log":
+        # the net client lines every call adds are noise here
+        lines = nfc.log(int(args[0]) if args else 50).splitlines()
+        print("\n".join(l for l in lines if not l.startswith("net: client")))
     elif what == "keys":
         import time
         for k in args:
