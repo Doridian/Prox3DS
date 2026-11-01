@@ -90,6 +90,8 @@ enum {
 	                       // saved info file's text. MAY WRITE THE CARD
 	OP_MF_CHK      = 0x26, // block u8, keyB u8, keys[6]... -> u16 index of the key that worked (FFFF none);
 	                       // on-chip check (mfChkKeys). On failure payload = reason.
+	OP_MF_VALUE    = 0x27, // op u8 (C0 dec, C1 inc, C2 restore), block u8, delta s32 LE, dest u8, keyB u8,
+	                       // key[6] -> dest block read back[16]; on failure payload = reason. WRITES THE CARD
 };
 
 #define OUT_MAX 0x2000
@@ -177,6 +179,20 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		}
 		out[0] = r < 0 ? 0xFF : r, out[1] = r < 0 ? 0xFF : r >> 8;
 		*outLen = 2;
+		return 0;
+	}
+	case OP_MF_VALUE: {
+		if (inLen != 14) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		s32 delta = in[2] | in[3] << 8 | in[4] << 16 | (u32)in[5] << 24;
+		int r = mfValue(in[0], in[1], delta, in[6], in + 8, in[7], out);
+		iso14aParity(true);
+		if (r <= 0) {
+			*outLen = strlen(mfWhy());
+			memcpy(out, mfWhy(), *outLen);
+			return r ? -1 : 1;
+		}
+		*outLen = 16;
 		return 0;
 	}
 	case OP_MF_READ: {

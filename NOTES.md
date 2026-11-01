@@ -1001,3 +1001,25 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Candidate lists cached per cell (malloc, ~320 KB each, freed after the pass): each crapto1_static is
   ~20 s on the 3DS and phases recomputed them up to 8x. Whole dump with sector 10 both unknown:
   10:09 -> 2:31.
+
+## Classic: keys from the UID (pm3 `hf mf keygen`), value blocks -- 2026-11-01
+- nfcprobe/source/mfckeys.c ports pm3 common/generator.c KDFTable: Saflok / Maid, MIZIP (Mini),
+  Disney Infinity (7-byte UID, SHA-1), Skylanders, Bambu Lab + Snapmaker spools (HKDF-SHA256, own small
+  SHA-256), Vanderbilt ACT (pm3's "+3" trailer quirk kept for 4K big sectors). Every sector of every
+  KDF matches `hf mf keygen -u 11223344 -k N` (Disney with 04112233445566).
+- mfDumpCard: kdfPass right after the magic pass: per sector / key type, one on-chip check (mfChkKeys)
+  of the <= 7 derived keys, hits go into the dictionary; MfDump.kdf names the KDF that opened the most
+  (shown in the read result). staticPass now skips cells already found (and the whole backdoor attack
+  when nothing is open).
+- Both RF08S cards are Saflok: 5A5A0002 sector 0 A 5A5A5A000002, 5A5A0001 5A5A5A000001 (14 of its 32
+  keys) are the KDF's. 5A5A0002 dump: 71 s -> 7.5 s, Saflok opens 29/32, the static nonce pass gets the
+  3 others (sector 3 A, 14 A/B) from the dictionary.
+- Value blocks: mfValue = auth, C1 INC / C0 DEC / C2 RESTORE + block (4-bit ACK), then value LE + CRC
+  (6 bytes, 54 bits: plain parity-off ptx, no mixed frame needed; the card answers only with a NAK,
+  silence = taken), then B0 TRANSFER dest (ACK), read back. Net op 0x27 OP_MF_VALUE, `nfcnet.py
+  mfvalue inc|dec|restore BLOCK DELTA KEY [b] [-t DEST]`. Editor actions: add / subtract (positive
+  delta, INC or DEC), copy to another block (RESTORE + TRANSFER), "Make a value block" (local edit).
+- Verified on the GTU (sector 1, transport ACL): 100 +25 = 125, -7 = 118, RESTORE 5 -> TRANSFER 6 =
+  118, key B -1000 = -882; INC on a non-value block -> NAK 4; INC 0xFFFFFFFD (overflow) -> refused, value
+  unchanged. GTU restored, all 64 blocks + config identical to the backup.
+- The extra backdoor keys (A31667A8CEC1 FM11RF08, 518B3354E760 FM11RF32N) were already in mfBackdoorKeys.

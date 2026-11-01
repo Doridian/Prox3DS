@@ -10,6 +10,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "entry.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -158,6 +159,23 @@ static int wbBlock, wbNkeys, wbResult;
 static bool wbKeyB[4];
 static char wbWhy[64], wbHow[32];
 
+// Keys to try on a normal card: the ones the read found, then what the trailer held when loaded.
+static void gatherKeys(void)
+{
+	int t = trailerOf(sec);
+	wbNkeys = 0;
+	for (int k = 0; k < 2; k++)
+		if (orig.keyFound[sec][k]) {
+			memcpy(wbKeys[wbNkeys], orig.keys[sec][k], 6);
+			wbKeyB[wbNkeys++] = k;
+		}
+	if (orig.valid[t])
+		for (int k = 0; k < 2; k++) {
+			memcpy(wbKeys[wbNkeys], orig.data[t] + 10 * k, 6);
+			wbKeyB[wbNkeys++] = k;
+		}
+}
+
 static void runWriteBlock(void)
 {
 	wbResult = -2;
@@ -207,18 +225,7 @@ static void writeBlock(void)
 	}
 	memcpy(wbData, d.data[b], 16);
 	wbBlock = b;
-	// Keys to try on a normal card: the ones the read found, then what the trailer held when loaded.
-	wbNkeys = 0;
-	for (int k = 0; k < 2; k++)
-		if (orig.keyFound[sec][k]) {
-			memcpy(wbKeys[wbNkeys], orig.keys[sec][k], 6);
-			wbKeyB[wbNkeys++] = k;
-		}
-	if (orig.valid[t])
-		for (int k = 0; k < 2; k++) {
-			memcpy(wbKeys[wbNkeys], orig.data[t] + 10 * k, 6);
-			wbKeyB[wbNkeys++] = k;
-		}
+	gatherKeys();
 	if (b == t) {
 		if (!mfAclValid(wbData)) {
 			msgBox("Write block", "These access bits are inconsistent: a real card would lock this\n"
@@ -232,6 +239,97 @@ static void writeBlock(void)
 	}
 	confirm("Write block", writeBlockGo, "Write block %d to the card on the reader?\n"
 		"Magic cards through their backdoor, others with this dump's keys.", b);
+}
+
+// --- value blocks: INCREMENT / DECREMENT / RESTORE + TRANSFER on the card, with this dump's keys ---
+
+static u8 vlOp, vlOut[16];
+static s32 vlDelta;
+static int vlDest, vlResult;
+
+static void runValue(void)
+{
+	vlResult = -2;
+	if (!cardWait()) return;
+	vlResult = 0;
+	snprintf(wbHow, sizeof(wbHow), "no key known for sector %d", sec);
+	for (int k = 0; k < wbNkeys && vlResult == 0; k++) {
+		snprintf(wbHow, sizeof(wbHow), "key %c %02X%02X%02X%02X%02X%02X", wbKeyB[k] ? 'B' : 'A',
+			wbKeys[k][0], wbKeys[k][1], wbKeys[k][2], wbKeys[k][3], wbKeys[k][4], wbKeys[k][5]);
+		vlResult = mfValue(vlOp, wbBlock, vlDelta, vlDest, wbKeys[k], wbKeyB[k], vlOut);
+	}
+	snprintf(wbWhy, sizeof(wbWhy), "%s", wbNkeys ? mfWhy() : wbHow);
+	iso14aParity(true);
+	logp("value %02X block %d -> %d: %s (%s)\n", vlOp, wbBlock, vlDest, vlResult == 1 ? "ok" : wbWhy, wbHow);
+}
+
+static void doneValue(void)
+{
+	if (vlResult == -2) return;
+	if (vlResult < 0) {
+		msgBox("Value block", "The chip stopped answering.");
+		return;
+	}
+	if (vlResult == 0) {
+		msgBox("Value block", "Refused: %s\n(%s)", wbWhy, wbHow);
+		return;
+	}
+	// the card holds this now: the dump and its "as read" copy both take it
+	memcpy(d.data[vlDest], vlOut, 16);
+	memcpy(orig.data[vlDest], vlOut, 16);
+	d.valid[vlDest] = orig.valid[vlDest] = true;
+	s32 v;
+	if (mfValueParse(vlOut, &v, NULL)) msgBox("Value block", "Block %d now holds %ld (read back, %s).", vlDest, (long)v, wbHow);
+	else msgBox("Value block", "Done, but block %d doesn't read back as a value block.", vlDest);
+}
+
+static void valueGo(void)
+{
+	jobStart("Value block", runValue, doneValue, false);
+}
+
+static void valueAddDone(s64 v)
+{
+	if (!v) return;
+	vlOp = v > 0 ? MF_VAL_INC : MF_VAL_DEC;
+	vlDelta = v > 0 ? v : -v;
+	wbBlock = vlDest = blk();
+	gatherKeys();
+	confirm("Value block", valueGo, "%s block %d's value by %ld on the card?", v > 0 ? "Increase" : "Decrease",
+		wbBlock, (long)vlDelta);
+}
+
+static void valueAdd(void)
+{
+	entryDec("Value block", "Add to the value (negative: subtract)", -0x7FFFFFFF, 0x7FFFFFFF, 0, valueAddDone);
+}
+
+static void valueCopyDone(s64 dest)
+{
+	vlOp = MF_VAL_RESTORE;
+	vlDelta = 0;
+	wbBlock = blk();
+	vlDest = dest;
+	gatherKeys();
+	confirm("Value block", valueGo, "Copy block %d's value to block %d on the card\n(RESTORE + TRANSFER)?", wbBlock, vlDest);
+}
+
+static void valueCopy(void)
+{
+	int b0 = mfFirstBlock(sec);
+	entryDec("Value block", "Copy the value to block", b0 == 0 ? 1 : b0, trailerOf(sec) - 1, blk(), valueCopyDone);
+}
+
+static void valueFormatDone(s64 v)
+{
+	mfValueBlock(v, blk(), d.data[blk()]);
+	d.valid[blk()] = true;
+	toast("Block %d is now a value block in the dump: write it to the card", blk());
+}
+
+static void valueFormat(void)
+{
+	entryDec("Value block", "Make this block a value block holding", -0x7FFFFFFF, 0x7FFFFFFF, 0, valueFormatDone);
 }
 
 static void cloneDump(void)
@@ -306,11 +404,19 @@ static void actions(void)
 {
 	static char wlabel[32];
 	snprintf(wlabel, sizeof(wlabel), "Write block %d to card", blk());
-	MenuItem items[10];
+	MenuItem items[13];
 	int n = 0;
+	int b = blk();
+	bool data = b && b != trailerOf(sec);
 	items[n++] = (MenuItem){ "Save", save };
 	items[n++] = (MenuItem){ "Save as a copy", saveCopy };
 	items[n++] = (MenuItem){ wlabel, writeBlock };
+	if (data && orig.valid[b] && mfValueParse(orig.data[b], NULL, NULL)) {
+		items[n++] = (MenuItem){ "Value: add / subtract on card", valueAdd };
+		items[n++] = (MenuItem){ "Value: copy to another block", valueCopy };
+	} else if (data) {
+		items[n++] = (MenuItem){ "Make a value block", valueFormat };
+	}
 	items[n++] = (MenuItem){ "Write dump to magic card", cloneAsk };
 	items[n++] = (MenuItem){ "Copy block", copyBlock };
 	if (clipOk) items[n++] = (MenuItem){ "Paste block", pasteBlock };

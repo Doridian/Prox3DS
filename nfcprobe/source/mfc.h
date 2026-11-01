@@ -114,6 +114,15 @@ int mfWriteBlock(Crypto1 *c, u8 block, const u8 data[16]);
 int mfWrite(u8 block, const u8 key[6], bool keyB, const u8 data[16]);
 const char *mfWhy(void); // reason for the last mfAuth / write failure
 
+// Value blocks: value, ~value, value (little endian), then addr ~addr addr ~addr.
+void mfValueBlock(s32 v, u8 addr, u8 out[16]);
+bool mfValueParse(const u8 b[16], s32 *v, u8 *addr); // false = not a value block
+// Auth with the key, INCREMENT / DECREMENT block's value by delta (RESTORE: copy it unchanged) into
+// the card's transfer buffer, TRANSFER that to dest (same sector), read dest back into out. 1 = done,
+// 0 = refused (mfWhy: access bits, not a value block...), -1 = monitor error. WRITES THE CARD.
+enum { MF_VAL_DEC = 0xC0, MF_VAL_INC = 0xC1, MF_VAL_RESTORE = 0xC2 };
+int mfValue(u8 op, u8 block, s32 delta, u8 dest, const u8 key[6], bool keyB, u8 out[16]);
+
 #define MF_MAX_BLOCKS 256
 typedef struct {
 	int sectors;
@@ -121,6 +130,7 @@ typedef struct {
 	bool valid[MF_MAX_BLOCKS];
 	u8 keys[40][2][6];
 	bool keyFound[40][2];
+	const char *kdf; // the UID key generator (mfckeys.h) that opened the most sectors, NULL = none
 } MfDump;
 
 // What the running mfDumpCard knows so far, for the UI (the worker writes it; display only).

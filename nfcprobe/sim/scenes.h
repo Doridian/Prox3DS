@@ -14,6 +14,7 @@ void simMfcGen4(void);
 void simMfcRead(const MfDump *d, int got, const char *path);
 void simMfcClone(int result, const char *why);
 void simMfcMenu(void);
+void simEdValue(int result, int dest, const u8 out[16]);
 void simEdWriteBlock(int result, const char *how, const char *why);
 
 void simMfuCard(const Card *c, const MfuDump *d, bool gtu);

@@ -303,11 +303,13 @@ static void mfcUsc(void)
 static void mfcNotClassic(void) { MfMagic m = { 0 }; simMfcCard(&cardDf, &m); }
 static void mfcGen4(void) { simMfcGen4(); }
 static void mfcReadOk(void) { simMfcRead(&mf1k, 60, MF_DUMPS "/04B1B1B1B1B1B11122334455-12.bin"); }
+static void mfcReadKdf(void) { MfDump d = mf1k; d.kdf = "Saflok / Maid"; simMfcRead(&d, 64, MF_DUMPS "/5A5A0002-11.bin"); }
 static void mfcReadNoSd(void) { simMfcRead(&mf1k, 60, ""); }
 static void mfcCloneForce(void) { simMfcClone(0, "block 0 of a Gen2 card: the UID can't change again (force)"); }
 static void mfcCloneRefused(void) { simMfcClone(0, "not a magic card (no Gen1a, Gen2, GTU or USCUID answer)"); }
 static void mfcCloneLost(void) { simMfcClone(-1, ""); }
 static void ed1k(void) { editorOpen(&mf1k, MF_DUMPS "/04B1B1B1B1B1B11122334455-12.bin"); }
+static void edValueOk(void) { u8 b[16]; mfValueBlock(4242, 6, b); simEdValue(1, 6, b); }
 static void ed4k(void) { editorOpen(&mf4k, MF_DUMPS "/hotel_keycard_from_the_conference_in_2025_backup.bin"); }
 static void edWbOk(void) { simEdWriteBlock(1, "key B A0A1A2A3A4A5", ""); }
 static void edWbFail(void) { simEdWriteBlock(0, "key B A0A1A2A3A4A5", "auth failed: no answer to the nonce (wrong key?)"); }
@@ -433,15 +435,15 @@ static const SimStep script[] = {
 	CALL(mfcNotClassic), SHOT("mfc_card_notclassic"),
 	CALL(mfcGtu), CALL(mfcGen4), SHOT("gen4_0"), D, SHOT("gen4_1"), D, SHOT("gen4_2"), R, A, SHOT("gen4_confirm"), B,
 	CALL(mfcGtuUl), SHOT("gen4_ultralight"),
-	CALL(reset), CALL(mfcReadOk), SHOT("mfc_read_done"), CALL(reset), CALL(mfcReadNoSd), SHOT("mfc_read_nosd"),
+	CALL(reset), CALL(mfcReadOk), SHOT("mfc_read_done"), CALL(reset), CALL(mfcReadKdf), SHOT("mfc_read_kdf"), CALL(reset), CALL(mfcReadNoSd), SHOT("mfc_read_nosd"),
 	CALL(reset), CALL(mfcCloneForce), SHOT("mfc_clone_force"), CALL(reset), CALL(mfcCloneRefused),
 	SHOT("mfc_clone_refused"), CALL(reset), CALL(mfcCloneLost), SHOT("mfc_clone_lost"),
 
 	// Classic editor
-	CALL(reset), CALL(ed1k), SHOT("ed_block0"), D, SHOT("ed_data"), D, SHOT("ed_data2"), D, SHOT("ed_trailer"),
+	CALL(reset), CALL(ed1k), SHOT("ed_block0"), D, SHOT("ed_data"), X, SHOT("ed_data_actions"), B, D, SHOT("ed_data2"), D, SHOT("ed_trailer"),
 	R, R, R, R, R, R, A, SHOT("ed_acl_editor"), R, R, SHOT("ed_acl_editor_locked"), B,
 	X, SHOT("ed_actions"), B, Y, X, SHOT("ed_actions_paste"), B, U, A, U, SHOT("ed_editing"), B,
-	D, D, SHOT("ed_value"), A, U, B, SHOT("ed_modified"),
+	D, D, SHOT("ed_value"), X, SHOT("ed_value_actions"), B, CALL(edValueOk), SHOT("ed_value_ok"), A, U, B, SHOT("ed_modified"),
 	KEYS(KEY_R), D, D, D, SHOT("ed_bad_acl"), B, SHOT("ed_close_confirm"), B,
 	X, D, D, A, SHOT("ed_write_trailer"), B,
 	CALL(edWbOk), SHOT("ed_wb_ok"), CALL(reset), CALL(ed1k), CALL(edWbFail), SHOT("ed_wb_fail"),

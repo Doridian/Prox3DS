@@ -13,6 +13,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST mfdump [KEY...] [-o OUT]     dump with keys (+ keys.txt + defaults), also saved to SD
        nfcnet.py HOST gen1awrite BLOCK HEX32       Gen1a backdoor write of 16 bytes (WRITES THE CARD)
        nfcnet.py HOST mfwrite BLOCK KEY HEX32 [b]  Mifare Classic encrypted write + read-back (WRITES THE CARD)
+       nfcnet.py HOST mfvalue inc|dec|restore BLOCK DELTA KEY [b] [-t DEST]  value block op + TRANSFER
+                                            (to DEST, default BLOCK), read back (WRITES THE CARD)
        nfcnet.py HOST nested KBLK KKEY TBLK [kb][tb]  recover TBLK's key from a known key (nested attack)
        nfcnet.py HOST magic [nogen2] [PWD]         detect Gen1a / Gen2 / Gen4 GTU / USCUID (+ config); Gen2 the
                                                    pm3 way (ATS, block 0 WRITE ACK, aborted: nothing written)
@@ -60,6 +62,8 @@ UPDATE_CHUNK = 0x7000
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF, OP_MF_CHK = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26
+OP_MF_VALUE = 0x27
+MF_VAL_OPS = {"dec": 0xC0, "inc": 0xC1, "restore": 0xC2}
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
 DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
 
@@ -466,6 +470,18 @@ def main():
             sys.exit(f"no card: {nfc.why}")
         i = r[0] | r[1] << 8
         print("none fits" if i == 0xFFFF else f"key {i} fits: {args[2 + i]}")
+    elif what == "mfvalue":
+        dest = int(args[args.index("-t") + 1]) if "-t" in args else int(args[1])
+        rest = [a for i, a in enumerate(args) if a != "-t" and (i == 0 or args[i - 1] != "-t")]
+        op, blk, delta, key = MF_VAL_OPS[rest[0]], int(rest[1]), int(rest[2], 0), bytes.fromhex(rest[3])
+        kb = len(rest) > 4 and rest[4] == "b"
+        r = nfc.card_call(OP_MF_VALUE, bytes([op, blk]) + (delta & 0xFFFFFFFF).to_bytes(4, "little")
+                          + bytes([dest, kb]) + key, 30)
+        if r is None:
+            sys.exit(f"refused: {nfc.why}")
+        v = int.from_bytes(r[:4], "little", signed=True)
+        ok = r[:4] == r[8:12] and bytes(x ^ 0xFF for x in r[4:8]) == r[:4]
+        print(f"block {dest}: {r.hex()}", f"value {v} addr {r[12]:02x}" if ok else "(not a value block)")
     elif what == "mfudump":
         out = args[args.index("-o") + 1] if "-o" in args else None
         pwd = next((bytes.fromhex(a) for a in args if len(a) in (8, 32) and a != out), None)

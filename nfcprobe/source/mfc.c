@@ -7,6 +7,7 @@
 
 #include "mfc.h"
 #include "crapto1.h"
+#include "mfckeys.h"
 #include "nfchw.h"
 #include "probe.h"
 
@@ -822,19 +823,25 @@ static int ack4(Crypto1 *c, const MonFrame *f, int n, u32 off)
 	return v;
 }
 
-// The encrypted WRITE command alone. 1 = ACKed: the card now waits for the 16 data bytes.
-static int writeCmd(Crypto1 *c, u8 block)
+// An encrypted command (op, block, CRC) answered with a 4-bit ACK. 1 = ACKed.
+static int shortCmd(Crypto1 *c, u8 op, u8 block)
 {
 	MonFrame f[2];
-	u8 cmd[4] = { 0xA0, block }, cenc[4], cpar[4];
+	u8 cmd[4] = { op, block }, cenc[4], cpar[4];
 	crcA(cmd, 2, cmd + 2);
 	c1Encrypt(c, cmd, 4, cenc, cpar);
 	u32 off;
 	int n = ptx(cenc, 4, cpar, f, &off);
-	if (n < 0) FAIL(-1, "A0 tx");
+	if (n < 0) FAIL(-1, "%02X tx", op);
 	int a = ack4(c, f, n, off);
-	if (a != 0xA) FAIL(0, a < 0 ? "A0: no answer" : "A0 nak %X", a);
+	if (a != 0xA) FAIL(0, a < 0 ? "%02X: no answer" : "%02X nak %X", op, a);
 	return 1;
+}
+
+// The encrypted WRITE command alone. 1 = ACKed: the card now waits for the 16 data bytes.
+static int writeCmd(Crypto1 *c, u8 block)
+{
+	return shortCmd(c, 0xA0, block);
 }
 
 int mfWriteBlock(Crypto1 *c, u8 block, const u8 data[16])
@@ -888,6 +895,54 @@ int mfWrite(u8 block, const u8 key[6], bool keyB, const u8 data[16])
 		return 1;
 	}
 	FAIL(0, "no parity pair in 16 auths");
+}
+
+void mfValueBlock(s32 v, u8 addr, u8 out[16])
+{
+	for (int i = 0; i < 4; i++) {
+		out[i] = out[8 + i] = (u32)v >> (8 * i);
+		out[4 + i] = ~out[i];
+	}
+	out[12] = out[14] = addr;
+	out[13] = out[15] = ~addr;
+}
+
+bool mfValueParse(const u8 b[16], s32 *v, u8 *addr)
+{
+	for (int i = 0; i < 4; i++)
+		if (b[i] != b[8 + i] || b[i] != (u8)~b[4 + i]) return false;
+	if (b[12] != b[14] || b[13] != b[15] || b[12] != (u8)~b[13]) return false;
+	if (v) *v = (s32)(b[0] | b[1] << 8 | b[2] << 16 | (u32)b[3] << 24);
+	if (addr) *addr = b[12];
+	return true;
+}
+
+// The card answers the value's data frame only with a NAK; silence means it took it (pm3
+// mifare_classic_value). Then TRANSFER puts the result into dest.
+int mfValue(u8 op, u8 block, s32 delta, u8 dest, const u8 key[6], bool keyB, u8 out[16])
+{
+	if (op != MF_VAL_DEC && op != MF_VAL_INC && op != MF_VAL_RESTORE) FAIL(0, "bad op %02X", op);
+	Crypto1 c;
+	int r = mfAuth(block, key, keyB, &c);
+	if (r <= 0) return r;
+	if ((r = shortCmd(&c, op, block)) <= 0) return r;
+	u8 plain[6], enc[6], par[6];
+	for (int i = 0; i < 4; i++) plain[i] = (u32)delta >> (8 * i);
+	crcA(plain, 4, plain + 4);
+	c1Encrypt(&c, plain, 6, enc, par);
+	MonFrame f[2];
+	u32 off;
+	int n = ptx(enc, 6, par, f, &off);
+	if (n < 0) FAIL(-1, "value tx");
+	if (n > 0) {
+		int a = ack4(&c, f, n, off);
+		FAIL(0, "value nak %X", a);
+	}
+	if ((r = shortCmd(&c, 0xB0, dest)) <= 0) return r;
+	r = mfReadBlock(&c, dest, out);
+	if (r < 0) FAIL(-1, "verify read");
+	if (!r) FAIL(0, "verify read failed");
+	return 1;
 }
 
 const u8 mfDefaultKeys[][6] = {
@@ -1127,6 +1182,9 @@ static int cellCands(u32 uid, const MfStatic *s, int sec, int kb, const u64 **ou
 // on a monitor error.
 static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 {
+	int open = 0;
+	for (int sec = 0; sec < sectors; sec++) open += !d->keyFound[sec][0] + !d->keyFound[sec][1];
+	if (!open) return 0; // the UID's keys did it
 	u8 bd[6];
 	int r = mfBackdoorKey(bd);
 	if (r <= 0) return r;
@@ -1142,6 +1200,7 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	for (int sec = 0; sec < sectors && !mfCancel; sec++)
 		for (int kb = 0; kb < 2; kb++) {
 			progStep(2 * sec + kb, 2 * sectors);
+			if (d->keyFound[sec][kb]) continue;
 			if ((r = mfStaticNonce(mfFirstBlock(sec), kb, bd, &st[sec][kb])) < 0) return -1;
 			done[sec][kb] = r == 1;
 		}
@@ -1282,6 +1341,41 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	return 1;
 }
 
+// Keys from the UID (pm3 `hf mf keygen`): one on-chip check per sector / key type, before the
+// dictionary and the attacks. The KDF that opened the most sectors names the card.
+static int kdfPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
+{
+	int hits[16] = { 0 }, best = 0;
+	progOp("Keys from the UID");
+	for (int sec = 0; sec < sectors && !mfCancel; sec++)
+		for (int kb = 0; kb < 2; kb++) {
+			if (d->keyFound[sec][kb]) continue;
+			u8 keys[MFC_KDF_MAX][6];
+			const char *names[MFC_KDF_MAX];
+			int n = mfcKdfKeys(card.uid, card.uidLen, sec, kb, keys, names);
+			if (!n) continue;
+			progStep(2 * sec + kb, 2 * sectors);
+			int h = mfChkKeys(mfFirstBlock(sec), kb, (const u8 (*)[6])keys, n);
+			if (h == -3) return -1;
+			for (int j = h == -2 ? 0 : h; j >= 0 && j < n && !d->keyFound[sec][kb]; j++) {
+				if (readSectorRetry(d, sec, keys[j], kb) < 0) return -1;
+				if (d->keyFound[sec][kb]) {
+					*ndict = addKey(dict, *ndict, MF_MAX_KEYS, keys[j]);
+					for (int i = 0; i < mfcNumKdfs; i++)
+						if (mfcKdfName(i) == names[j]) hits[i]++;
+				}
+				if (h != -2) break;
+			}
+		}
+	for (int i = 1; i < mfcNumKdfs; i++)
+		if (hits[i] > hits[best]) best = i;
+	if (hits[best]) {
+		d->kdf = mfcKdfName(best);
+		logp("keys from the UID: %s (%d)\n", d->kdf, hits[best]);
+	}
+	return 0;
+}
+
 // Magic cards read without keys: Gen4 GTU (default password), then the Gen1a backdoor. The trailers
 // hold the real keys; they go into the dictionary, which the sweep then confirms by auth.
 static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
@@ -1335,6 +1429,7 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 	static u8 dict[MF_MAX_KEYS][6];
 	int ndict = 0;
 	if (magicPass(d, sectors, dict, &ndict) < 0) return -1;
+	if (kdfPass(d, sectors, dict, &ndict) < 0) return -1;
 	for (int k = 0; k < nkeys; k++) ndict = addKey(dict, ndict, MF_MAX_KEYS, keys[k]);
 	bool nestedTried[40][2] = { 0 };
 	int tried[40][2] = { 0 }; // dict entries already attempted per cell (so each is tried once)

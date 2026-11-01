@@ -91,8 +91,10 @@ static void doneRead(void)
 	int keys = 0;
 	for (int s = 0; s < rd.sectors; s++) keys += rd.keyFound[s][0] + rd.keyFound[s][1];
 	editorOpen(&rd, rdPath);
-	msgBox(mfCancel ? "Read card (stopped)" : "Read card", "%d/%d blocks read, %d/%d keys found.\n%s",
-		rdGot, mfFirstBlock(rd.sectors), keys, 2 * rd.sectors,
+	char kdf[48] = "";
+	if (rd.kdf) snprintf(kdf, sizeof(kdf), "Keys from the UID: %s.\n", rd.kdf);
+	msgBox(mfCancel ? "Read card (stopped)" : "Read card", "%d/%d blocks read, %d/%d keys found.\n%s%s",
+		rdGot, mfFirstBlock(rd.sectors), keys, 2 * rd.sectors, kdf,
 		rdPath[0] ? rdPath : "Could not save the dump to the SD card!");
 }
 

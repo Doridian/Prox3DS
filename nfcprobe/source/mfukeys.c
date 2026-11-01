@@ -15,7 +15,7 @@ typedef uint32_t w32; // u32 is 64 bits in the host sim
 
 // --- hashes for the Xiaomi (SHA-1) and NTAG tools (MD5) passwords: one block, 7 bytes in ---
 
-static void sha1(const u8 *m, w32 len, u8 out[20])
+void mfuSha1(const u8 *m, w32 len, u8 out[20]) // also mfckeys.c
 {
 	u8 b[64] = { 0 };
 	memcpy(b, m, len);
@@ -149,7 +149,7 @@ u32 mfuPwdGen(char algo, const u8 uid[7], const u8 *mfg)
 	}
 	case 'E': {
 		u8 h[20];
-		sha1(uid, 7, h);
+		mfuSha1(uid, 7, h);
 		return (w32)h[h[0] % 20] << 24 | h[(h[0] + 5) % 20] << 16 | h[(h[0] + 13) % 20] << 8 | h[(h[0] + 17) % 20];
 	}
 	case 'F': {
