@@ -1106,3 +1106,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   Amiibo lock bytes / CC / config / PWD (pwdgen B) / PACK 8080, then mfuAmiiboWrite, optionally the lock
   stage, then reads back and verifies. Refused on the source card itself. Checked: amiiboImage of the set-1
   Flipper image for 04C8E3BA064F80 is byte-identical to the image the 3DS accepted (`nfcnet amiibo image`).
+- Locking an unlocked copy later (X, "Lock this tag", two confirms; only for a card just read, not a dump):
+  same UID as shown, the image rebuilt and rewritten (PWD / PACK surely from the UID, as AUTH0 04 turns the
+  password on), PWD_AUTH must give PACK 8080, then the lock stage. Can't be undone: the tag can't take
+  another Amiibo after it.

@@ -389,6 +389,7 @@ static void amiiboNew(void)
 	a.setupDate = a.writeDate = a.appId = 0;
 	simAmiibo(&a, t, &card7, "amiibo_super_mario_odyssey_wedding_peach_backup_2.bin");
 }
+static void amiiboUnlocked(void) { Amiibo a; u8 t[AMIIBO_TAG]; amiiboFixture(&a, t, true, false); simAmiibo(&a, t, &card7, NULL); }
 static void amiiboBad(void) { Amiibo a; u8 t[AMIIBO_TAG]; amiiboFixture(&a, t, false, true); simAmiibo(&a, t, &card7, NULL); }
 static void amiiboCopyLock(void) { simAmiiboCopy(false, true); }
 static void amiiboCopyFresh(void) { simAmiiboCopy(true, false); }
@@ -530,6 +531,8 @@ static const SimStep script[] = {
 	CALL(ndefEmptyUrl), SHOT("ndef_write_confirm"), B,
 	CALL(reset), CALL(amiiboOk), SHOT("amiibo_ok"), CALL(simAmiiboActions), SHOT("amiibo_actions"), B,
 	CALL(amiiboCopyLock), SHOT("amiibo_copy_lock"), B, CALL(amiiboCopyFresh), SHOT("amiibo_copy_fresh"), B,
+	CALL(reset), CALL(amiiboUnlocked), CALL(simAmiiboActions), SHOT("amiibo_actions_unlocked"), KEYS(KEY_UP), A,
+	SHOT("amiibo_lock_confirm"), A, SHOT("amiibo_lock_confirm2"), B,
 	CALL(reset), CALL(amiiboNew), SHOT("amiibo_new_file"), CALL(reset), CALL(amiiboBad), SHOT("amiibo_bad"), CALL(reset), CALL(ndefEmpty), SHOT("ndef_empty"),
 	CALL(reset), CALL(pickN215), SHOT("mfu_pick_n215_lim5"), D, A, SHOT("mfu_pick_confirm_lim5"), B,
 	CALL(reset), CALL(pickAmiibo), SHOT("mfu_pick_amiibo"), D, D, D, D, D, D, D, D, D, D, SHOT("mfu_pick_scrolled"),

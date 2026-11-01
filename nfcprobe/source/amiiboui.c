@@ -11,7 +11,7 @@
 #include "probe.h"
 #include "ui.h"
 
-enum { AM_READ, AM_COPY, AM_FILE };
+enum { AM_READ, AM_COPY, AM_FILE, AM_LOCK };
 
 // am / amTag / amCard: what the screen shows (UI thread only); the job's copies are taken over in done()
 static Amiibo am, amJob;
@@ -20,8 +20,8 @@ static Card amCard, amJobCard;
 static char amName[64], amJobName[64]; // where it came from: "" = a card, else the dump's file name
 static int amMode;
 static bool amFresh, amLock;
-// 1 ok, 0 refused (amWhy), -1 chip, -2 no card / cancelled, -3 the source card itself, -4 not an
-// NTAG215, -5 no keys
+// 1 ok, 0 refused (amWhy), -1 chip, -2 no card / cancelled, -3 the source card itself (copy) / another
+// card (lock), -4 not an NTAG215, -5 no keys
 static int amResult;
 static char amWhy[120];
 
@@ -52,20 +52,60 @@ static void cardFromTag(const u8 *tag, Card *c)
 	c->atqa[1] = 0x44;
 }
 
+static bool tagLocked(const u8 *tag)
+{
+	return tag[10] || tag[11];
+}
+
+// The lock stage on the unlocked Amiibo shown: the same image rewritten (so PWD / PACK are surely the
+// ones the UID gives: AUTH0 turns the password on), PWD_AUTH checked for PACK 8080, then lock bytes and
+// config, for good.
+static int lockShown(void)
+{
+	static u8 img[AMIIBO_TAG];
+	u8 pack[2];
+	int r;
+	if (card.uidLen != amCard.uidLen || memcmp(card.uid, amCard.uid, card.uidLen)) return -3;
+	if (!amiiboImage(&am, amTag, false, img)) {
+		snprintf(amWhy, sizeof(amWhy), "%s", amiiboWhy());
+		return 0;
+	}
+	if ((r = mfuAmiiboWrite(img, false)) <= 0) return r;
+	if ((r = mfuPwdAuth(img + 4 * 0x85, pack)) <= 0) {
+		snprintf(amWhy, sizeof(amWhy), "the password just written does not authenticate: %s", mfuWhy());
+		return r;
+	}
+	if (pack[0] != 0x80 || pack[1] != 0x80) {
+		snprintf(amWhy, sizeof(amWhy), "PACK %02X%02X, not 8080", pack[0], pack[1]);
+		return 0;
+	}
+	return mfuAmiiboWrite(img, true);
+}
+
+// A read that gets no answer mid-way ends the dump there (right after the lock writes, once): up to 3
+// tries, the card reactivated in between.
 static int readBack(void)
 {
 	static MfuDump d;
-	int r = mfuDumpCard(&d, NULL);
-	if (r <= 0) {
-		snprintf(amWhy, sizeof(amWhy), "%s", mfuWhy());
-		return r;
+	for (int t = 0; t < 3; t++) {
+		if (t && !iso14aStart()) return -1;
+		int r = mfuDumpCard(&d, NULL);
+		if (r < 0) return -1;
+		if (!r) {
+			snprintf(amWhy, sizeof(amWhy), "%s", mfuWhy());
+			continue;
+		}
+		if (!isAmiiboTag(&d)) {
+			if (d.info.type && !strcmp(d.info.type->name, "NTAG215")) continue; // pages missing: again
+			return -4;
+		}
+		amJobCard = card;
+		amJobName[0] = 0;
+		tagFromDump(&d, amJobTag);
+		amiiboUnpack(amJobTag, &amJob);
+		return 1;
 	}
-	if (!isAmiiboTag(&d)) return -4;
-	amJobCard = card;
-	amJobName[0] = 0;
-	tagFromDump(&d, amJobTag);
-	amiiboUnpack(amJobTag, &amJob);
-	return 1;
+	return amWhy[0] ? 0 : -4;
 }
 
 static void runAmiibo(void)
@@ -100,7 +140,14 @@ static void runAmiibo(void)
 		logp("amiibo copy (%s%s): %s\n", amFresh ? "fresh" : "kept", amLock ? ", locked" : "", amResult > 0 ? "ok" : amWhy);
 		if (amResult <= 0) goto out;
 	}
+	if (amMode == AM_LOCK) {
+		amResult = lockShown();
+		if (amResult <= 0 && amResult != -3 && !amWhy[0]) snprintf(amWhy, sizeof(amWhy), "%s", mfuWhy());
+		logp("amiibo lock: %s\n", amResult > 0 ? "ok" : amResult == -3 ? "another card" : amWhy);
+		if (amResult <= 0) goto out;
+	}
 	amResult = readBack();
+	if (!amResult && amMode != AM_READ) amResult = -4; // written: only the read-back failed
 out:
 	iso14aParity(true);
 }
@@ -111,15 +158,18 @@ static void doneAmiibo(void)
 	case -2: return;
 	case -1: msgBox("Amiibo", "The chip stopped answering."); return;
 	case -3:
-		msgBox("Amiibo", "That is the Amiibo itself: take it off and put the blank NTAG215 on the reader.");
+		msgBox("Amiibo", amMode == AM_LOCK ? "That is another card than the one shown: nothing was written."
+			: "That is the Amiibo itself: take it off and put the blank NTAG215 on the reader.");
 		return;
 	case -4:
-		msgBox("Amiibo", amMode == AM_COPY ? "Written, but the read-back is not a whole NTAG215."
+		msgBox("Amiibo", amMode == AM_COPY || amMode == AM_LOCK
+			? "Written, but reading it back failed (not all 130 Amiibo pages read).\nRead it again (" BTN_A ") to check."
 			: "Not an Amiibo: an Amiibo is an NTAG215 whose first 130 pages all read.");
 		return;
 	case -5: msgBox("Amiibo", "Could not get the Amiibo keys from this console:\n%s", amiiboWhy()); return;
 	case 0:
-		msgBox("Amiibo", amMode == AM_COPY ? "Not written: %s" : "No Ultralight / NTAG answer: %s", amWhy);
+		msgBox("Amiibo", amMode == AM_COPY ? "Not written: %s" : amMode == AM_LOCK ? "Not locked: %s"
+			: "No Ultralight / NTAG answer: %s", amWhy);
 		return;
 	}
 	am = amJob;
@@ -129,13 +179,15 @@ static void doneAmiibo(void)
 	if (appTop() != &amiiboScreen) appScreen(&amiiboScreen);
 	if (amMode == AM_COPY)
 		toast(am.ok ? "Copied and read back: it verifies" : "Copied, but the read-back does NOT verify");
+	if (amMode == AM_LOCK)
+		toast(tagLocked(amTag) ? "Locked and read back" : "Written, but the lock bytes read back clear");
 }
 
 static void start(int mode)
 {
 	amMode = mode;
 	amWhy[0] = 0;
-	jobStart(mode == AM_COPY ? "Writing the Amiibo" : mode == AM_FILE ? "Decrypting" : "Reading the Amiibo", runAmiibo,
+	jobStart(mode == AM_LOCK ? "Locking the Amiibo" : mode == AM_COPY ? "Writing the Amiibo" : mode == AM_FILE ? "Decrypting" : "Reading the Amiibo", runAmiibo,
 		doneAmiibo, mode != AM_FILE);
 }
 
@@ -155,6 +207,25 @@ static void copyAsk(bool fresh, bool lock)
 		     : "Not locked: it can be written again; the 3DS reads it all the same.");
 }
 
+static void lockGo(void)
+{
+	start(AM_LOCK);
+}
+
+static void lockAsk2(void)
+{
+	confirm("Really lock it?", lockGo, "Last chance. Once locked, this tag can never be rewritten or reused for "
+		"another Amiibo, by this app or anything else. Games can still save to it.\nLock it for good?");
+}
+
+static void lockAsk(void)
+{
+	char uid[32];
+	uidHex(&amCard, uid, "");
+	confirm("Lock the Amiibo", lockAsk2, "Lock %s like a real Amiibo? It sets the lock bits and the config, and the "
+		"password goes live. This is PERMANENT.\nLeave this tag on the reader.", uid);
+}
+
 static void copyKeep(void) { copyAsk(false, false); }
 static void copyKeepLock(void) { copyAsk(false, true); }
 static void copyFresh(void) { copyAsk(true, false); }
@@ -172,7 +243,11 @@ static void actions(void)
 		msgBox("Amiibo", "It does not verify with this console's keys, so there is nothing to copy.");
 		return;
 	}
-	popup("Amiibo", items, 4);
+	static MenuItem withLock[5];
+	memcpy(withLock, items, sizeof(items));
+	withLock[4] = (MenuItem){ "Lock this tag (permanent)", lockAsk };
+	// only for the card just read: a dump can't be locked, a locked tag is already
+	popup("Amiibo", withLock, !amName[0] && !tagLocked(amTag) ? 5 : 4);
 }
 
 static void amiiboInput(u32 kDown, u32 kRepeat)
@@ -227,7 +302,7 @@ static void amiiboDraw(void)
 		row(&y, "Game data", am.hasAppData ? txt : uiCol[COL_DIM], "%s", am.hasAppData ? s : "none");
 	}
 	const u8 *p2 = amTag + 8;
-	snprintf(s, sizeof(s), "static lock %02X%02X: %s", p2[2], p2[3], p2[2] || p2[3] ? "locked like a real Amiibo" : "not locked");
+	snprintf(s, sizeof(s), "static lock %02X%02X: %s", p2[2], p2[3], tagLocked(amTag) ? "locked like a real Amiibo" : "not locked");
 	row(&y, "Tag", txt, "%s", s);
 	uiFooter(am.ok ? BTN_A " read again   " BTN_X " copy   " BTN_B " back" : BTN_A " read again   " BTN_B " back");
 }
