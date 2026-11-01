@@ -49,6 +49,9 @@ MIFARE Ultralight / NTAG (`source/mfu.c`, `source/mfuui.c`, `source/mfuedit.c`),
 
 - Chip info: reset / init / patch version.
 
+`sim/` builds the UI for the PC with fake citro2d / libctru and mock cards, renders every screen to
+PNG and checks the text for overflows and overlaps (`make -C sim run`, see `sim/README.md`).
+
 Card jobs keep the chip, so the network side can carry on with the loaded monitor.
 
 Network: with wifi up, the app listens on TCP 8020 (address shown on the top screen) and

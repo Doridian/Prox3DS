@@ -1,5 +1,6 @@
 // Top-screen drawing helpers and the log ring, see ui.h.
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,12 +13,15 @@ u32 uiCol[COL_N];
 static C3D_RenderTarget *top;
 static C2D_TextBuf frameBuf, monoBuf;
 static C2D_Text mono[95]; // ' ' .. '~'
+static u8 asciiW[128];     // glyph advances, wrapping measures a lot
 
 void uiInit(void)
 {
 	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
 	C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
 	C2D_Prepare();
+	fontEnsureMapped(); // uiTextWidth reads the system font's widths
+	for (int c = 0; c < 128; c++) asciiW[c] = fontGetCharWidthInfo(NULL, fontGlyphIndexFromCodePoint(NULL, c))->charWidth;
 	top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 	frameBuf = C2D_TextBufNew(8192);
 	monoBuf = C2D_TextBufNew(256);
@@ -96,28 +100,102 @@ void uiTextCenter(float cx, float y, float scale, u32 color, const char *fmt, ..
 	va_end(va);
 }
 
+// Width of s[0..n) (one line) as C2D_TextParse measures it: the glyphs' advances. No text buffer
+// needed, so wrapping and fitting don't eat into the frame's glyphs.
+static float widthN(const char *s, int n, float scale)
+{
+	float w = 0;
+	const u8 *p = (const u8 *)s, *e = p + n;
+	while (p < e && *p) {
+		if (*p < 128) {
+			w += asciiW[*p++];
+			continue;
+		}
+		u32 cp;
+		ssize_t k = decode_utf8(&cp, p);
+		if (k <= 0) break;
+		p += k;
+		w += fontGetCharWidthInfo(NULL, fontGlyphIndexFromCodePoint(NULL, cp))->charWidth;
+	}
+	return w * scale;
+}
+
+float uiTextWidth(float scale, const char *s)
+{
+	float w = 0;
+	for (;;) {
+		const char *e = strchr(s, '\n');
+		int n = e ? e - s : (int)strlen(s);
+		float lw = widthN(s, n, scale);
+		if (lw > w) w = lw;
+		if (!e) return w;
+		s = e + 1;
+	}
+}
+
+char *uiFit(char *s, float w, float scale)
+{
+	int n = strlen(s);
+	if (widthN(s, n, scale) <= w) return s;
+	float dots = widthN("...", 3, scale);
+	while (n > 0 && (widthN(s, n, scale) + dots > w || n + 3 > (int)strlen(s))) {
+		do n--;
+		while (n > 0 && (s[n] & 0xC0) == 0x80); // whole UTF-8 sequences
+	}
+	strcpy(s + n, "...");
+	return s;
+}
+
+static float lineH(float scale)
+{
+	return roundf(scale / S_SMALL * SMALL_H);
+}
+
+// Lines of at most w: broken at spaces, inside a word only when it doesn't fit a line alone, and at
+// '\n'. Draws them when draw is set; returns how many.
+static int wrap(float x, float y, float w, float scale, u32 color, bool draw, const char *text)
+{
+	int lines = 0;
+	for (const char *p = text;;) {
+		const char *end = strchr(p, '\n');
+		if (!end) end = p + strlen(p);
+		do {
+			const char *e = p, *q = p;
+			while (q < end) { // add the next word (with the spaces before it) while it fits
+				const char *nx = q;
+				while (nx < end && *nx == ' ') nx++;
+				while (nx < end && *nx != ' ') nx++;
+				if (widthN(p, nx - p, scale) > w) break;
+				e = q = nx;
+			}
+			if (e == p) { // a word wider than the line: as many characters as fit, at least one
+				e = p + 1;
+				while (e < end && (*e & 0xC0) == 0x80) e++;
+				for (const char *c = e; c < end && *c != ' ';) {
+					do c++;
+					while (c < end && (*c & 0xC0) == 0x80);
+					if (widthN(p, c - p, scale) > w) break;
+					e = c;
+				}
+			}
+			if (draw) uiText(x, y + lines * lineH(scale), scale, color, "%.*s", (int)(e - p), p);
+			lines++;
+			p = e;
+			while (p < end && *p == ' ') p++;
+		} while (p < end);
+		if (!*end) return lines;
+		p = end + 1;
+	}
+}
+
 float uiTextWrap(float x, float y, float w, float scale, u32 color, const char *text)
 {
-	char line[256] = "", cand[256];
-	float lh = scale / S_SMALL * SMALL_H;
-	for (const char *p = text; *p;) {
-		const char *e = strchr(p, ' ');
-		int n = e ? e - p : (int)strlen(p);
-		snprintf(cand, sizeof(cand), "%s%s%.*s", line, *line ? " " : "", n, p);
-		C2D_Text t;
-		C2D_TextParse(&t, frameBuf, cand);
-		if (*line && t.width * scale > w) {
-			uiText(x, y, scale, color, "%s", line);
-			y += lh;
-			snprintf(line, sizeof(line), "%.*s", n, p);
-		} else {
-			snprintf(line, sizeof(line), "%s", cand);
-		}
-		p += n;
-		while (*p == ' ') p++;
-	}
-	if (*line) uiText(x, y, scale, color, "%s", line), y += lh;
-	return y;
+	return y + wrap(x, y, w, scale, color, true, text) * lineH(scale);
+}
+
+int uiWrapLines(float w, float scale, const char *text)
+{
+	return wrap(0, 0, w, scale, 0, false, text);
 }
 
 void uiMonoS(float x, float y, float scale, float cell, u32 color, const char *s)
@@ -136,8 +214,10 @@ void uiMono(float x, float y, u32 color, const char *s)
 
 void uiHeader(const char *title, const char *right)
 {
+	char t[256];
+	snprintf(t, sizeof(t), "%s", title);
 	uiRect(0, 0, UI_W, 20, uiCol[COL_BAR]);
-	uiText(6, 2, S_BODY, uiCol[COL_TEXT], "%s", title);
+	uiText(6, 2, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, UI_W - 12 - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
 	if (right) uiTextRight(UI_W - 6, 3, S_SMALL, uiCol[COL_DIM], "%s", right);
 }
 
@@ -154,7 +234,9 @@ float uiBox(float w, float h, const char *title)
 	uiRect(x - 1, y - 1, w + 2, h + 2, uiCol[COL_ACCENT]);
 	uiRect(x, y, w, h, uiCol[COL_PANEL]);
 	uiRect(x, y, w, 18, uiCol[COL_BAR]);
-	uiText(x + 6, y + 1, S_BODY, uiCol[COL_TEXT], "%s", title);
+	char t[128];
+	snprintf(t, sizeof(t), "%s", title);
+	uiText(x + 6, y + 1, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, w - 12, S_BODY));
 	return y + 22;
 }
 

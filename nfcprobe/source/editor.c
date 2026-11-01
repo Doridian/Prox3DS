@@ -435,9 +435,10 @@ static void drawInfo(float y)
 		if (bcc == p[4]) {
 			uiText(x, y, S_SMALL, uiCol[COL_OK], "BCC %02X ok", p[4]);
 		} else {
-			uiText(x, y, S_SMALL, uiCol[COL_WARN], "BCC %02X, should be %02X: Gen1a/Gen2 cards refuse it (the GTU makes its own)",
-				p[4], bcc);
-			uiText(x, y + SMALL_H, S_SMALL, dim, "As a 7-byte UID: %02X%02X%02X%02X%02X%02X%02X   SAK %02X   ATQA %02X%02X",
+			char why[96];
+			snprintf(why, sizeof(why), "BCC %02X, should be %02X: Gen1a/Gen2 cards refuse it (the GTU makes its own)", p[4], bcc);
+			y = uiTextWrap(x, y, UI_W - 2 * x, S_SMALL, uiCol[COL_WARN], why);
+			uiText(x, y, S_SMALL, dim, "As a 7-byte UID: %02X%02X%02X%02X%02X%02X%02X   SAK %02X   ATQA %02X%02X",
 				p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[9], p[8]);
 		}
 		return;

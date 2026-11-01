@@ -141,6 +141,8 @@ static void dialogInput(u32 kDown, u32 kRepeat)
 	}
 }
 
+#define DLG_W 360
+
 static void dialogDraw(void)
 {
 	if (dlg.kind == DLG_POPUP) {
@@ -152,10 +154,9 @@ static void dialogDraw(void)
 		uiText(x + 10, y + 4, S_SMALL, uiCol[COL_DIM], BTN_A " select   " BTN_B " close");
 		return;
 	}
-	int lines = 1;
-	for (const char *p = dlg.msg; *p; p++) lines += *p == '\n';
-	float h = 22 + lines * SMALL_H + 26, y = uiBox(340, h, dlg.title), x = (UI_W - 340) / 2;
-	uiText(x + 10, y, S_SMALL, uiCol[COL_TEXT], "%s", dlg.msg);
+	int lines = uiWrapLines(DLG_W - 20, S_SMALL, dlg.msg);
+	float h = 22 + lines * SMALL_H + 26, y = uiBox(DLG_W, h, dlg.title), x = (UI_W - DLG_W) / 2;
+	uiTextWrap(x + 10, y, DLG_W - 20, S_SMALL, uiCol[COL_TEXT], dlg.msg);
 	uiText(x + 10, y + lines * SMALL_H + 6, S_SMALL, uiCol[COL_DIM], "%s",
 		dlg.kind == DLG_CONFIRM ? BTN_A " yes   " BTN_B " no" : BTN_A " ok");
 }
@@ -204,6 +205,9 @@ static void jobReap(void)
 	if (jobDone) jobDone();
 }
 
+#define S_LOG 0.38f // 12 px lines
+#define LOG_W 368    // busy box text width + 16
+
 static void busyDraw(void)
 {
 	float y = uiBox(372, 176, jobTitle), x = (UI_W - 372) / 2;
@@ -212,13 +216,15 @@ static void busyDraw(void)
 	uiTextRight(x + 362, y, S_BODY, uiCol[COL_ACCENT], "%c", spin[(frame / 8) % 4]);
 	y += SMALL_H + 4;
 	uiRect(x + 6, y - 2, 360, 9 * 12 + 4, uiCol[COL_BG]);
-	int n = uiLogCount();
+	// the log's tail, wrapped, the last line at the bottom
+	int n = uiLogCount(), rows = 0;
 	char line[100];
-	for (int i = 0; i < 9; i++) {
-		int idx = n - 9 + i;
-		if (idx < 0) continue;
+	for (int idx = n - 1; idx >= 0 && rows < 9; idx--) {
 		uiLogLine(idx, line, sizeof(line));
-		uiText(x + 10, y + 12 * i, 0.38f, uiCol[i == 8 ? COL_TEXT : COL_DIM], "%s", line);
+		int k = uiWrapLines(LOG_W - 16, S_LOG, line);
+		if (rows + k > 9) break; // not half a line at the top
+		rows += k;
+		uiTextWrap(x + 10, y + 12 * (9 - rows), LOG_W - 16, S_LOG, uiCol[idx == n - 1 ? COL_TEXT : COL_DIM], line);
 	}
 	if (jobCancellable)
 		uiText(x + 10, y + 9 * 12 + 6, S_SMALL, uiCol[mfCancel ? COL_WARN : COL_DIM],
@@ -245,10 +251,26 @@ bool cardWait(void)
 // --- log ---
 
 static int logTop = -1; // -1 = follow the end
+#define LOG_ROWS 16
+
+// The first line of the last screenful: log lines wrap, so some take two rows.
+static int logMax(void)
+{
+	int n = uiLogCount(), rows = 0, top = n;
+	char line[100];
+	while (top > 0) {
+		uiLogLine(top - 1, line, sizeof(line));
+		int k = uiWrapLines(UI_W - 12, S_LOG, line);
+		if (rows + k > LOG_ROWS) break;
+		rows += k;
+		top--;
+	}
+	return top;
+}
 
 static void logInput(u32 kDown, u32 kRepeat)
 {
-	int n = uiLogCount(), vis = 16, max = n > vis ? n - vis : 0;
+	int vis = LOG_ROWS, max = logMax();
 	int top = logTop < 0 ? max : logTop;
 	if (kRepeat & KEY_UP) top--;
 	if (kRepeat & KEY_DOWN) top++;
@@ -263,14 +285,17 @@ static void logInput(u32 kDown, u32 kRepeat)
 
 static void logDraw(void)
 {
-	int n = uiLogCount(), vis = 16, max = n > vis ? n - vis : 0;
+	int n = uiLogCount(), max = logMax();
 	int top = logTop < 0 || logTop > max ? max : logTop;
 	char hdr[48], line[100];
 	snprintf(hdr, sizeof(hdr), "%s%d lines", logTop < 0 ? "following, " : "", n);
 	uiHeader("Log", hdr);
-	for (int i = 0; i < vis && top + i < n; i++) {
-		uiLogLine(top + i, line, sizeof(line));
-		uiText(6, 23 + i * 12, 0.38f, uiCol[COL_TEXT], "%s", line);
+	for (int i = top, rows = 0; i < n; i++) {
+		uiLogLine(i, line, sizeof(line));
+		int k = uiWrapLines(UI_W - 12, S_LOG, line);
+		if (rows + k > LOG_ROWS) break;
+		uiTextWrap(6, 23 + rows * 12, UI_W - 12, S_LOG, uiCol[COL_TEXT], line);
+		rows += k;
 	}
 	uiFooter(BTN_UD " scroll   " BTN_LR " page   " BTN_L "/" BTN_R " start/end   " BTN_B " back   (also sdmc:/nfcprobe.log)");
 }
@@ -296,18 +321,26 @@ void menuDraw(Menu *m)
 {
 	uiHeader(m->title, *netAddr ? netAddr : "no network");
 	for (int i = 0; i < m->n; i++) {
-		float y = 30 + i * 22;
+		float y = 30 + i * 20;
 		if (i == m->l.sel) {
-			uiRect(8, y - 3, 180, 21, uiCol[COL_SEL]);
-			uiRect(8, y - 3, 3, 21, uiCol[COL_ACCENT]);
+			uiRect(8, y - 3, 180, 19, uiCol[COL_SEL]);
+			uiRect(8, y - 3, 3, 19, uiCol[COL_ACCENT]);
 		}
 		uiText(20, y, S_BODY, uiCol[i == m->l.sel ? COL_TEXT : COL_DIM], "%s", m->entries[i].label);
 	}
-	uiRect(200, 27, UI_W - 208, 128, uiCol[COL_PANEL]);
+	uiRect(200, 27, UI_W - 208, 140, uiCol[COL_PANEL]);
 	uiTextWrap(208, 32, UI_W - 224, S_SMALL, uiCol[COL_TEXT], m->entries[m->l.sel].help);
-	if (m->extra) m->extra(168);
+	if (m->extra) m->extra(178);
 	uiFooter(depth > 1 ? BTN_A " select   " BTN_B " back   SELECT log   START exit"
 	                   : BTN_A " select   SELECT log   START exit");
+}
+
+void menuLastCard(float y, const Card *c, const char *type)
+{
+	char uid[32], s[96];
+	uidHex(c, uid, "");
+	snprintf(s, sizeof(s), "Last card: %s, %s", uid, type);
+	uiText(12, y, S_SMALL, uiCol[COL_DIM], "%s", uiFit(s, UI_W - 24, S_SMALL));
 }
 
 // --- generic scan ("hf search"): identify, then hand the card to its family ---
@@ -370,10 +403,9 @@ static void tagDraw(void)
 	uiText(12, 68, S_BODY, uiCol[COL_TEXT], "%s", cardTypeName(&tag));
 	uiRect(8, 92, UI_W - 16, 3 * SMALL_H + 8, uiCol[COL_PANEL]);
 	uiText(14, 96, S_SMALL, uiCol[COL_WARN], "Not supported yet.");
-	uiText(14, 96 + SMALL_H, S_SMALL, uiCol[COL_TEXT], "Supported:");
 	char fams[128] = "";
 	for (int i = 0; i < NFAMILIES; i++) sprintf(fams + strlen(fams), "%s%s", i ? ", " : "", families[i]->name);
-	uiText(76, 96 + SMALL_H, S_SMALL, uiCol[COL_TEXT], "%s", fams);
+	uiText(14, 96 + SMALL_H, S_SMALL, uiCol[COL_TEXT], "Supported: %s", fams);
 	uiFooter(BTN_A " scan again   " BTN_B " back");
 }
 
@@ -404,11 +436,7 @@ static Menu rootMenu = { "nfcprobe", rootEntries, 0, rootExtra };
 
 static void rootExtra(float y)
 {
-	if (tag.uidLen) {
-		char uid[32];
-		uidHex(&tag, uid, "");
-		uiText(12, y, S_SMALL, uiCol[COL_DIM], "Last card: %s, %s", uid, cardTypeName(&tag));
-	}
+	if (tag.uidLen) menuLastCard(y, &tag, cardTypeName(&tag));
 	uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_DIM], "Cards go on the bottom screen. HOME is off while NFC is ours.");
 }
 
@@ -469,10 +497,13 @@ void appRun(void)
 		stack[depth - 1]->draw();
 		if (jobBusy) busyDraw();
 		else if (dlg.kind) dialogDraw();
-		if (frame < toastUntil) {
-			float w = 16 + strlen(toastMsg) * 5.2f;
+		if (frame < toastUntil && !jobBusy && !dlg.kind) {
+			char t[128];
+			snprintf(t, sizeof(t), "%s", toastMsg);
+			uiFit(t, UI_W - 32, S_SMALL);
+			float w = 16 + uiTextWidth(S_SMALL, t);
 			uiRect((UI_W - w) / 2, UI_H - 44, w, 20, uiCol[COL_BAR]);
-			uiTextCenter(UI_W / 2, UI_H - 41, S_SMALL, uiCol[COL_TEXT], "%s", toastMsg);
+			uiTextCenter(UI_W / 2, UI_H - 41, S_SMALL, uiCol[COL_TEXT], "%s", t);
 		}
 		uiFrameEnd();
 	}

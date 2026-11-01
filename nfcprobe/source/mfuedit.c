@@ -311,13 +311,12 @@ static void drawInfo(float y)
 		uiText(x, y, S_SMALL, acc, "UID %02X%02X%02X%02X%02X%02X%02X%s", a[0], a[1], a[2], b[0], b[1], b[2], b[3],
 			a[0] == 0x04 ? " (NXP)" : "");
 		y += SMALL_H;
-		uiText(x, y, S_SMALL, bcc0 == a[3] ? txt : uiCol[COL_WARN], "BCC0 %02X %s", a[3], bcc0 == a[3] ? "ok" : "BAD");
-		if (bcc0 != a[3]) uiText(x + 70, y, S_SMALL, uiCol[COL_WARN], "(should be %02X)", bcc0);
+		if (bcc0 == a[3]) uiText(x, y, S_SMALL, txt, "BCC0 %02X ok", a[3]);
+		else uiText(x, y, S_SMALL, uiCol[COL_WARN], "BCC0 %02X BAD (should be %02X)", a[3], bcc0);
 		if (d.valid[2]) {
 			const u8 *c = d.data[2];
-			uiText(x + 170, y, S_SMALL, bcc1 == c[0] ? txt : uiCol[COL_WARN], "BCC1 %02X %s", c[0],
-				bcc1 == c[0] ? "ok" : "BAD");
-			if (bcc1 != c[0]) uiText(x + 240, y, S_SMALL, uiCol[COL_WARN], "(should be %02X)", bcc1);
+			if (bcc1 == c[0]) uiText(x + 170, y, S_SMALL, txt, "BCC1 %02X ok", c[0]);
+			else uiText(x + 170, y, S_SMALL, uiCol[COL_WARN], "BCC1 %02X BAD (should be %02X)", c[0], bcc1);
 			y += SMALL_H;
 			if (page == 2) {
 				int n = 0;

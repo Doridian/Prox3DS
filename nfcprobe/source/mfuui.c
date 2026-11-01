@@ -137,9 +137,12 @@ static void cardDraw(void)
 	uiText(12, y + 12, 0.8f, uiCol[COL_ACCENT], "%s", s);
 	y += 40;
 	uiText(12, y, S_BODY, uiCol[COL_TEXT], "%s", t->name);
-	uiTextRight(UI_W - 12, y + 2, S_SMALL, uiCol[COL_DIM], "%d pages, user memory %d-%d (%d bytes)", t->pages, 4,
-		t->userEnd - 1, 4 * (t->userEnd - 4));
-	y += LINE_H + 4;
+	if (t->userEnd > 4)
+		uiText(12, y + LINE_H, S_SMALL, uiCol[COL_DIM], "%d pages, user memory %d-%d (%d bytes)", t->pages, 4,
+			t->userEnd - 1, 4 * (t->userEnd - 4));
+	else
+		uiText(12, y + LINE_H, S_SMALL, uiCol[COL_DIM], "Unknown layout: up to %d pages", t->pages);
+	y += LINE_H + SMALL_H + 4;
 	u32 txt = uiCol[COL_TEXT], dim = uiCol[COL_DIM];
 	uiRect(8, y, UI_W - 16, 8 * SMALL_H + 6, uiCol[COL_PANEL]);
 	y += 3;
@@ -167,8 +170,8 @@ static void cardDraw(void)
 			const u8 *c = in->cnt[i];
 			if (in->cntOk & 1 << i) x += uiText(14 + x, y, S_SMALL, txt, "   %d: %lu", i, (u32)(c[0] | c[1] << 8 | c[2] << 16));
 			else x += uiText(14 + x, y, S_SMALL, dim, "   %d: off", i);
-			if (in->tearOk & 1 << i)
-				x += uiText(14 + x, y, S_SMALL, uiCol[c[3] == 0xBD ? COL_DIM : COL_WARN], c[3] == 0xBD ? " (intact)" : " (torn %02X)", c[3]);
+			if ((in->tearOk & 1 << i) && c[3] != 0xBD) // BD = intact
+				x += uiText(14 + x, y, S_SMALL, uiCol[COL_WARN], " torn (%02X)", c[3]);
 		}
 	} else {
 		uiText(14, y, S_SMALL, dim, "No READ_CNT counters on this type");
@@ -203,7 +206,7 @@ static void cardDraw(void)
 		uiText(14, y, S_SMALL, txt, "AUTH0 %02X: %s   config %s   AUTHLIM %d%s", c0[3], prot,
 			c1[0] & 0x40 ? "locked" : "open", lim, lim ? "" : " (off)");
 	} else if (t->cfg) {
-		uiText(14, y, S_SMALL, uiCol[COL_WARN], "Config pages %d-%d are read-protected (AUTH0 <= %d, PROT set)", t->cfg,
+		uiText(14, y, S_SMALL, uiCol[COL_WARN], "Config pages %d-%d read-protected (AUTH0 <= %d, PROT)", t->cfg,
 			t->cfg + 3, t->cfg);
 	} else if (t == &mfuTypeULC && sm.valid[0x2A]) {
 		const u8 *a0 = sm.data[0x2A], *a1 = sm.data[0x2B];
@@ -420,7 +423,9 @@ static void filesDraw(void)
 		const FileEnt *f = &files[fl.top + i];
 		float y = 24 + i * LINE_H;
 		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
-		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", f->name);
+		char name[64];
+		snprintf(name, sizeof(name), "%s", f->name);
+		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 190, S_BODY)); // up to the size column
 		uiTextRight(268, y + 1, S_SMALL, uiCol[f->pages ? COL_ACCENT : COL_ERR], f->pages ? "%d pages" : "not MFU", f->pages);
 		if (f->mtime) {
 			time_t t = f->mtime;
@@ -454,12 +459,7 @@ static const MenuEntry mfuEntries[] = {
 static void mfuExtra(float y)
 {
 	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Dumps: " MFU_DIR " (pm3 hf mfu .bin)");
-	if (sc.uidLen) {
-		char uid[32];
-		uidHex(&sc, uid, "");
-		uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_DIM], "Last card: %s, %s", uid,
-			sm.info.type ? sm.info.type->name : cardTypeName(&sc));
-	}
+	if (sc.uidLen) menuLastCard(y + SMALL_H, &sc, sm.info.type ? sm.info.type->name : cardTypeName(&sc));
 }
 
 static Menu mfuMenu = { "Ultralight / NTAG", mfuEntries, sizeof(mfuEntries) / sizeof(mfuEntries[0]), mfuExtra };

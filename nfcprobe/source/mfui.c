@@ -127,7 +127,7 @@ static void cardDraw(void)
 	uiText(12, y, S_BODY, uiCol[COL_TEXT], "Magic:");
 	uiText(62, y, S_BODY, uiCol[*magic ? COL_OK : COL_DIM], "%s", *magic ? magic : "none found");
 	y += LINE_H;
-	if (!*magic) uiText(62, y, S_SMALL, uiCol[COL_DIM], "(Gen2 / CUID needs a default key for sector 0 or a known ATS)");
+	if (!*magic) uiText(62, y, S_SMALL, uiCol[COL_DIM], "(Gen2 / CUID needs a default sector 0 key or a known ATS)");
 
 	if (sm.flags & MF_MAGIC_GEN4) {
 		const u8 *c = sm.cfg;
@@ -278,7 +278,7 @@ static void gen4Draw(void)
 		"Sets ATQA and SAK. The GTU holds 4K of data whatever it announces.",
 		"pre-write: writes go to a shadow copy and vanish when the card leaves the field.",
 	};
-	uiText(16, y, S_SMALL, uiCol[COL_TEXT], "%s", help[g4sel]);
+	uiTextWrap(16, y, UI_W - 32, S_SMALL, uiCol[COL_TEXT], help[g4sel]);
 	uiFooter(BTN_UD " select   " BTN_LR " change   " BTN_A " write to card   " BTN_B " back");
 }
 
@@ -424,7 +424,9 @@ static void filesDraw(void)
 		const FileEnt *f = &files[fl.top + i];
 		float y = 24 + i * LINE_H;
 		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
-		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", f->name);
+		char name[64];
+		snprintf(name, sizeof(name), "%s", f->name);
+		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 200, S_BODY)); // up to the size column
 		int sectors = 0;
 		while (sectors < 40 && mfFirstBlock(sectors) < f->blocks) sectors++;
 		uiTextRight(268, y + 1, S_SMALL, uiCol[mfFirstBlock(sectors) == f->blocks ? COL_ACCENT : COL_ERR], "%s",
@@ -463,11 +465,7 @@ static const MenuEntry mfcEntries[] = {
 static void mfcExtra(float y)
 {
 	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Dictionary: %d keys (defaults + " MF_KEYS ")", dictKeys);
-	if (sc.uidLen) {
-		char uid[32];
-		uidHex(&sc, uid, "");
-		uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_DIM], "Last card: %s, %s", uid, cardTypeName(&sc));
-	}
+	if (sc.uidLen) menuLastCard(y + SMALL_H, &sc, cardTypeName(&sc));
 }
 
 static Menu mfcMenu = { "MIFARE Classic", mfcEntries, sizeof(mfcEntries) / sizeof(mfcEntries[0]), mfcExtra };

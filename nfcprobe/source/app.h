@@ -50,6 +50,7 @@ typedef struct {
 } Menu;
 void menuInput(Menu *m, u32 kDown, u32 kRepeat);
 void menuDraw(Menu *m);
+void menuLastCard(float y, const Card *c, const char *type); // a status line for the menu's extra()
 
 // A card family: what the generic scan hands a card to.
 typedef struct {

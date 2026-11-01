@@ -37,3 +37,6 @@
 # --- Python ---
 __pycache__/
 *.py[cod]
+# nfcprobe UI simulator
+/nfcprobe/sim/uisim
+/nfcprobe/sim/out/

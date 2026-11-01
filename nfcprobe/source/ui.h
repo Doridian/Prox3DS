@@ -40,7 +40,11 @@ void uiFrameEnd(void);
 void uiRect(float x, float y, float w, float h, u32 color);
 float uiText(float x, float y, float scale, u32 color, const char *fmt, ...); // returns the width
 void uiTextRight(float right, float y, float scale, u32 color, const char *fmt, ...);
-float uiTextWrap(float x, float y, float w, float scale, u32 color, const char *text); // -> y below it
+// Word-wrapped at w (and at '\n'), lines SMALL_H apart at S_SMALL (in proportion otherwise); -> y below it
+float uiTextWrap(float x, float y, float w, float scale, u32 color, const char *text);
+int uiWrapLines(float w, float scale, const char *text); // how many lines uiTextWrap would draw
+float uiTextWidth(float scale, const char *s);           // widest line, without drawing
+char *uiFit(char *s, float w, float scale);              // cut to fit w with "...", in place; returns s
 void uiTextCenter(float cx, float y, float scale, u32 color, const char *fmt, ...);
 // Printable ASCII in fixed MONO_W cells (hex grids); anything else draws as '.'.
 void uiMono(float x, float y, u32 color, const char *s);

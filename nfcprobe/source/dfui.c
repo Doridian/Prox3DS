@@ -95,11 +95,17 @@ static void cardDraw(void)
 	y += LINE_H + 4;
 	uiRect(8, y, UI_W - 16, 5 * SMALL_H + 6, uiCol[COL_PANEL]);
 	y += 3;
-	hexStr(s, di.ats, di.atsLen);
-	uiText(14, y, S_SMALL, txt, "ATS %s", s);
-	if (diResult > 0 && di.verLen >= 28)
-		uiTextRight(UI_W - 14, y, S_SMALL, txt, "batch %02X%02X%02X%02X%02X, week %X / 20%02X", v[21], v[22], v[23],
-			v[24], v[25], v[26], v[27]);
+	float atsW = UI_W - 28;
+	if (diResult > 0 && di.verLen >= 28) {
+		char batch[48];
+		snprintf(batch, sizeof(batch), "batch %02X%02X%02X%02X%02X, week %X / 20%02X", v[21], v[22], v[23], v[24],
+			v[25], v[26], v[27]);
+		uiTextRight(UI_W - 14, y, S_SMALL, txt, "%s", batch);
+		atsW -= uiTextWidth(S_SMALL, batch) + 12;
+	}
+	strcpy(s, "ATS ");
+	hexStr(s + 4, di.ats, di.atsLen);
+	uiText(14, y, S_SMALL, txt, "%s", uiFit(s, atsW, S_SMALL));
 	y += SMALL_H;
 	if (diResult <= 0) {
 		uiText(14, y, S_SMALL, uiCol[COL_WARN], "%s", diWhy);
@@ -182,28 +188,31 @@ static const Screen cardScreen = { NULL, cardInput, cardDraw };
 
 // --- application screen ---
 
-#define FILE_ROWS 6
+#define FILE_ROWS 4 // two lines each, under up to four lines of key settings
 
 static void appDraw(void)
 {
 	const DfApp *a = &di.apps[al.sel];
 	char hdr[48], s[120];
 	u32 txt = uiCol[COL_TEXT], dim = uiCol[COL_DIM];
-	snprintf(hdr, sizeof(hdr), "%d of %d", al.sel + 1, di.napps < DF_MAX_APPS ? di.napps : DF_MAX_APPS);
+	int napps = di.napps < DF_MAX_APPS ? di.napps : DF_MAX_APPS;
+	if ((a->aid & 0xF00000) == 0xF00000)
+		snprintf(hdr, sizeof(hdr), "MAD AID %04lX   %d of %d", a->aid >> 4 & 0xFFFF, al.sel + 1, napps);
+	else
+		snprintf(hdr, sizeof(hdr), "%d of %d", al.sel + 1, napps);
 	snprintf(s, sizeof(s), "DESFire: application %06lX", a->aid);
 	uiHeader(s, hdr);
 	float y = 26;
-	*s = 0;
 	if (a->hasIso) {
 		snprintf(s, sizeof(s), "ISO FID %04X", a->isoFid);
 		if (a->nameLen) {
 			strcat(s, ", DF name ");
 			hexStr(s + strlen(s), a->name, a->nameLen);
 		}
+	} else {
+		snprintf(s, sizeof(s), "No ISO FID / DF name");
 	}
-	if ((a->aid & 0xF00000) == 0xF00000)
-		snprintf(s + strlen(s), sizeof(s) - strlen(s), "%sMAD AID %04lX", *s ? "   " : "", a->aid >> 4 & 0xFFFF);
-	uiText(12, y, S_SMALL, txt, "%s", *s ? s : "No ISO FID / DF name");
+	uiText(12, y, S_SMALL, txt, "%s", uiFit(s, UI_W - 24, S_SMALL));
 	y += SMALL_H;
 	if (a->selSt) {
 		uiText(12, y, S_SMALL, uiCol[COL_WARN], "Select: %s", dfStatusName(a->selSt));
@@ -239,21 +248,24 @@ static void appDraw(void)
 	} else if (!a->nfiles) {
 		uiText(12, y, S_SMALL, dim, "No files");
 	} else {
-		if (a->nfiles > FILE_ROWS) uiTextRight(UI_W - 12, y - SMALL_H - 4, S_SMALL, dim, "files %d-%d of %d", fl.top + 1,
-			fl.top + FILE_ROWS < a->nfiles ? fl.top + FILE_ROWS : a->nfiles, a->nfiles);
+		if (a->nfiles > FILE_ROWS) uiTextRight(UI_W - 12, y + FILE_ROWS * (2 * SMALL_H + 3), S_SMALL, dim,
+			"files %d-%d of %d", fl.top + 1, fl.top + FILE_ROWS < a->nfiles ? fl.top + FILE_ROWS : a->nfiles, a->nfiles);
 		for (int i = 0; i < FILE_ROWS && fl.top + i < a->nfiles; i++, y += 2 * SMALL_H + 3) {
 			const DfFile *f = &a->files[fl.top + i];
-			char desc[96], keys[80];
+			char desc[96], keys[80], data[32] = "";
 			dfFileDesc(f, desc, sizeof(desc));
 			dfFileKeys(f, keys, sizeof(keys));
 			if (fl.top + i == fl.sel) uiRect(8, y - 1, UI_W - 16, 2 * SMALL_H + 1, uiCol[COL_SEL]);
 			uiText(14, y, S_SMALL, uiCol[COL_ACCENT], "%02X", f->fid);
-			uiText(34, y, S_SMALL, f->st ? uiCol[COL_WARN] : txt, "%s", desc);
-			uiText(34, y + SMALL_H, S_SMALL, dim, "%s", keys);
-			if (f->hasData && f->dataSt)
-				uiTextRight(UI_W - 14, y, S_SMALL, uiCol[COL_WARN], "%s", dfStatusName(f->dataSt));
-			else if (f->hasData)
-				uiTextRight(UI_W - 14, y, S_SMALL, uiCol[COL_OK], "%d bytes read", f->dataLen);
+			// what the read got, on the right of whichever line has room for it
+			if (f->hasData && f->dataSt) snprintf(data, sizeof(data), "%s", dfStatusName(f->dataSt));
+			else if (f->hasData) snprintf(data, sizeof(data), "%d bytes read", f->dataLen);
+			float dw = *data ? uiTextWidth(S_SMALL, data) + 10 : 0, room = UI_W - 14 - 34;
+			int dl = !*data || 34 + uiTextWidth(S_SMALL, desc) + dw <= UI_W - 14 ? 0 :
+				34 + uiTextWidth(S_SMALL, keys) + dw <= UI_W - 14 ? 1 : 0;
+			uiText(34, y, S_SMALL, f->st ? uiCol[COL_WARN] : txt, "%s", uiFit(desc, room - (dl ? 0 : dw), S_SMALL));
+			uiText(34, y + SMALL_H, S_SMALL, dim, "%s", uiFit(keys, room - (dl ? dw : 0), S_SMALL));
+			if (*data) uiTextRight(UI_W - 14, y + dl * SMALL_H, S_SMALL, uiCol[f->dataSt ? COL_WARN : COL_OK], "%s", data);
 		}
 	}
 	const DfFile *f = a->fileSt || !a->nfiles ? NULL : &a->files[fl.sel];
@@ -312,12 +324,7 @@ static const MenuEntry dfEntries[] = {
 static void dfExtra(float y)
 {
 	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Info files: " DF_DIR " (" BTN_Y " on the card screen)");
-	if (sc.uidLen) {
-		char uid[32];
-		uidHex(&sc, uid, "");
-		uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_DIM], "Last card: %s, %s", uid,
-			diResult > 0 ? dfVersionName(&di) : cardTypeName(&sc));
-	}
+	if (sc.uidLen) menuLastCard(y + SMALL_H, &sc, diResult > 0 ? dfVersionName(&di) : cardTypeName(&sc));
 }
 
 static Menu dfMenu = { "DESFire", dfEntries, sizeof(dfEntries) / sizeof(dfEntries[0]), dfExtra };
