@@ -19,6 +19,7 @@
 #include "mfc.h"
 #include "isodep.h"
 #include "mfu.h"
+#include "ndef.h"
 #include "nfchw.h"
 #include "probe.h"
 #include "ui.h"
@@ -90,6 +91,9 @@ enum {
 	                       // saved info file's text. MAY WRITE THE CARD
 	OP_MF_CHK      = 0x26, // block u8, keyB u8, keys[6]... -> u16 index of the key that worked (FFFF none);
 	                       // on-chip check (mfChkKeys). On failure payload = reason.
+	OP_MFU_NDEF    = 0x28, // kind u8: 0 read, 1 write raw message, 2 write URI, 3 write text (en); then the
+	                       // message / string -> tlv state i8 (1 message, 0 none, -1 broken), message bytes
+	                       // read back. Writes through mfuNdefWrite (ndefui.c's path). MAY WRITE THE CARD
 	OP_MF_VALUE    = 0x27, // op u8 (C0 dec, C1 inc, C2 restore), block u8, delta s32 LE, dest u8, keyB u8,
 	                       // key[6] -> dest block read back[16]; on failure payload = reason. WRITES THE CARD
 };
@@ -388,6 +392,43 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		*outLen = strlen(mfuWhy());
 		memcpy(out, mfuWhy(), *outLen);
 		return r < 0 ? -1 : 1;
+	}
+	case OP_MFU_NDEF: {
+		static MfuDump d;
+		static u8 msg[1024], tlv[1100], mem[1024];
+		if (inLen < 1 || in[0] > 3 || inLen - 1 >= 900) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		MfuInfo info;
+		u8 cc[16];
+		int r = iso14aSelect() < 0 ? 0 : mfuIdentify(&info);
+		if (r > 0 && in[0]) {
+			char str[900];
+			memcpy(str, in + 1, inLen - 1);
+			str[inLen - 1] = 0;
+			u32 n = in[0] == 1 ? (memcpy(msg, in + 1, inLen - 1), inLen - 1)
+			      : in[0] == 2 ? ndefUri(str, msg, sizeof(msg)) : ndefText("en", str, msg, sizeof(msg));
+			u32 t = n || in[0] == 1 ? ndefTlv(msg, n, tlv, sizeof(tlv)) : 0; // a record that didn't build: nothing
+			if (!t) {
+				static const char e[] = "record too long";
+				memcpy(out, e, *outLen = sizeof(e) - 1);
+				return 1;
+			}
+			if ((r = mfuRead(3, cc)) > 0) r = mfuNdefWrite(info.type, cc, tlv, t);
+		}
+		if (r > 0) r = mfuDumpCard(&d, NULL);
+		iso14aParity(true);
+		if (r <= 0) {
+			*outLen = strlen(mfuWhy());
+			memcpy(out, mfuWhy(), *outLen);
+			return r < 0 ? -1 : 1;
+		}
+		u32 n = 0, off = 0, len = 0;
+		for (int p = 4; p < d.info.type->userEnd && d.valid[p] && n + 4 <= sizeof(mem); p++, n += 4) memcpy(mem + n, d.data[p], 4);
+		int st = ndefFindTlv(mem, n, &off, &len);
+		out[0] = st;
+		if (st > 0) memcpy(out + 1, mem + off, len);
+		*outLen = 1 + (st > 0 ? len : 0);
+		return 0;
 	}
 	case OP_MFU_CLONE: {
 		static MfuDump d;

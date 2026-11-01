@@ -22,6 +22,9 @@ void simMfuRead(const MfuDump *d, int result, const char *path);
 void simMfuRestore(int result, int pages, const char *why);
 void simMfuClone(const MfuDump *d, int result, const char *why);
 void simMfuMenu(void);
+void simNdef(const MfuDump *d, const Card *c);
+void simNdefActions(void);
+void simNdefUrl(const char *url);
 void simMfuPick(const Card *c, const MfuDump *d);
 void simMfuReadKey(const MfuDump *d, int result, const char *path, const MfuKey *cand);
 

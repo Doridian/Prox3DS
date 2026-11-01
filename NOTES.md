@@ -1045,3 +1045,24 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - 5A5A0002 on the 3DS (UI read + card info screen): Saflok Guest Key, card ID 12, lock 1234, property 100,
   opening key 2, deadbolt override, made 2020-01-01 10:00, expires 2020-01-05 01:00, checksum ok:
   identical to `hf saflok decode`. GPB 69: no MAD. Fudan FM11RF08S 0390.
+
+## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
+- nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
+  parser (SR / long, IL, chunk flag), descriptions for URI (prefix codes), Text (lang, UTF-8 / UTF-16),
+  Smart Poster (its URI), MIME, absolute URI, external (Android AAR); builders for URI / Text records (SR
+  under 256 bytes, else the 4-byte length) and the 03 .. FE TLV. Records built here decode the same in
+  pm3 `nfc decode`.
+- mfu.c mfuNdefWrite: refused unsent without CC E1 / with a read-only CC / when it doesn't fit the CC
+  size; writes an empty message (03 00 FE) into page 4 first, then pages 5.., page 4 last, so a write cut
+  short leaves an empty tag. Every page read back (mfuWritePage).
+- ndefui.c: card screen R (and the touch button) -> NDEF screen (records, CC); X: write a URL / text (the
+  system keyboard, swkbd) or erase. Writes only onto the card (UID) and type the screen was read from.
+- Net op 0x28 OP_MFU_NDEF, `nfcnet.py HOST ndef [url URL | text TEXT | raw HEX | empty]`.
+- Verified on the NTAG215 04C8E3BA064F80: URI, text, a 2-record raw message, a 420-char URL (long record,
+  FF-length TLV) written and read back; 625 bytes refused unsent; 3/3 erases through the UI. Left empty
+  (03 00 FE), as found. The keyboard path itself needs someone at the 3DS (swkbd is an applet).
+- Bugs found on the way: a builder failure (record too long) was wrapped as an EMPTY message and erased
+  the tag -> now refused. The NDEF screen drew nd while the job's mfuDumpCard cleared it (NULL type ->
+  data abort, PC in ndefDraw): jobs now fill a copy the UI thread takes over; the Ultralight card screen
+  had the same race (scan again) and got the same fix. One lost GET_VERSION answer made the NTAG215 an
+  NTAG203: mfuIdentify retries GET_VERSION once before the fallbacks.

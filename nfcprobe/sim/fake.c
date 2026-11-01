@@ -231,3 +231,15 @@ void C2D_DrawText(const C2D_Text *t, u32 flags, float x, float y, float depth, f
 	for (const char *p = t->str; *p; p++) fputc(*p == '\n' ? '\x1f' : *p, shot);
 	fputc('\n', shot);
 }
+
+const char *simKbdText;
+void swkbdInit(SwkbdState *s, SwkbdType type, int numButtons, int maxTextLength) {}
+void swkbdSetHintText(SwkbdState *s, const char *text) {}
+void swkbdSetInitialText(SwkbdState *s, const char *text) {}
+void swkbdSetValidation(SwkbdState *s, int valid, u32 filter, int maxDigits) {}
+SwkbdButton swkbdInputText(SwkbdState *s, char *buf, size_t bufsize)
+{
+	if (!simKbdText) return SWKBD_BUTTON_LEFT;
+	snprintf(buf, bufsize, "%s", simKbdText);
+	return SWKBD_BUTTON_CONFIRM;
+}

@@ -14,6 +14,7 @@
 
 #include "../source/entry.h"
 #include "../source/probe.h"
+#include "../source/ndef.h"
 #include "scenes.h"
 #include "sim.h"
 
@@ -328,6 +329,36 @@ static void mfuCloneOk(void) { simMfuClone(&unk, 1, ""); }
 static void mfuCloneFail(void) { simMfuClone(&n215, 0, "GTU config write refused: wrong password (not 00000000?)"); }
 static void pickEv1Locked(void) { MfuDump d = ev1; d.valid[d.info.type->cfg] = d.valid[d.info.type->cfg + 1] = false; simMfuPick(&card7, &d); }
 static void pickN215(void) { simMfuPick(&card7, &n215); }
+
+// An NTAG215 with three records: URI, text, Android app (MB on the first, ME on the last)
+static void ndefFixture(MfuDump *d, bool empty)
+{
+	*d = n215;
+	u8 msg[300], tlv[320];
+	u32 n = 0;
+	if (!empty) {
+		n += ndefUri("https://github.com/Doridian/3dspm", msg + n, sizeof(msg) - n);
+		u32 a = n;
+		n += ndefText("en", "Hello from the 3DS", msg + n, sizeof(msg) - n);
+		u32 b = n;
+		static const u8 aar[] = { 0x54, 0x0F, 0x0E, 'a', 'n', 'd', 'r', 'o', 'i', 'd', '.', 'c', 'o', 'm', ':', 'p', 'k', 'g',
+			'o', 'r', 'g', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'a', 'p' };
+		memcpy(msg + n, aar, sizeof(aar));
+		n += sizeof(aar);
+		msg[0] &= ~0x40, msg[a] &= ~0xC0, msg[b] &= ~0x80; // only the first MB, only the last ME
+	}
+	u32 t = ndefTlv(msg, n, tlv, sizeof(tlv));
+	static const u8 cc[4] = { 0xE1, 0x10, 0x3E, 0x00 };
+	memcpy(d->data[3], cc, 4);
+	for (u32 i = 0; i < (t + 3) / 4; i++) {
+		memset(d->data[4 + i], 0, 4);
+		memcpy(d->data[4 + i], tlv + 4 * i, t - 4 * i < 4 ? t - 4 * i : 4);
+		d->valid[4 + i] = true;
+	}
+}
+static void ndefRecords(void) { MfuDump d; ndefFixture(&d, false); simNdef(&d, &card7); }
+static void ndefEmpty(void) { MfuDump d; ndefFixture(&d, true); simNdef(&d, &card7); }
+static void ndefEmptyUrl(void) { simNdefUrl("https://example.com/a/rather/long/path?with=query"); }
 static void pickAmiibo(void)
 {
 	MfuDump d = n215;
@@ -460,6 +491,8 @@ static const SimStep script[] = {
 	CALL(mfuCfgLocked), SHOT("mfu_card_cfg_locked"), CALL(cardUlcKey), SHOT("mfu_card_ulc_key"), Y, SHOT("mfu_card_ulc_menu"), D, A, A, SHOT("mfu_ulc_newkey_confirm"), B,
 	CALL(reset), CALL(pickEv1Locked), SHOT("mfu_pick_ev1_unknown"), D, D, A, SHOT("mfu_pick_confirm_unknown"), B,
 	U, U, A, SHOT("mfu_pick_entry"), B,
+	CALL(reset), CALL(ndefRecords), SHOT("ndef_records"), D, SHOT("ndef_records_sel"), CALL(simNdefActions), SHOT("ndef_actions"), B,
+	CALL(ndefEmptyUrl), SHOT("ndef_write_confirm"), B, CALL(reset), CALL(ndefEmpty), SHOT("ndef_empty"),
 	CALL(reset), CALL(pickN215), SHOT("mfu_pick_n215_lim5"), D, A, SHOT("mfu_pick_confirm_lim5"), B,
 	CALL(reset), CALL(pickAmiibo), SHOT("mfu_pick_amiibo"), D, D, D, D, D, D, D, D, D, D, SHOT("mfu_pick_scrolled"),
 	CALL(reset), CALL(pickUlc), SHOT("mfu_pick_ulc"), A, SHOT("mfu_pick_ulc_entry"), B,

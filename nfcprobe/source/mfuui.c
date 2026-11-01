@@ -21,36 +21,41 @@
 static Card sc;
 static MfuDump sm; // identify + pages 0-3 + the config pages, for the card screen
 static bool smGtu;  // a Gen4 GTU (in Ultralight mode, or it would not be here)
+// The probe's results, filled by the job and taken over by the UI thread (takeProbe): the card screen
+// may be drawing sm while a scan runs.
+static Card scJob;
+static MfuDump smJob;
+static bool smGtuJob;
 static int scanResult;
 
 static const Screen cardScreen;
 
 static int mfuProbe(void)
 {
-	sc = card;
+	scJob = card;
 	u8 buf[16];
-	int r = mfuIdentify(&sm.info);
-	memset(sm.valid, 0, sizeof(sm.valid));
+	int r = mfuIdentify(&smJob.info);
+	memset(smJob.valid, 0, sizeof(smJob.valid));
 	if (r <= 0) return r;
-	const MfuType *t = sm.info.type;
-	sm.pages = t->pages;
+	const MfuType *t = smJob.info.type;
+	smJob.pages = t->pages;
 	// pages 0-15 (pm3's fingerprints look at 0-12), the config pages, 0x21-0x23 (Philips password)
 	int want[6] = { 0, 4, 8, 12, t->cfg ? t->cfg : t == &mfuTypeULC ? 0x28 : -1, t->pages > 0x24 ? 0x20 : -1 };
 	for (int i = 0; i < 6; i++) {
 		if (want[i] < 0) continue;
 		if ((r = mfuRead(want[i], buf)) < 0) return -1;
 		for (int k = 0; r && k < 4 && want[i] + k < t->pages; k++) {
-			memcpy(sm.data[want[i] + k], buf + 4 * k, 4);
-			sm.valid[want[i] + k] = true;
+			memcpy(smJob.data[want[i] + k], buf + 4 * k, 4);
+			smJob.valid[want[i] + k] = true;
 		}
 	}
 	if (t == &mfuTypeULC) { // no lockout: the dictionary is safe
-		if ((r = mfuUlcFindKey(sm.key)) < 0) return -1;
-		sm.pwdOk = r;
+		if ((r = mfuUlcFindKey(smJob.key)) < 0) return -1;
+		smJob.pwdOk = r;
 	}
 	u8 cfg[32];
 	if ((r = mfGen4Config(mfGen4Pwd, cfg, sizeof(cfg))) < 0) return -1;
-	smGtu = r > 0;
+	smGtuJob = r > 0;
 	return 1;
 }
 
@@ -61,8 +66,16 @@ static void runScan(void)
 	iso14aParity(true);
 }
 
+static void takeProbe(void)
+{
+	sc = scJob;
+	sm = smJob;
+	smGtu = smGtuJob;
+}
+
 static void mfuShow(void)
 {
+	takeProbe();
 	appScreen(&cardScreen);
 }
 
@@ -289,7 +302,7 @@ static void pickOpen(void)
 
 static void donePickScan(void)
 {
-	if (scanResult > 0) pickOpen();
+	if (scanResult > 0) takeProbe(), pickOpen();
 	else doneScan();
 }
 
@@ -484,7 +497,7 @@ static void cardDraw(void)
 	} else {
 		uiText(14, y, S_SMALL, dim, "No config pages on this type");
 	}
-	uiFooter(BTN_A " scan again   " BTN_X " read card   " BTN_Y " with key   " BTN_B " back");
+	uiFooter(BTN_A " scan again   " BTN_X " read card   " BTN_Y " with key   " BTN_R " NDEF   " BTN_B " back");
 }
 
 static void cardInput(u32 kDown, u32 kRepeat)
@@ -492,6 +505,7 @@ static void cardInput(u32 kDown, u32 kRepeat)
 	if (kDown & KEY_A) startScan();
 	if (kDown & KEY_X) startRead();
 	if (kDown & KEY_Y) sm.info.type == &mfuTypeULC ? ulcMenu() : pickOpen();
+	if (kDown & KEY_R) ndefOpenMfu();
 	if (kDown & KEY_B) appBack();
 }
 

@@ -3,9 +3,9 @@
 
 void simMfuCard(const Card *c, const MfuDump *d, bool gtu)
 {
-	sc = *c;
-	sm = *d;
-	smGtu = gtu;
+	scJob = *c;
+	smJob = *d;
+	smGtuJob = gtu;
 	mfuShow();
 }
 

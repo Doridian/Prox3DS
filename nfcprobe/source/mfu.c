@@ -208,6 +208,7 @@ int mfuIdentify(MfuInfo *in)
 	if (!iso14aParity(true)) FAIL(-1, "parity on");
 	u8 c[2] = { 0x60 }, buf[16];
 	int r = expect(c, 1, in->version, 8, "version");
+	if (r == 0) r = expect(c, 1, in->version, 8, "version"); // one lost answer made an NTAG215 an NTAG203
 	if (r < 0) return -1;
 	static const u8 zero[8];
 	if (r && !memcmp(in->version, zero, 8)) in->zeroVersion = true, r = 0;
@@ -265,6 +266,30 @@ int mfuWritePage(const MfuType *t, u8 page, const u8 data[4])
 	if ((r = mfuRead(page, back)) <= 0) return r;
 	if (memcmp(back, data, 4)) FAIL(0, "write %d: verify mismatch", page);
 	return 1;
+}
+
+int mfuNdefWrite(const MfuType *t, const u8 cc[4], const u8 *data, u32 n)
+{
+	if (cc[0] != 0xE1) FAIL(0, "no NDEF capability container (CC %02X%02X%02X%02X)", cc[0], cc[1], cc[2], cc[3]);
+	if (cc[3] >> 4) FAIL(0, "the CC says read-only (%02X)", cc[3]);
+	u32 room = cc[2] * 8, user = (t->userEnd - 4) * 4;
+	if (room > user) room = user;
+	if (n > room) FAIL(0, "%lu bytes don't fit the tag's %lu", (unsigned long)n, (unsigned long)room);
+	u32 pages = (n + 3) / 4;
+	u8 p[4];
+	if (pages > 1) { // empty message first: a write cut short then leaves an empty tag, not a mix
+		static const u8 empty[4] = { 0x03, 0x00, 0xFE, 0x00 };
+		int r = mfuWritePage(t, 4, empty);
+		if (r <= 0) return r;
+		for (u32 i = 1; i < pages; i++) {
+			memset(p, 0, 4);
+			memcpy(p, data + 4 * i, n - 4 * i < 4 ? n - 4 * i : 4);
+			if ((r = mfuWritePage(t, 4 + i, p)) <= 0) return r;
+		}
+	}
+	memset(p, 0, 4);
+	memcpy(p, data, n < 4 ? n : 4);
+	return mfuWritePage(t, 4, p);
 }
 
 static int auth(MfuDump *d, u8 pack[2])

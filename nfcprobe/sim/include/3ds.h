@@ -69,3 +69,15 @@ Result fontEnsureMapped(void);
 int fontGlyphIndexFromCodePoint(CFNT_s *font, u32 codePoint);
 charWidthInfo_s *fontGetCharWidthInfo(CFNT_s *font, int glyphIndex);
 ssize_t decode_utf8(u32 *out, const u8 *in);
+
+// Software keyboard (fake.c types simKbdText back)
+typedef struct { int dummy; } SwkbdState;
+typedef enum { SWKBD_TYPE_NORMAL } SwkbdType;
+typedef enum { SWKBD_BUTTON_LEFT, SWKBD_BUTTON_MIDDLE, SWKBD_BUTTON_RIGHT, SWKBD_BUTTON_CONFIRM = SWKBD_BUTTON_RIGHT, SWKBD_BUTTON_NONE } SwkbdButton;
+enum { SWKBD_NOTEMPTY_NOTBLANK = 3 };
+void swkbdInit(SwkbdState *s, SwkbdType type, int numButtons, int maxTextLength);
+void swkbdSetHintText(SwkbdState *s, const char *text);
+void swkbdSetInitialText(SwkbdState *s, const char *text);
+void swkbdSetValidation(SwkbdState *s, int valid, u32 filter, int maxDigits);
+SwkbdButton swkbdInputText(SwkbdState *s, char *buf, size_t bufsize);
+extern const char *simKbdText; // NULL = cancelled

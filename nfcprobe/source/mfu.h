@@ -67,6 +67,11 @@ int mfuUlcSetKey(const u8 cur[16], const u8 key[16]);
 // Writes one user memory page (4 .. userEnd-1; anything else is refused unsent: lock bits and OTP
 // are one-way, config pages can lock the card) and reads it back. 1 = verified. WRITES THE CARD.
 int mfuWritePage(const MfuType *t, u8 page, const u8 data[4]);
+// Writes Type 2 NDEF bytes (ndefTlv: 03 len message FE) from page 4 on: an empty message into page 4
+// first, then the rest, page 4 last, so a write cut short leaves an empty tag. Refused unsent without
+// an NDEF CC (page 3: E1, write access 0) or when the bytes don't fit the CC's size. 1 = every page
+// verified, 0 = refused / NAK (mfuWhy: locked, password), -1 = monitor error. WRITES THE CARD.
+int mfuNdefWrite(const MfuType *t, const u8 cc[4], const u8 *data, u32 n);
 // Identify + every page that reads, authenticated first with key if given: the password (4 bytes) on
 // EV1 / NTAG21x, the 3DES key (16 bytes) on an Ultralight C, which without a key gets the dictionary
 // (mfuUlcFindKey). 1 = done (pages read or not are in valid[]), 0 = no Ultralight / NTAG answer,
