@@ -268,6 +268,66 @@ int mfuWritePage(const MfuType *t, u8 page, const u8 data[4])
 	return 1;
 }
 
+static int writeRaw1(u8 page, const u8 data[4], bool noVerify);
+
+// A raw page write (no range check) + read-back unless noVerify, three tries (an ACK gets lost now and
+// then; rewriting the same data is harmless). The callers check the page.
+static int writeRaw(u8 page, const u8 data[4], bool noVerify)
+{
+	int r = 0;
+	for (int t = 0; t < 3 && !r; t++) r = writeRaw1(page, data, noVerify);
+	return r;
+}
+
+static int writeRaw1(u8 page, const u8 data[4], bool noVerify)
+{
+	if (!iso14aParity(true)) FAIL(-1, "parity on");
+	u8 c[6] = { 0xA2, page }, back[16];
+	memcpy(c + 2, data, 4);
+	int r = cmd(c, 6, back, sizeof(back), 10);
+	if (r < 0) FAIL(-1, "write %d: monitor", page);
+	if (r != ACK4(0xA)) {
+		snprintf(why, sizeof(why), "write %d: %s", page, r >= ACK4(0) ? "NAK" : "no ACK");
+		return reselect() < 0 ? -1 : 0;
+	}
+	if (noVerify) return 1;
+	if ((r = mfuRead(page, back)) <= 0) return r;
+	if (memcmp(back, data, 4)) FAIL(0, "write %d: verify mismatch", page);
+	return 1;
+}
+
+int mfuAmiiboWrite(const u8 *tag, bool lock)
+{
+	MfuInfo in;
+	u8 p[16];
+	int r = mfuIdentify(&in);
+	if (r <= 0) return r;
+	if (in.type != &tN215 || !in.hasSig) FAIL(0, "not an NTAG215 (with a signature): %s", in.type ? in.type->name : "?");
+	if ((r = mfuRead(0, p)) <= 0) return r;
+	if (memcmp(p, tag, 9)) FAIL(0, "the image is for UID %02X%02X%02X%02X%02X%02X%02X, not this tag", tag[0], tag[1],
+		tag[2], tag[4], tag[5], tag[6], tag[7]);
+	if (!lock) {
+		if (p[10] || p[11]) FAIL(0, "static lock bytes already set (%02X%02X)", p[10], p[11]);
+		if ((r = mfuRead(0x82, p)) <= 0) return r;
+		if (p[0] || p[1] || p[2]) FAIL(0, "dynamic lock bytes already set");
+		if (p[7] < 0x82) FAIL(0, "password-protected from page %d", p[7]);
+		// CC (OTP: ORs into E1 10 3E 00), the data, PWD, PACK
+		if ((r = writeRaw(3, tag + 12, false)) <= 0) return r;
+		for (int pg = 4; pg < 0x82; pg++)
+			if ((r = writeRaw(pg, tag + 4 * pg, false)) <= 0) return r;
+		if ((r = writeRaw(0x85, tag + 4 * 0x85, true)) <= 0) return r; // PWD / PACK read back as zeros
+		return writeRaw(0x86, tag + 4 * 0x86, true);
+	}
+	// the one-way part (Tagmo's order): dynamic lock, CFG0 (AUTH0), CFG1 (ACCESS: config locked), static lock
+	if ((r = writeRaw(0x82, tag + 4 * 0x82, false)) <= 0) return r;
+	if ((r = writeRaw(0x83, tag + 4 * 0x83, false)) <= 0) return r;
+	if ((r = writeRaw(0x84, tag + 4 * 0x84, false)) <= 0) return r;
+	if ((r = writeRaw(2, tag + 8, true)) <= 0) return r; // bytes 0-1 (BCC1, internal) are read-only
+	if ((r = mfuRead(0, p)) <= 0) return r;
+	if (p[10] != tag[10] || p[11] != tag[11]) FAIL(0, "static lock bytes read back %02X%02X", p[10], p[11]);
+	return 1;
+}
+
 int mfuNdefWrite(const MfuType *t, const u8 cc[4], const u8 *data, u32 n)
 {
 	if (cc[0] != 0xE1) FAIL(0, "no NDEF capability container (CC %02X%02X%02X%02X)", cc[0], cc[1], cc[2], cc[3]);

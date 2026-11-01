@@ -72,6 +72,12 @@ int mfuWritePage(const MfuType *t, u8 page, const u8 data[4]);
 // an NDEF CC (page 3: E1, write access 0) or when the bytes don't fit the CC's size. 1 = every page
 // verified, 0 = refused / NAK (mfuWhy: locked, password), -1 = monitor error. WRITES THE CARD.
 int mfuNdefWrite(const MfuType *t, const u8 cc[4], const u8 *data, u32 n);
+// Turns a real NTAG215 into an Amiibo (amiibo.h makes the image: 540 bytes, for this tag's UID). Without
+// lock: the CC (one-way OTP, E1 -> F1 10 FF EE), pages 4-129 (read back), PWD and PACK; refused unsent
+// on another UID or type, set lock bits or a password. With lock: the dynamic lock bytes, CFG0, CFG1
+// (config locked for good) and the static lock bytes, Tagmo's order. PERMANENT. 1 = done, 0 = refused
+// (mfuWhy), -1 = monitor error.
+int mfuAmiiboWrite(const u8 *tag, bool lock);
 // Identify + every page that reads, authenticated first with key if given: the password (4 bytes) on
 // EV1 / NTAG21x, the 3DES key (16 bytes) on an Ultralight C, which without a key gets the dictionary
 // (mfuUlcFindKey). 1 = done (pages read or not are in valid[]), 0 = no Ultralight / NTAG answer,

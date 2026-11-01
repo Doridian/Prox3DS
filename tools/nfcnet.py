@@ -15,6 +15,11 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST mfwrite BLOCK KEY HEX32 [b]  Mifare Classic encrypted write + read-back (WRITES THE CARD)
        nfcnet.py HOST ndef [url URL | text TEXT | raw HEX | empty]  Ultralight / NTAG NDEF message:
                                             read, or write one record (WRITES THE CARD)
+       nfcnet.py HOST amiibo                     decrypt the Amiibo on the reader with the console's own keys
+       nfcnet.py HOST amiibo fresh SET OUT [DUMP]  a fresh unregistered copy of it (or of DUMP) signed with key set SET
+                                            (0 / 1): OUT.bin (pm3 dump, for mfuclone) + OUT.nfc (Flipper)
+       nfcnet.py HOST amiibo write|lock OUT.bin  onto a real NTAG215: write = CC + data + PWD/PACK (data still
+                                            rewritable), lock = lock bytes + config (PERMANENT)
        nfcnet.py HOST mfvalue inc|dec|restore BLOCK DELTA KEY [b] [-t DEST]  value block op + TRANSFER
                                             (to DEST, default BLOCK), read back (WRITES THE CARD)
        nfcnet.py HOST nested KBLK KKEY TBLK [kb][tb]  recover TBLK's key from a known key (nested attack)
@@ -64,7 +69,7 @@ UPDATE_CHUNK = 0x7000
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF, OP_MF_CHK = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26
-OP_MF_VALUE, OP_MFU_NDEF = 0x27, 0x28
+OP_MF_VALUE, OP_MFU_NDEF, OP_AMIIBO = 0x27, 0x28, 0x29
 MF_VAL_OPS = {"dec": 0xC0, "inc": 0xC1, "restore": 0xC2}
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
 DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
@@ -482,6 +487,50 @@ def main():
             sys.exit(f"refused: {nfc.why}")
         st = int.from_bytes(r[:1], "little", signed=True)
         print({1: "NDEF message", 0: "no NDEF message", -1: "broken TLVs"}[st], r[1:].hex())
+    elif what == "amiibo" and args and args[0] in ("write", "lock"):
+        raw = open(args[1], "rb").read()  # pm3 dump made by "amiibo fresh"
+        r = nfc.card_call(OP_AMIIBO, bytes([2, args[0] == "lock"]) + raw[56:56 + 540], 60)
+        print("done" if r is not None else f"refused: {nfc.why}")
+    elif what == "amiibo" and args and args[0] == "fresh":
+        tmpl = b""
+        if len(args) > 3:  # a pm3 dump as the template instead of the card on the reader
+            raw = open(args[3], "rb").read()
+            tmpl = raw[:8] + raw[56:56 + 540]
+        r = nfc.card_call(OP_AMIIBO, bytes([1, int(args[1])]) + tmpl, 60)
+        if r is None:
+            sys.exit(f"failed: {nfc.why}")
+        version, tag = r[:8], bytearray(r[8:])
+        uid = tag[0:3] + tag[4:8]
+        pwd = bytes([uid[1] ^ uid[3] ^ 0xAA, uid[2] ^ uid[4] ^ 0x55, uid[3] ^ uid[5] ^ 0xAA, uid[4] ^ uid[6] ^ 0x55])
+        tag[0x85 * 4:0x86 * 4] = pwd                   # PWD (pm3 pwdgen B, Amiibo)
+        tag[0x86 * 4:0x87 * 4] = b"\x80\x80\x00\x00"  # PACK
+        cnt = b"\x00\x00\x00\xbd" * 3                # counters 0, tearing BD (intact)
+        hdr = version + b"\x00\x00\x00" + bytes([len(tag) // 4 - 1]) + bytes(32) + cnt
+        open(args[2] + ".bin", "wb").write(hdr + tag)
+        hx = lambda b: " ".join(f"{x:02X}" for x in b)
+        lines = ["Filetype: Flipper NFC device", "Version: 4", "Device type: NTAG/Ultralight",
+                 f"UID: {hx(uid)}", "ATQA: 00 44", "SAK: 00", "Data format version: 2", "NTAG/Ultralight type: NTAG215",
+                 f"Signature: {hx(bytes(32))}", f"Mifare version: {hx(version)}"]
+        for i in range(3):
+            lines += [f"Counter {i}: 0", f"Tearing {i}: BD"]
+        lines += [f"Pages total: {len(tag) // 4}", f"Pages read: {len(tag) // 4}"]
+        lines += [f"Page {i}: {hx(tag[4 * i:4 * i + 4])}" for i in range(len(tag) // 4)]
+        lines += ["Failed authentication attempts: 0"]
+        open(args[2] + ".nfc", "w").write("\n".join(lines) + "\n")
+        print(f"UID {uid.hex()} PWD {pwd.hex()} -> {args[2]}.bin, {args[2]}.nfc")
+    elif what == "amiibo":
+        r = nfc.card_call(OP_AMIIBO, b"", 60)
+        if r is None:
+            sys.exit(f"failed: {nfc.why}")
+        def date(v):
+            return f"{2000 + (v >> 9)}-{v >> 5 & 15:02}-{v & 31:02}" if v else "-"
+        print("HMACs", "OK" if r[0] else "do NOT check out", f"(key set {r[1] & 15}; per set tag/data:",
+              " ".join(f"{s}:{'T' if r[1] >> 4 + 2 * s & 1 else '-'}{'D' if r[1] >> 5 + 2 * s & 1 else '-'}" for s in range(2)) + ")")
+        print("character", r[2:10].hex(), f"writes {int.from_bytes(r[10:12], 'big')}")
+        if r[0]:
+            print(f"setup {date(int.from_bytes(r[12:14], 'big'))}  written {date(int.from_bytes(r[14:16], 'big'))}"
+                  f"  app {r[16:20].hex()}  registered {bool(r[20] & 1)}  app data {bool(r[20] & 2)}")
+        print("nickname", repr(r[21:].decode(errors="replace")))
     elif what == "mfvalue":
         dest = int(args[args.index("-t") + 1]) if "-t" in args else int(args[1])
         rest = [a for i, a in enumerate(args) if a != "-t" and (i == 0 or args[i - 1] != "-t")]

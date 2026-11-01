@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "amiibo.h"
 #include "desfire.h"
 #include "mfc.h"
 #include "isodep.h"
@@ -94,6 +95,12 @@ enum {
 	OP_MFU_NDEF    = 0x28, // kind u8: 0 read, 1 write raw message, 2 write URI, 3 write text (en); then the
 	                       // message / string -> tlv state i8 (1 message, 0 none, -1 broken), message bytes
 	                       // read back. Writes through mfuNdefWrite (ndefui.c's path). MAY WRITE THE CARD
+	OP_AMIIBO      = 0x29, // [1, set, (template: version[8] + 540 bytes, else the card on the reader): a fresh
+	                       // signed copy -> version[8] + 540 tag bytes; nothing written] [2, lock, 540 bytes:
+	                       // mfuAmiiboWrite onto the NTAG215, PERMANENT]
+	                       // -> the Amiibo on the reader decrypted with the console's keys (amiibo.h): ok u8 (HMACs
+	                       // check), set u8, charId[8], writes u16, setup u16, written u16, appId u32 (BE), flags
+	                       // u8 (1 registered, 2 app data), nickname (UTF-8). On failure payload = reason
 	OP_MF_VALUE    = 0x27, // op u8 (C0 dec, C1 inc, C2 restore), block u8, delta s32 LE, dest u8, keyB u8,
 	                       // key[6] -> dest block read back[16]; on failure payload = reason. WRITES THE CARD
 };
@@ -428,6 +435,62 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		out[0] = st;
 		if (st > 0) memcpy(out + 1, mem + off, len);
 		*outLen = 1 + (st > 0 ? len : 0);
+		return 0;
+	}
+	case OP_AMIIBO: {
+		static MfuDump d;
+		static Amiibo a;
+		static u8 tag[AMIIBO_TAG];
+		if (!amiiboKeysLoad()) {
+			*outLen = strlen(amiiboWhy());
+			memcpy(out, amiiboWhy(), *outLen);
+			return 1;
+		}
+		if (inLen == 2 + AMIIBO_TAG && in[0] == 2) { // write the image onto the NTAG215: in[1] 0 data, 1 lock
+			if (!card.active && !iso14aStart()) return 1;
+			int r = iso14aSelect() < 0 ? 0 : mfuAmiiboWrite(in + 2, in[1]);
+			iso14aParity(true);
+			logp("amiibo write (%s): %s\n", in[1] ? "lock" : "data", r > 0 ? "ok" : mfuWhy());
+			if (r > 0) return 0;
+			*outLen = strlen(mfuWhy());
+			memcpy(out, mfuWhy(), *outLen);
+			return r < 0 ? -1 : 1;
+		}
+		if (inLen == 2 + 8 + AMIIBO_TAG && in[0] == 1) { // a template given: version[8] + 540 bytes, no card
+			memcpy(d.info.version, in + 2, 8);
+			memcpy(tag, in + 10, AMIIBO_TAG);
+		} else {
+			if (!card.active && !iso14aStart()) return 1;
+			int r = iso14aSelect() < 0 ? 0 : mfuDumpCard(&d, NULL);
+			iso14aParity(true);
+			if (r <= 0) {
+				*outLen = strlen(mfuWhy());
+				memcpy(out, mfuWhy(), *outLen);
+				return r < 0 ? -1 : 1;
+			}
+			for (int p = 0; p < AMIIBO_TAG / 4; p++) memcpy(tag + 4 * p, d.data[p], 4);
+		}
+		if (in[0] == 1 && inLen >= 2) { // a fresh signed copy with key set in[1]: version[8] + the 540 bytes
+			if (!amiiboFresh(tag, in[1], out + 8)) {
+				*outLen = strlen(amiiboWhy());
+				memcpy(out, amiiboWhy(), *outLen);
+				return 1;
+			}
+			memcpy(out, d.info.version, 8);
+			*outLen = 8 + AMIIBO_TAG;
+			return 0;
+		}
+		amiiboUnpack(tag, &a);
+		u8 *o = out;
+		*o++ = a.ok, *o++ = a.set | a.hmacBits << 4;
+		memcpy(o, a.charId, 8), o += 8;
+		*o++ = a.writes >> 8, *o++ = a.writes, *o++ = a.setupDate >> 8, *o++ = a.setupDate;
+		*o++ = a.writeDate >> 8, *o++ = a.writeDate;
+		*o++ = a.appId >> 24, *o++ = a.appId >> 16, *o++ = a.appId >> 8, *o++ = a.appId;
+		*o++ = a.registered | a.hasAppData << 1;
+		u32 nl = strlen(a.nickname);
+		memcpy(o, a.nickname, nl), o += nl;
+		*outLen = o - out;
 		return 0;
 	}
 	case OP_MFU_CLONE: {

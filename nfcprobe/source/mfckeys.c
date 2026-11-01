@@ -93,6 +93,11 @@ static void hmac(const u8 *key, w32 klen, const u8 *m1, w32 l1, const u8 *m2, w3
 	shaInit(&s), shaAdd(&s, k, 64), shaAdd(&s, ih, 32), shaDone(&s, out);
 }
 
+void hmacSha256(const u8 *key, u32 klen, const u8 *m1, u32 l1, const u8 *m2, u32 l2, u8 out[32])
+{
+	hmac(key, klen, m1, l1, m2, l2, out);
+}
+
 static void hkdf(const u8 *salt, w32 slen, const u8 *ikm, w32 ilen, const u8 *info, w32 nlen, u8 *out, w32 olen)
 {
 	u8 prk[32], t[32 + 64 + 1];

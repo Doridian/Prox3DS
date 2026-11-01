@@ -14,3 +14,6 @@ int mfcKdfKeys(const u8 *uid, int uidLen, int sector, bool keyB, u8 (*out)[6], c
 int mfcKdfKey(int kdf, const u8 *uid, int uidLen, int sector, bool keyB, u8 out[6]);
 const char *mfcKdfName(int kdf);
 extern const int mfcNumKdfs;
+
+// HMAC-SHA256 over two concatenated parts (key up to 64 bytes); also used by amiibo.c.
+void hmacSha256(const u8 *key, u32 klen, const u8 *m1, u32 l1, const u8 *m2, u32 l2, u8 out[32]);

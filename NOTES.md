@@ -1066,3 +1066,28 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   data abort, PC in ndefDraw): jobs now fill a copy the UI thread takes over; the Ultralight card screen
   had the same race (scan again) and got the same fix. One lost GET_VERSION answer made the NTAG215 an
   NTAG203: mfuIdentify retries GET_VERSION once before the fallbacks.
+
+## Amiibo with the console's own keys -- 2026-11-01
+- No key file: the NFC sysmodule (.code at 0x100000) has the amiibo key table in ro at 0x135584: two 106-byte
+  sets, each "unfixed infos\0" magic[14] hmacKey[16] "locked secret\0" magic[16] hmacKey[16] ctr[16]. FUN 0x114660
+  picks a set by a flag ([0x161FF8+0x14] bit 0 -> set 1 = .code+0x355EE), copies the 64-byte base seed, runs
+  ps:ps EncryptDecryptAes (0x00040204) over seed[0x20..0x40] in place with algo 2 (CTR) and key type 9
+  (PS_KEYSLOT_39_NFC), the set's ctr as IV (wrapper 0x1207EC -> 0x120858), then the HMAC-SHA256 DRBG
+  (0x128B78) with the type string. So amiitool's xorPad = the keyslot 0x39 CTR keystream at ctr, one pad
+  for both keys; the rest of key_retail.bin is the module's own table.
+- amiibo.c: reads the module's ExeFS .code from NAND (FSUSER_OpenFileDirectly, ARCHIVE_SAVEDATA_AND_CONTENT,
+  title 0004013020004002, then 0004013000004002), BLZ-decompresses it (same bytes as tools/ncch.py), finds
+  both sets (CRCs 90B0ADB3 / 7355512E, same as extracted/), gets the pad from ps:ps, then amiitool (socram8888,
+  MIT): unpack (decrypt + both HMACs), pack, and a fresh unregistered copy (settings + app data zeroed,
+  UID / model info / salt kept). Checked offline against a transcription of amiitool's pack with made-up keys.
+- THIS console's set is set 1. Proof: a fresh set-1 copy (character 0642 0000 035F 1102, from the Flipper's
+  image) written onto the NTAG215 04C8E3BA064F80 -> System Settings: "successfully read amiibo", asks for owner
+  info. The set-0 copy gave "this is an invalid amiibo" (037-0524); the Flipper's own image is invalid too.
+- mfuAmiiboWrite (net op 0x29 sub 2, `nfcnet.py amiibo write|lock DUMP`): stage 1 (CC F1 10 FF EE, pages
+  4-129, PWD, PACK; data still rewritable), stage 2 PERMANENT (dynamic lock 01 00 0F BD, CFG0 00 00 00 04,
+  CFG1 5F 00 00 00, static lock 0F E0), Tagmo's order; pages retried on a lost ACK. The 3DS accepted the
+  tag UNLOCKED (stage 1 only). NTAG215 04C8E3BA064F80 is now a locked Amiibo for good (user's choice, ~100
+  spares): PWD D8B05FD3 (pm3 pwdgen B) -> PACK 8080.
+- `nfcnet.py amiibo` decrypts the tag on the reader; `amiibo fresh SET OUT [DUMP]` makes OUT.bin (pm3) +
+  OUT.nfc (Flipper v4 text format). The GTU in NTAG215 mode with a fresh copy got no reaction at all from
+  System Settings (not even an error): unexplained.
