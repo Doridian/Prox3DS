@@ -1090,4 +1090,10 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   spares): PWD D8B05FD3 (pm3 pwdgen B) -> PACK 8080.
 - `nfcnet.py amiibo` decrypts the tag on the reader; `amiibo fresh SET OUT [DUMP]` makes OUT.bin (pm3) +
   OUT.nfc (Flipper v4 text format). The GTU in NTAG215 mode with a fresh copy got no reaction at all from
-  System Settings (not even an error): unexplained.
+  System Settings (not even an error). Likely why: this GTU answers PWD_AUTH A11D72B0 with PACK 4883 (page
+  0x13's bytes, the 06A0 quirk), not the 8080 a real Amiibo gives.
+- GTU detection after an Ultralight op: `clone` / `magic` right after mfudump said "not a magic card" twice;
+  straight after a fresh OP_14A_START the same CF C6 answers (with or without PWD_AUTH first) and the
+  clone works. Something in the card state an MFU op leaves; not fixed yet.
+- Generated images live in the gitignored dump/amiibo/ (Flipper .nfc + pm3 .bin), the GTU backup in dump/gtu/.
+  GTU restored to Classic 1K afterwards: config and all 64 blocks identical to the backup.
