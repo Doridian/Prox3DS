@@ -1,3 +1,4 @@
+#include <math.h>
 // Host stand-ins for libctru / citro2d (include/), and the scripted main loop: aptMainLoop() runs the
 // scene's next step each frame, C3D_FrameEnd() writes the frame's draw list when the step asked for
 // a shot. render.py turns the lists into PNGs and checks them.
@@ -109,6 +110,20 @@ bool C2D_DrawRectSolid(float x, float y, float z, float w, float h, u32 clr)
 {
 	if (shot) fprintf(shot, "R %g %g %g %g %08lX\n", x, y, w, h, clr);
 	return true;
+}
+
+// Lines and triangles drawn as their bounding boxes: enough for layout checks
+bool C2D_DrawLine(float x0, float y0, u32 clr0, float x1, float y1, u32 clr1, float thickness, float depth)
+{
+	float x = x0 < x1 ? x0 : x1, y = y0 < y1 ? y0 : y1, w = x0 < x1 ? x1 - x0 : x0 - x1, h = y0 < y1 ? y1 - y0 : y0 - y1;
+	return C2D_DrawRectSolid(x - thickness / 2, y - thickness / 2, depth, w + thickness, h + thickness, clr0);
+}
+
+bool C2D_DrawTriangle(float x0, float y0, u32 clr0, float x1, float y1, u32 clr1, float x2, float y2, u32 clr2, float depth)
+{
+	float lx = fminf(x0, fminf(x1, x2)), hx = fmaxf(x0, fmaxf(x1, x2));
+	float ly = fminf(y0, fminf(y1, y2)), hy = fmaxf(y0, fmaxf(y1, y2));
+	return C2D_DrawRectSolid(lx, ly, depth, hx - lx, hy - ly, clr0);
 }
 
 C2D_TextBuf C2D_TextBufNew(size_t maxGlyphs)

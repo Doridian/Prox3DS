@@ -1,4 +1,4 @@
-// MIFARE DESFire without keys over ISO-DEP, see desfire.h.
+// MIFARE DESFire over ISO-DEP, with EV1 secure messaging once a key is known; see desfire.h.
 
 #include <stdio.h>
 #include <string.h>
@@ -36,34 +36,305 @@ const char *dfStatusName(u8 st)
 	case 0xCA: return "command aborted";
 	case 0xEE: return "memory error";
 	case 0xF0: return "file not found";
+	case DF_ST_MAC: return "bad MAC / CRC";
 	}
 	return "unknown status";
 }
 
-// One native command, AF frames followed; their data (without the status) joined into out, the last
-// status in *st. The data length, -1 = no answer (isoDepWhy), -2 = monitor error.
-static int cmd(const u8 *c, u32 len, u8 *out, u32 max, u8 *st)
+// --- EV1 secure messaging ---
+
+static struct {
+	bool on;
+	u8 keyNo;
+	DfCipher c;
+	u8 iv[16];
+} ses;
+
+static u32 rng;
+
+static void rnd(u8 *p, u32 n)
 {
-	u8 a[64], af = 0xAF;
-	u32 n = 0;
-	for (int i = 0;; i++) {
-		int k = isoDepTx(c, len, a, sizeof(a));
-		if (k < 0) return -2;
-		if (!k) return -1;
-		*st = a[0];
-		u32 m = (u32)k - 1 < max - n ? (u32)k - 1 : max - n;
-		memcpy(out + n, a + 1, m);
-		n += m;
-		if (a[0] != 0xAF || i == 31) return n;
-		c = &af, len = 1;
+	if (!rng) rng = (u32)osGetTime() * 2654435761u | 1;
+	while (n--) {
+		rng ^= rng << 13, rng ^= rng >> 17, rng ^= rng << 5;
+		*p++ = rng >> 24;
 	}
 }
 
-#define RUN(c, len, out, max) ({ \
-	int r_ = cmd(c, len, out, max, &st); \
+static void put32(u8 *p, u32 v)
+{
+	p[0] = v, p[1] = v >> 8, p[2] = v >> 16, p[3] = v >> 24;
+}
+
+// Commands that carry our MAC in MAC mode (pm3 EV1D40TransmitMAC): the writes.
+static bool txMac(u8 c)
+{
+	return c == 0x3D || c == 0x3B || c == 0xDB || c == 0x0C || c == 0xDC || c == 0x1C || c == 0xC8;
+}
+
+// A decrypted full-mode answer: data, CRC32 over data + status 00, padding (zeros, or 80 and zeros).
+// The data length, -1 = no CRC fits.
+static int crcPos(const u8 *p, u32 n, u8 bs)
+{
+	u8 t[320];
+	for (int l = (int)n - 4; l >= 0 && l > (int)n - 4 - bs; l--) {
+		bool pad = true;
+		for (u32 i = l + 4; i < n; i++) pad &= !p[i] || (i == (u32)l + 4 && p[i] == 0x80);
+		if (!pad) continue;
+		memcpy(t, p, l);
+		t[l] = 0;
+		u32 crc = dfCrc32(t, l + 1);
+		if (p[l] == (u8)crc && p[l + 1] == (u8)(crc >> 8) && p[l + 2] == (u8)(crc >> 16) && p[l + 3] == (u8)(crc >> 24))
+			return l;
+	}
+	return -1;
+}
+
+#define DF_FRAME 54 // command bytes per native frame (pm3 DESFIRE_TX_FRAME_MAX_LEN)
+
+int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st)
+{
+	u8 tx[320], rx[320], a[64], af[1 + DF_FRAME] = { 0xAF }, mac[16], bs = ses.c.bs;
+	if (len + 4 + 16 + 8 > sizeof(tx)) FAIL(-1, "command too long");
+	// SelectApplication ends the session, so does any error; a good answer keeps it
+	bool on = ses.on && c[0] != 0x5A, encRx = false;
+	ses.on = false;
+	memcpy(tx, c, len);
+	u32 n = len;
+	if (on) {
+		if (comm == DF_ENC || (comm == DF_FULL && len > 1 + hdr)) {
+			u32 d = len - 1 - hdr;
+			if (comm == DF_FULL) put32(tx + len, dfCrc32(c, len)), d += 4;
+			u32 p = (d + bs - 1) / bs * bs;
+			memset(tx + 1 + hdr + d, 0, p - d);
+			dfCbc(&ses.c, ses.iv, tx + 1 + hdr, p, true);
+			n = 1 + hdr + p;
+		} else {
+			dfCmac(&ses.c, ses.iv, c, len, mac);
+			if (comm == DF_MACED && txMac(c[0])) memcpy(tx + len, mac, 8), n += 8;
+			encRx = comm == DF_FULL; // a read: the answer comes encrypted
+		}
+	}
+	// native frames of DF_FRAME bytes out (AF between them), AF frames in, joined
+	u32 o = n < 1 + DF_FRAME ? n : 1 + DF_FRAME, got = 0;
+	int k = isoDepTx(tx, o, a, sizeof(a));
+	for (int i = 0;; i++) {
+		if (k < 0) return -2;
+		if (!k) FAIL(-1, "lost the card: %s", isoDepWhy());
+		*st = a[0];
+		if (o < n) {
+			if (a[0] != 0xAF) break;
+			u32 m = n - o < DF_FRAME ? n - o : DF_FRAME;
+			memcpy(af + 1, tx + o, m);
+			o += m;
+			k = isoDepTx(af, 1 + m, a, sizeof(a));
+			continue;
+		}
+		u32 m = (u32)k - 1 < sizeof(rx) - got ? (u32)k - 1 : sizeof(rx) - got;
+		memcpy(rx + got, a + 1, m);
+		got += m;
+		if (a[0] != 0xAF || i == 40) break;
+		k = isoDepTx(af, 1, a, sizeof(a));
+	}
+	// ChangeKey of the session's own key ends it without a MAC
+	if (on && !*st && !(c[0] == 0xC4 && (c[1] & 0x3F) == ses.keyNo)) {
+		if (encRx) {
+			int l = got >= bs && !(got % bs) ? (dfCbc(&ses.c, ses.iv, rx, got, false), crcPos(rx, got, bs)) : -1;
+			if (l < 0) goto bad;
+			got = l;
+		} else {
+			u8 rm[8];
+			if (got < 8) goto bad;
+			got -= 8;
+			memcpy(rm, rx + got, 8);
+			rx[got] = *st;
+			dfCmac(&ses.c, ses.iv, rx, got + 1, mac);
+			if (memcmp(mac, rm, 8)) goto bad;
+		}
+		ses.on = true;
+	}
+	u32 m = got < max ? got : max;
+	memcpy(out, rx, m);
+	return m;
+bad:
+	*st = DF_ST_MAC;
+	return 0;
+}
+
+#define RUNC(c, len, hdr, comm, out, max) ({ \
+	int r_ = dfCmd(c, len, hdr, comm, out, max, &st); \
 	if (r_ == -2) FAIL(-1, "monitor"); \
-	if (r_ == -1) FAIL(0, "lost the card: %s", isoDepWhy()); \
+	if (r_ == -1) return 0; \
 	r_; })
+#define RUN(c, len, out, max) RUNC(c, len, 0, DF_PLAIN, out, max)
+
+static bool halvesEqual(const u8 *k)
+{
+	for (int i = 0; i < 8; i++)
+		if ((k[i] ^ k[i + 8]) & 0xFE) return false;
+	return true;
+}
+
+int dfAuth(u8 k, const DfKey *key, u8 *st)
+{
+	ses.on = false;
+	DfCipher c;
+	dfCipherInit(&c, key->type, key->key);
+	u8 rl = key->type == DF_2K3DES ? 8 : 16, cmd[2] = { key->type == DF_AES ? 0xAA : 0x1A, k };
+	u8 a[64], iv[16] = { 0 }, ra[16], rb[16], buf[33];
+	int n = isoDepTx(cmd, 2, a, sizeof(a));
+	if (n < 0) FAIL(-1, "monitor");
+	if (!n) FAIL(-1, "lost the card: %s", isoDepWhy());
+	*st = a[0];
+	if (a[0] != 0xAF || n != 1 + rl) return 0;
+	memcpy(rb, a + 1, rl);
+	dfCbc(&c, iv, rb, rl, false);
+	rnd(ra, rl);
+	buf[0] = 0xAF;
+	memcpy(buf + 1, ra, rl);
+	memcpy(buf + 1 + rl, rb + 1, rl - 1);
+	buf[2 * rl] = rb[0];
+	dfCbc(&c, iv, buf + 1, 2 * rl, true);
+	n = isoDepTx(buf, 1 + 2 * rl, a, sizeof(a));
+	if (n < 0) FAIL(-1, "monitor");
+	if (!n) FAIL(-1, "lost the card: %s", isoDepWhy());
+	*st = a[0];
+	if (a[0] || n != 1 + rl) return 0;
+	dfCbc(&c, iv, a + 1, rl, false);
+	if (memcmp(a + 1, ra + 1, rl - 1) || a[rl] != ra[0]) {
+		*st = DF_ST_MAC;
+		return 0;
+	}
+	// session key (pm3 DesfireGenSessionKeyEV1)
+	u8 sk[24];
+	memcpy(sk, ra, 4), memcpy(sk + 4, rb, 4);
+	if (key->type == DF_2K3DES) {
+		if (halvesEqual(key->key)) memcpy(sk + 8, sk, 8);
+		else memcpy(sk + 8, ra + 4, 4), memcpy(sk + 12, rb + 4, 4);
+	} else if (key->type == DF_3K3DES) {
+		memcpy(sk + 8, ra + 6, 4), memcpy(sk + 12, rb + 6, 4);
+		memcpy(sk + 16, ra + 12, 4), memcpy(sk + 20, rb + 12, 4);
+	} else {
+		memcpy(sk + 8, ra + 12, 4), memcpy(sk + 12, rb + 12, 4);
+	}
+	dfCipherInit(&ses.c, key->type, sk);
+	memset(ses.iv, 0, sizeof(ses.iv));
+	ses.keyNo = k, ses.on = true;
+	return 1;
+}
+
+int dfChangeKey(u8 k, const DfKey *key, u8 ver, const DfKey *old, bool picc, u8 *st)
+{
+	if (!ses.on) FAIL(0, "not authenticated");
+	u8 c[64] = { 0xC4, k }, *cd = c + 2;
+	u32 kl = dfKeyLen(key->type), n = kl;
+	if (picc) c[1] |= (key->type == DF_AES ? 2 : key->type == DF_3K3DES ? 1 : 0) << 6;
+	memcpy(cd, key->key, kl);
+	bool other = k != ses.keyNo;
+	if (other)
+		for (u32 i = 0; i < kl; i++) cd[i] ^= old->key[i];
+	if (key->type == DF_AES) cd[n++] = ver;
+	put32(cd + n, dfCrc32(c, 2 + n)), n += 4;
+	if (other) put32(cd + n, dfCrc32(key->key, kl)), n += 4;
+	u8 out[8];
+	int r = dfCmd(c, 2 + n, 1, DF_ENC, out, sizeof(out), st);
+	if (r == -2) FAIL(-1, "monitor");
+	if (r == -1) return -1;
+	return !*st;
+}
+
+void dfKeyHex(const DfKey *k, char *out)
+{
+	int n = k->type == DF_2K3DES && halvesEqual(k->key) && !memcmp(k->key, k->key + 8, 8) ? 8 : dfKeyLen(k->type);
+	for (int i = 0; i < n; i++) sprintf(out + 2 * i, "%02X", k->key[i]);
+	if (!n) *out = 0;
+}
+
+const char *dfKeyName(const DfKey *k)
+{
+	return k->type == DF_2K3DES && halvesEqual(k->key) ? "DES" : dfKeyTypeName(k->type);
+}
+
+// --- key dictionary ---
+
+typedef struct {
+	u8 len, key[24];
+} DictKey;
+
+static DictKey dict[128];
+static int ndict;
+
+static const char *const defaultKeys[] = {
+	"00000000000000000000000000000000", "000000000000000000000000000000000000000000000000",
+	"FFFFFFFFFFFFFFFF", "0011223344556677", "1122334455667788", "A0A1A2A3A4A5A6A7", "D3F7D3F7D3F7D3F7",
+	"7544D1652BC9BD43", "00112233445566778899AABBCCDDEEFF", "000102030405060708090A0B0C0D0E0F",
+	"404142434445464748494A4B4C4D4E4F", "A0A1A2A3A4A5A6A7A8A9AAABACADAEAF", "B0B1B2B3B4B5B6B7B8B9BABBBCBDBEBF",
+	"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", "425245414B4D454946594F5543414E21",
+	"00112233445566778899AABBCCDDEEFF0102030405060708", "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+};
+
+static int hexVal(char c)
+{
+	return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+// A key from hex (8 bytes = DES, stored as 2K3DES with equal halves); duplicates skipped.
+static void addDict(const char *s)
+{
+	DictKey k = { 0 };
+	int d = 0;
+	for (; *s && *s != '#' && d < 49; s++) {
+		int v = hexVal(*s);
+		if (v < 0) continue;
+		if (d < 48) k.key[d / 2] = d & 1 ? k.key[d / 2] | v : v << 4;
+		d++;
+	}
+	if (d != 16 && d != 32 && d != 48) return;
+	k.len = d / 2;
+	if (k.len == 8) memcpy(k.key + 8, k.key, 8), k.len = 16;
+	for (int i = 0; i < ndict; i++)
+		if (dict[i].len == k.len && !memcmp(dict[i].key, k.key, k.len)) return;
+	if (ndict < (int)(sizeof(dict) / sizeof(dict[0]))) dict[ndict++] = k;
+}
+
+static void loadDict(void)
+{
+	ndict = 0;
+	for (u32 i = 0; i < sizeof(defaultKeys) / sizeof(defaultKeys[0]); i++) addDict(defaultKeys[i]);
+	FILE *f = fopen(DF_KEYS, "r");
+	if (!f) return;
+	char line[96];
+	while (fgets(line, sizeof(line), f)) addDict(line);
+	fclose(f);
+}
+
+// The dictionary on key k of the selected application (PICC), of type kt (GetKeySettings bits 6-7,
+// -1 = unknown: all). 1 = found (into *out, the session runs on it), 0 = not, -1 = lost card / monitor.
+static int findKey(u8 k, int kt, DfKey *out)
+{
+	static const u8 order[] = { DF_AES, DF_2K3DES, DF_3K3DES };
+	for (int t = 0; t < 3; t++) {
+		u8 type = order[t];
+		if (kt >= 0 && type != (kt == 2 ? DF_AES : kt == 1 ? DF_3K3DES : DF_2K3DES)) continue;
+		for (int i = 0; i < ndict; i++) {
+			if (mfCancel) return 0;
+			if (dict[i].len != dfKeyLen(type)) continue;
+			DfKey c = { true, type };
+			memcpy(c.key, dict[i].key, dict[i].len);
+			u8 st;
+			int r = dfAuth(k, &c, &st);
+			if (r < 0) return -1;
+			if (r) {
+				*out = c;
+				return 1;
+			}
+			if (st == 0x40 || st == 0x9D) return 0; // no such key / not allowed: no key will do
+		}
+	}
+	return 0;
+}
+
+// --- reading ---
 
 static DfApp *findApp(DfInfo *d, u32 aid)
 {
@@ -82,8 +353,8 @@ bool dfFreeRead(const DfFile *f)
 	return !f->st && f->len >= 4 && ((f->set[3] >> 4) == 0xE || (f->set[2] >> 4) == 0xE);
 }
 
-// A file with free read access: ReadData / GetValue / ReadRecords into the pool.
-static int readFile(DfInfo *d, DfFile *f)
+// ReadData / GetValue / ReadRecords into the pool, in comm mode comm.
+static int readFile(DfInfo *d, DfFile *f, u8 comm)
 {
 	u8 c[8] = { 0xBD, f->fid }, st, t = f->set[0];
 	u32 len = 2, room = sizeof(d->pool) - d->poolUsed, want = DF_MAX_DATA;
@@ -93,13 +364,15 @@ static int readFile(DfInfo *d, DfFile *f)
 		c[5] = want, c[6] = want >> 8, len = 8;
 	} else if (t == 2) {
 		c[0] = 0x6C, want = 4;
-	} else if (t == 3 || t == 4) { // offset 0, count 0 = every record
-		c[0] = 0xBB, len = 8;
+	} else if ((t == 3 || t == 4) && f->len >= 13) { // offset 0, as many records as fit
+		u32 rs = le24(f->set + 4), cnt = le24(f->set + 10);
+		if (rs && cnt > DF_MAX_DATA / rs) cnt = DF_MAX_DATA / rs;
+		c[0] = 0xBB, c[5] = cnt, len = 8, want = cnt * rs;
 	} else {
 		return 1;
 	}
 	if (!want || room < want) return 1;
-	int n = RUN(c, len, d->pool + d->poolUsed, want);
+	int n = RUNC(c, len, len - 1, comm, d->pool + d->poolUsed, want);
 	f->hasData = true, f->dataSt = st;
 	if (st) return 1;
 	f->dataOff = d->poolUsed, f->dataLen = n;
@@ -107,14 +380,21 @@ static int readFile(DfInfo *d, DfFile *f)
 	return 1;
 }
 
-static int readApp(DfInfo *d, DfApp *a)
+static int selectApp(u32 aid, u8 *st)
 {
-	u8 c[4] = { 0x5A, a->aid, a->aid >> 8, a->aid >> 16 }, buf[96], st;
-	RUN(c, 4, buf, sizeof(buf));
-	if ((a->selSt = st)) return 1;
-	c[0] = 0x45;
+	u8 c[4] = { 0x5A, aid, aid >> 8, aid >> 16 }, buf[16];
+	int r = dfCmd(c, 4, 0, DF_PLAIN, buf, sizeof(buf), st);
+	if (r == -2) FAIL(-1, "monitor");
+	return r < 0 ? 0 : 1;
+}
+
+// Key settings, key versions, file IDs and file settings, in the current state (session or not).
+static int appBasics(DfApp *a)
+{
+	u8 c[2] = { 0x45 }, buf[96], st;
 	int n = RUN(c, 1, buf, sizeof(buf));
 	a->keySt = st ? st : n < 2 ? 0x7E : 0;
+	a->nKeyVer = 0;
 	if (!a->keySt) {
 		a->keySet = buf[0], a->maxKeys = buf[1];
 		for (int k = 0; k < (a->maxKeys & 0xF) && k < 14; k++) {
@@ -129,19 +409,64 @@ static int readApp(DfInfo *d, DfApp *a)
 	a->nfiles = n < DF_MAX_FILES ? n : DF_MAX_FILES;
 	for (int i = 0; i < a->nfiles; i++) {
 		DfFile *f = &a->files[i];
+		memset(f, 0, sizeof(*f));
 		f->fid = buf[i];
 		u8 fc[2] = { 0xF5, f->fid };
-		n = RUN(fc, 2, f->set, sizeof(f->set));
+		n = RUNC(fc, 2, 1, DF_PLAIN, f->set, sizeof(f->set));
 		f->st = st, f->len = n;
-		int r;
-		if (dfFreeRead(f) && (r = readFile(d, f)) <= 0) return r;
 	}
 	return 1;
 }
 
-int dfReadInfo(DfInfo *d)
+// The key that reads f (read, then read/write; value files also write), -1 = none known.
+static int readKey(const DfApp *a, const DfFile *f)
+{
+	if (f->st || f->len < 4) return -1;
+	u8 ks[3] = { f->set[3] >> 4, f->set[2] >> 4, f->set[3] & 0xF };
+	for (int i = 0; i < (f->set[0] == 2 ? 3 : 2); i++)
+		if (ks[i] < 14 && a->keys[ks[i]].known) return ks[i];
+	return -1;
+}
+
+static int readApp(DfInfo *d, DfApp *a, bool keys)
+{
+	u8 st;
+	int r;
+	if ((r = selectApp(a->aid, &st)) <= 0) return r;
+	if ((a->selSt = st)) return 1;
+	if ((r = appBasics(a)) <= 0) return r;
+	if (keys) {
+		// key 0 first: it may open the key settings (key count, type) and the file list
+		if ((r = findKey(0, a->keySt ? -1 : a->maxKeys >> 6, &a->keys[0])) < 0) return r;
+		bool denied = a->keySt || a->fileSt;
+		for (int i = 0; i < a->nfiles; i++) denied |= a->files[i].st != 0;
+		if (r && denied && (r = appBasics(a)) <= 0) return r;
+		for (int k = 1; !a->keySt && k < (a->maxKeys & 0xF) && k < 14; k++)
+			if ((r = findKey(k, a->maxKeys >> 6, &a->keys[k])) < 0) return r;
+	}
+	for (int i = 0; i < a->nfiles && !a->fileSt; i++) {
+		DfFile *f = &a->files[i];
+		int k = dfFreeRead(f) ? 0xE : keys ? readKey(a, f) : -1;
+		if (k < 0) continue;
+		// a fresh select: free files without a session, keyed ones with their key's
+		if ((r = selectApp(a->aid, &st)) <= 0) return r;
+		if (k != 0xE) {
+			if ((r = dfAuth(k, &a->keys[k], &st)) < 0) return r;
+			if (!r) {
+				f->hasData = true, f->dataSt = st, f->dataKey = k;
+				continue;
+			}
+		}
+		if ((r = readFile(d, f, k == 0xE ? DF_PLAIN : f->set[1] & 3)) <= 0) return r;
+		f->dataKey = k;
+	}
+	return 1;
+}
+
+int dfReadInfo(DfInfo *d, bool keys)
 {
 	memset(d, 0, sizeof(*d));
+	ses.on = false;
 	int r = isoDepActivate(d->ats, sizeof(d->ats));
 	if (r <= 0) FAIL(r, "%s", isoDepWhy());
 	d->atsLen = d->ats[0] < sizeof(d->ats) ? d->ats[0] : sizeof(d->ats);
@@ -150,6 +475,10 @@ int dfReadInfo(DfInfo *d)
 	if (st || n < 14) FAIL(0, "GetVersion: %s %02X (not a DESFire)", n < 14 && !st ? "short answer, status" : dfStatusName(st), st);
 	d->verLen = n;
 	logp("DESFire: %s, %lu bytes\n", dfVersionName(d), dfStorage(d->ver[5]));
+	if (keys) {
+		loadDict();
+		d->keyed = true, d->dictKeys = ndict;
+	}
 
 	c[0] = 0x6E;
 	n = RUN(c, 1, buf, sizeof(buf));
@@ -166,6 +495,11 @@ int dfReadInfo(DfInfo *d)
 	n = RUN(c, 2, buf, sizeof(buf));
 	if ((st == 0x90 || !st) && n >= 56) d->hasSig = true, memcpy(d->sig, buf, 56);
 
+	if (keys) {
+		progOp("PICC master key: dictionary");
+		if ((r = findKey(0, d->keySt ? -1 : d->maxKeys >> 6, &d->piccKey)) < 0) return r;
+		if (r) logp("PICC master key: %s\n", dfKeyName(&d->piccKey));
+	}
 	c[0] = 0x6A;
 	n = RUN(c, 1, buf, sizeof(buf));
 	if ((d->appSt = st)) {
@@ -174,7 +508,8 @@ int dfReadInfo(DfInfo *d)
 	}
 	d->napps = n / 3;
 	for (int i = 0; i < d->napps && i < DF_MAX_APPS; i++) d->apps[i].aid = le24(buf + 3 * i);
-	// GetDFNames: one app per frame (AID, ISO FID, DF name)
+	// GetDFNames: one app per frame (AID, ISO FID, DF name), so without a session
+	if (ses.on && (r = selectApp(0, &st)) <= 0) return r;
 	c[0] = 0x6D;
 	for (int i = 0; i < 64; i++) {
 		int k = isoDepTx(c, 1, buf, sizeof(buf));
@@ -192,12 +527,12 @@ int dfReadInfo(DfInfo *d)
 	}
 	for (int i = 0; i < d->napps && i < DF_MAX_APPS; i++) {
 		if (mfCancel) break;
-		if ((r = readApp(d, &d->apps[i])) <= 0) return r;
+		progOp("Application %06lX%s", d->apps[i].aid, keys ? ": keys, files" : "");
+		progStep(i, d->napps < DF_MAX_APPS ? d->napps : DF_MAX_APPS);
+		if ((r = readApp(d, &d->apps[i], keys)) <= 0) return r;
 		logp("app %06lX: %d files\n", d->apps[i].aid, d->apps[i].nfiles);
 	}
-	c[0] = 0x5A, c[1] = c[2] = c[3] = 0;
-	RUN(c, 4, buf, sizeof(buf));
-	return 1;
+	return selectApp(0, &st);
 }
 
 const char *dfVersionName(const DfInfo *d)
@@ -297,6 +632,14 @@ static void hexLine(FILE *fp, const char *label, const u8 *p, int n)
 	fprintf(fp, "\n");
 }
 
+static void keyLine(FILE *fp, int k, const DfKey *key)
+{
+	char hex[49];
+	dfKeyHex(key, hex);
+	if (key->known) fprintf(fp, "  key %d: %s %s\n", k, dfKeyName(key), hex);
+	else fprintf(fp, "  key %d: not in the dictionary\n", k);
+}
+
 bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 {
 	char uid[21] = "";
@@ -312,7 +655,8 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 	FILE *fp = fopen(path, "w");
 	if (!fp) return false;
 	const u8 *v = d->ver;
-	fprintf(fp, "# nfcprobe DESFire info (no keys)\nUID %s\n", uid);
+	if (d->keyed) fprintf(fp, "# nfcprobe DESFire info (key dictionary: %d keys)\nUID %s\n", d->dictKeys, uid);
+	else fprintf(fp, "# nfcprobe DESFire info (no keys)\nUID %s\n", uid);
 	hexLine(fp, "ATS ", d->ats, d->atsLen);
 	fprintf(fp, "%s\n", dfVersionName(d));
 	hexLine(fp, "hardware ", v, 7);
@@ -337,6 +681,7 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 		keySetDesc(fp, d->keySet, true);
 	}
 	if (!d->keyVerSt) fprintf(fp, "  key 0 version %02X\n", d->keyVer);
+	if (d->keyed) keyLine(fp, 0, &d->piccKey);
 	if (d->appSt) fprintf(fp, "  applications: %s\n", dfStatusName(d->appSt));
 	else fprintf(fp, "  %d application%s\n", d->napps, d->napps == 1 ? "" : "s");
 	for (int i = 0; i < d->napps && i < DF_MAX_APPS; i++) {
@@ -360,6 +705,7 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 			keySetDesc(fp, a->keySet, false);
 			if (a->nKeyVer) hexLine(fp, "  key versions ", a->keyVer, a->nKeyVer);
 		}
+		for (int k = 0; d->keyed && k < (a->keySt ? 1 : a->maxKeys & 0xF) && k < 14; k++) keyLine(fp, k, &a->keys[k]);
 		if (a->fileSt) {
 			fprintf(fp, "  files: %s\n", dfStatusName(a->fileSt));
 			continue;
@@ -371,6 +717,7 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 			fprintf(fp, "  file %02X: %s\n", a->files[k].fid, desc);
 			if (*keys) fprintf(fp, "    %s\n", keys);
 			const DfFile *f = &a->files[k];
+			if (f->hasData && f->dataKey != 0xE) fprintf(fp, "    read with key %X\n", f->dataKey);
 			if (f->hasData && f->dataSt) fprintf(fp, "    contents: %s\n", dfStatusName(f->dataSt));
 			for (int o = 0; f->hasData && !f->dataSt && o < f->dataLen; o += 16) {
 				fprintf(fp, "    %04X:", o);

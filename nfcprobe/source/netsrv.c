@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "desfire.h"
 #include "mfc.h"
 #include "isodep.h"
 #include "mfu.h"
@@ -81,6 +82,12 @@ enum {
 	                       // answer; on failure payload = reason (isodep.c)
 	// UI debugging, served without hwLock:
 	OP_LOG         = 0x24, // lines u32 -> the last that many log lines (fewer if OUT_MAX fills), \n each
+	// More card ops:
+	OP_DF          = 0x25, // DESFire (desfire.c), action u8 + args -> status u8 + data; on a lost card /
+	                       // monitor error payload = reason. Actions: 0 auth: keyNo, type (dfcrypto.h),
+	                       // key; 1 command: comm, hdr, command bytes -> status, answer; 2 ChangeKey:
+	                       // keyNo, picc, ver, type, key, [old type, old key]; 3 info: keys u8 -> the
+	                       // saved info file's text. MAY WRITE THE CARD
 };
 
 #define OUT_MAX 0x2000
@@ -381,6 +388,57 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		}
 		*outLen = strlen(isoDepWhy());
 		memcpy(out, isoDepWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_DF: {
+		if (inLen < 2) return -3;
+		if (!card.active && !iso14aStart()) return 1;
+		u8 st = 0;
+		int r;
+		DfKey k = { true }, old = { true };
+		if (in[0] == 0 && inLen >= 4) {
+			k.type = in[2];
+			if (k.type > DF_AES || inLen != 3 + dfKeyLen(k.type)) return -3;
+			memcpy(k.key, in + 3, dfKeyLen(k.type));
+			r = dfAuth(in[1], &k, &st);
+			*outLen = 1;
+		} else if (in[0] == 1 && inLen >= 4) {
+			r = dfCmd(in + 3, inLen - 3, in[2], in[1], out + 1, OUT_MAX - 1, &st);
+			*outLen = r > 0 ? 1 + r : 1;
+			r = r == -2 ? -1 : r == -1 ? 0 : 1;
+			if (!r) goto dfFail;
+		} else if (in[0] == 2 && inLen >= 5) {
+			k.type = in[4];
+			if (k.type > DF_AES || inLen < 5 + dfKeyLen(k.type)) return -3;
+			memcpy(k.key, in + 5, dfKeyLen(k.type));
+			u32 o = 5 + dfKeyLen(k.type);
+			if (inLen > o) {
+				old.type = in[o];
+				if (old.type > DF_AES || inLen != o + 1 + dfKeyLen(old.type)) return -3;
+				memcpy(old.key, in + o + 1, dfKeyLen(old.type));
+			}
+			r = dfChangeKey(in[1], &k, in[3], &old, in[2], &st);
+			*outLen = 1;
+		} else if (in[0] == 3) {
+			static DfInfo di;
+			char path[128];
+			r = dfReadInfo(&di, in[1]);
+			iso14aParity(true);
+			if (r <= 0) goto dfFail;
+			if (!dfSaveInfo(&di, path, sizeof(path))) return -1;
+			FILE *f = fopen(path, "r");
+			*outLen = f ? fread(out, 1, OUT_MAX, f) : 0;
+			if (f) fclose(f);
+			return 0;
+		} else {
+			return -3;
+		}
+		if (r < 0) goto dfFail;
+		out[0] = st;
+		return 0;
+	dfFail:
+		*outLen = strlen(dfWhy());
+		memcpy(out, dfWhy(), *outLen);
 		return r < 0 ? -1 : 1;
 	}
 	case OP_MF_NESTED: {

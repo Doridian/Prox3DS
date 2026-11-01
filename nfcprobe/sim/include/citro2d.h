@@ -35,3 +35,5 @@ const char *C2D_TextParse(C2D_Text *text, C2D_TextBuf buf, const char *str);
 void C2D_TextOptimize(const C2D_Text *text);
 void C2D_DrawText(const C2D_Text *text, u32 flags, float x, float y, float depth, float sx, float sy, ...);
 bool C2D_DrawRectSolid(float x, float y, float z, float w, float h, u32 clr);
+bool C2D_DrawLine(float x0, float y0, u32 clr0, float x1, float y1, u32 clr1, float thickness, float depth);
+bool C2D_DrawTriangle(float x0, float y0, u32 clr0, float x1, float y1, u32 clr1, float x2, float y2, u32 clr2, float depth);

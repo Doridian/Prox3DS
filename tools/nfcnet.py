@@ -31,6 +31,13 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                    Ultralight mode; WRITES THE CARD AND ITS CONFIG)
        nfcnet.py HOST apdu [-a] HEX [HEX...]       ISO-DEP (nfcprobe isodep.c): -a = DESELECT + reselect + RATS
                                                    first (shows the ATS); each HEX one command, its answer
+       nfcnet.py HOST df [-a] STEP [STEP...]      DESFire through nfcprobe desfire.c (EV1 secure messaging),
+                                                   -a = ISO-DEP activate first. STEPs (MAY WRITE THE CARD):
+                                                     auth:K:TYPE:KEY       TYPE des/2k3des/3k3des/aes
+                                                     cmd:COMM:HDR:HEX      COMM plain/mac/full/enc, HDR = plain
+                                                                           bytes after the command byte
+                                                     ck:K:TYPE:KEY[:OTYPE:OKEY][:picc][:vN]  ChangeKey
+                                                     info / infokeys       read all (+ key dictionary), print
        nfcnet.py HOST shot [OUT.png]               grab the top screen (default shot.png; needs Pillow)
        nfcnet.py HOST log [N]                      the app log's last N lines (default 50), net client lines cut
        nfcnet.py HOST keys KEY [KEY...]            press buttons in the UI, one frame each, ~0.1 s apart
@@ -49,7 +56,14 @@ UPDATE_CHUNK = 0x7000
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
 GEN4_PWD = bytes(4)
-OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG = 0x20, 0x21, 0x22, 0x23, 0x24
+OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25
+DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
+DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4}
+
+
+def df_key(t, k):
+    k = bytes.fromhex(k)
+    return bytes([DF_TYPES[t]]) + (k * 2 if t == "des" else k)
 KEYS = {"a": 1 << 0, "b": 1 << 1, "select": 1 << 2, "start": 1 << 3, "right": 1 << 4, "left": 1 << 5,
         "up": 1 << 6, "down": 1 << 7, "r": 1 << 8, "l": 1 << 9, "x": 1 << 10, "y": 1 << 11}
 NO_CARD = 1  # card op result: no card / auth refused
@@ -211,6 +225,10 @@ class Nfc:
     def isodep(self, inf=b"", activate=False):
         """One ISO-DEP exchange -> answer (with activate: ATS + answer), None on failure (self.why)."""
         return self.card_call(OP_ISODEP, bytes([activate]) + inf, timeout=30)
+
+    def df(self, action, args=b"", timeout=60):
+        """DESFire op (netsrv OP_DF): status byte + data, None on a lost card (self.why)."""
+        return self.card_call(OP_DF, bytes([action]) + args, timeout)
 
     def update(self, data, log=print):
         """Upload a new .3dsx; the app swaps it in, exits and relaunches itself."""
@@ -469,6 +487,37 @@ def main():
             r = nfc.isodep(c)
             print(f">>> {c.hex().upper()}")
             print(f"<<< {r.hex().upper()} ({len(r)} bytes)" if r is not None else f"<<< failed: {nfc.why}")
+    elif what == "df":
+        if "-a" in args:
+            r = nfc.isodep(activate=True)
+            if r is None:
+                sys.exit(f"activate failed: {nfc.why}")
+            print(f"ATS {r.hex().upper()}")
+        for step in (a for a in args if a != "-a"):
+            f = step.split(":")
+            if f[0] == "auth":
+                r = nfc.df(0, bytes([int(f[1], 0)]) + df_key(f[2], f[3]))
+            elif f[0] == "cmd":
+                c = bytes.fromhex(f[3])
+                r = nfc.df(1, bytes([DF_COMM[f[1]], int(f[2], 0)]) + c)
+            elif f[0] == "ck":
+                picc = "picc" in f
+                ver = next((int(x[1:], 0) for x in f if x.startswith("v")), 0)
+                rest = [x for x in f[4:] if x != "picc" and not x.startswith("v")]
+                a = bytes([int(f[1], 0), picc, ver]) + df_key(f[2], f[3])
+                if rest:
+                    a += df_key(rest[0], rest[1])
+                r = nfc.df(2, a)
+            elif f[0] in ("info", "infokeys"):
+                r = nfc.df(3, bytes([f[0] == "infokeys"]), timeout=300)
+                print(r.decode(errors="replace") if r is not None else f"info failed: {nfc.why}")
+                continue
+            else:
+                sys.exit(f"unknown step {step}")
+            if r is None:
+                print(f"{step}: failed: {nfc.why}")
+            else:
+                print(f"{step}: status {r[0]:02X}" + (f" {r[1:].hex().upper()}" if len(r) > 1 else ""))
     elif what == "mfuwrite":
         ok = nfc.mfu_write(int(args[0], 0), bytes.fromhex(args[1]))
         print("VERIFIED" if ok else f"write failed: {nfc.why}")

@@ -3,6 +3,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 #include <3ds.h>
 
 #include "../source/mon.h"
@@ -53,3 +54,35 @@ int monNested(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 co
 	u32 nrarTx, u32 *nt0) { return -1; }
 
 Result i2cNfcWrite(const void *buf, u32 size) { return -1; }
+
+// main.c's progress state, without a clock (osGetTime is 0 here): scenes set prog directly
+Progress prog;
+
+void progJob(void)
+{
+	memset(&prog, 0, sizeof(prog));
+}
+
+void progOp(const char *fmt, ...)
+{
+	va_list va;
+	va_start(va, fmt);
+	vsnprintf(prog.op, sizeof(prog.op), fmt, va);
+	va_end(va);
+	prog.done = prog.total = prog.eta = 0;
+}
+
+void progEta(u32 done, u32 total, u32 etaMs)
+{
+	prog.done = done, prog.total = total, prog.eta = etaMs;
+}
+
+void progStep(u32 done, u32 total)
+{
+	progEta(done, total, 0);
+}
+
+u32 progLeft(void)
+{
+	return prog.eta;
+}

@@ -108,7 +108,7 @@ static void fillMfu(MfuDump *d, const u8 *version, int pages, const MfuType *t)
 
 // --- DESFire ---
 
-static DfInfo dfi, dfIso;
+static DfInfo dfi, dfIso, dfKeyed;
 
 static void dfFile(DfFile *f, u8 fid, u8 type, u8 comm, u16 access, u32 size, int dataLen, DfInfo *d)
 {
@@ -130,6 +130,7 @@ static void dfFile(DfFile *f, u8 fid, u8 type, u8 comm, u16 access, u32 size, in
 	}
 	if (dataLen >= 0) {
 		f->hasData = true;
+		f->dataKey = 0xE;
 		f->dataOff = d->poolUsed;
 		f->dataLen = dataLen;
 		for (int i = 0; i < dataLen; i++) d->pool[d->poolUsed++] = "WAVELYNX TECH 01 "[i % 17] + (i / 17);
@@ -169,6 +170,46 @@ static void fillDf(void)
 				f % 3 == 0 ? 32 + 16 * f : -1, d);
 		if (i == 0) a->files[2].dataSt = 0x9D, a->files[5].st = 0x9D;
 	}
+	// the EV3 test card, read with the dictionary: AES / 3K3DES / DES apps, one key not found
+	DfInfo *k = &dfKeyed;
+	*k = *d;
+	k->keyed = true, k->dictKeys = 17;
+	k->ver[3] = 0x33, k->ver[5] = 0x18, k->freeMem = 4192;
+	k->keySet = 0x0F, k->maxKeys = 0x01;
+	k->piccKey = (DfKey){ true, DF_2K3DES };
+	k->napps = 3;
+	memset(k->apps, 0, sizeof(k->apps));
+	k->poolUsed = 0;
+	static const u32 aids[] = { 0xA1A1A1, 0xB2B2B2, 0xC3C3C3 };
+	static const u8 mk[] = { 0x83, 0x42, 0x02 }, ksets[] = { 0x0F, 0x09, 0x0F };
+	for (int i = 0; i < 3; i++) {
+		DfApp *a = &k->apps[i];
+		a->aid = aids[i], a->keySet = ksets[i], a->maxKeys = mk[i], a->nKeyVer = mk[i] & 0xF;
+		for (int j = 0; j < a->nKeyVer; j++) {
+			a->keyVer[j] = j;
+			a->keys[j] = (DfKey){ j < 2, i == 0 ? DF_AES : i == 1 ? DF_3K3DES : DF_2K3DES };
+			if (j == 1) memcpy(a->keys[j].key, "\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xAA\xBB\xCC\xDD\xEE\xFF", 16);
+		}
+	}
+	DfApp *a = &k->apps[0];
+	a->nfiles = 6;
+	static const u8 types[] = { 0, 0, 0, 2, 3, 1 }, comms[] = { 0, 1, 3, 3, 1, 0 };
+	static const u16 acc[] = { 0xE100, 0x1110, 0x2220, 0x1110, 0x1110, 0x2220 };
+	static const int lens[] = { 32, 48, -1, 4, 16, -1 };
+	for (int f = 0; f < 6; f++) {
+		dfFile(&a->files[f], f + 1, types[f], comms[f], acc[f], f == 1 ? 48 : f == 2 ? 64 : 32, lens[f], k);
+		if (f && lens[f] >= 0) a->files[f].dataKey = 1;
+	}
+	k->apps[1].nfiles = 1;
+	dfFile(&k->apps[1].files[0], 1, 0, 3, 0x1100, 32, 32, k);
+	k->apps[1].files[0].dataKey = 1;
+	k->apps[2].nfiles = 1;
+	dfFile(&k->apps[2].files[0], 1, 0, 1, 0x1100, 24, 24, k);
+	k->apps[2].files[0].dataKey = 1;
+	k->apps[2].keyVer[1] = 0x55;
+	dfFile(&a->files[2], 3, 0, 3, 0x2220, 256, 256, k); // a long one, read with key 2
+	a->files[2].dataKey = 2;
+
 	memset(&dfIso, 0, sizeof(dfIso));
 	static const u8 ats2[] = { 0x13, 0x78, 0x80, 0x72, 0x02, 0x80, 0x31, 0x80, 0x66, 0xB1, 0x84, 0x0C, 0x01, 0x6E,
 		0x01, 0x83, 0x00, 0x90, 0x00 };
@@ -288,6 +329,8 @@ static void dfCard(void) { simDfCard(&cardDf, &dfi, 1, ""); }
 static void dfIsoCard(void) { simDfCard(&card10, &dfIso, 0, "GetVersion: permission denied 9D (not a DESFire)"); }
 static void dfData(void) { simDfData(0, 3); }
 static void dfDataShort(void) { simDfData(0, 0); }
+static void dfKeyedCard(void) { simDfCard(&cardDf, &dfKeyed, 1, ""); }
+static void dfKeyedData(void) { simDfData(0, 2); }
 
 #define D KEYS(KEY_DOWN)
 #define U KEYS(KEY_UP)
@@ -363,6 +406,9 @@ static const SimStep script[] = {
 	R, SHOT("df_app1"), R, SHOT("df_app2"), R, SHOT("df_app3"), R, SHOT("df_app4_selerr"), R, SHOT("df_app5_keyerr"),
 	R, SHOT("df_app6_nofiles"), B,
 	CALL(reset), CALL(dfIsoCard), SHOT("df_iso_card"),
+	CALL(reset), CALL(dfKeyedCard), SHOT("df_keyed_card"), A, SHOT("df_keyed_app0"), D, D, D, D, D, SHOT("df_keyed_app0_scrolled"),
+	R, SHOT("df_keyed_app1"), R, SHOT("df_keyed_app2"), B,
+	CALL(reset), CALL(dfKeyedCard), CALL(dfKeyedData), SHOT("df_keyed_data256"), D, D, D, D, SHOT("df_keyed_data256_end"), B,
 	CALL(reset), CALL(dfMenu), CALL(dfIsoCard), B, SHOT("df_menu_lastcard"),
 	END,
 };

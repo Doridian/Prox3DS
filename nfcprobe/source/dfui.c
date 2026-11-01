@@ -1,5 +1,5 @@
-// MIFARE DESFire family (any ISO14443-4 card gets in, for its ATS): the keyless card screen and an
-// application screen with its files. Saves the info as text to the SD card.
+// MIFARE DESFire family (any ISO14443-4 card gets in, for its ATS): the card screen (keyless or with the key
+// dictionary) and an application screen with its files. Saves the info as text to the SD card.
 
 #include <stdio.h>
 #include <string.h>
@@ -18,10 +18,12 @@ static UiList al;
 
 static const Screen cardScreen, appScreen_;
 
-static int dfProbe(void)
+static bool withKeys; // the last scan tried the key dictionary
+
+static int probe(bool keys)
 {
 	al = (UiList){ 0 };
-	diResult = dfReadInfo(&di);
+	diResult = dfReadInfo(&di, keys);
 	sc = card; // after our reselect: the ROM's ISO-DEP activation reports ATQA 0000
 	snprintf(diWhy, sizeof(diWhy), "%s", dfWhy());
 	if (diResult <= 0) logp("DESFire: %s\n", diWhy);
@@ -30,12 +32,17 @@ static int dfProbe(void)
 	return diResult < 0 ? -1 : diResult || di.atsLen;
 }
 
+static int dfProbe(void)
+{
+	return probe(false);
+}
+
 static int scanResult;
 
 static void runScan(void)
 {
 	scanResult = 0;
-	if (cardWait()) scanResult = dfProbe();
+	if (cardWait()) scanResult = probe(withKeys);
 }
 
 static void dfShow(void)
@@ -52,7 +59,14 @@ static void doneScan(void)
 
 static void startScan(void)
 {
+	withKeys = false;
 	jobStart("Scanning", runScan, doneScan, true);
+}
+
+static void startKeyScan(void)
+{
+	withKeys = true;
+	jobStart("Scanning with keys", runScan, doneScan, true);
 }
 
 static void save(void)
@@ -74,7 +88,7 @@ static void hexStr(char *out, const u8 *p, int n)
 
 static void cardDraw(void)
 {
-	char hdr[48], s[120];
+	char hdr[48], s[160];
 	u32 txt = uiCol[COL_TEXT], dim = uiCol[COL_DIM];
 	snprintf(hdr, sizeof(hdr), "ATQA %02X%02X  SAK %02X", sc.atqa[1], sc.atqa[0], sc.sak);
 	uiHeader(diResult > 0 ? "DESFire: card" : "ISO14443-4: card", hdr);
@@ -127,11 +141,23 @@ static void cardDraw(void)
 		uiText(14, y, S_SMALL, dim, "No originality signature");
 		y += 2 * SMALL_H;
 	}
+	char pk[64];
+	if (di.keyed && di.piccKey.known) {
+		char hex[49];
+		dfKeyHex(&di.piccKey, hex);
+		snprintf(pk, sizeof(pk), "%s %s", dfKeyName(&di.piccKey), hex);
+	} else {
+		snprintf(pk, sizeof(pk), "%s%s", di.keySt ? "?" : dfKeyType(di.maxKeys), di.keyed ? ", not in the dictionary" : "");
+	}
 	if (di.keySt)
-		uiText(14, y, S_SMALL, dim, "PICC key settings: %s", dfStatusName(di.keySt));
+		snprintf(s, sizeof(s), "PICC master key: %s   key settings: %s", pk, dfStatusName(di.keySt));
+	else if (di.keyed && di.piccKey.known) // the key takes the room
+		snprintf(s, sizeof(s), "PICC key: %s, v%02X   AID list %s   create %s", pk, di.keyVer,
+			di.keySet & 2 ? "free" : "keyed", di.keySet & 4 ? "free" : "keyed");
 	else
-		uiText(14, y, S_SMALL, txt, "PICC master key: %s, version %02X   AID list %s   create/delete %s", dfKeyType(di.maxKeys),
-			di.keyVer, di.keySet & 2 ? "free" : "keyed", di.keySet & 4 ? "free" : "keyed");
+		snprintf(s, sizeof(s), "PICC master key: %s, version %02X   AID list %s   create/delete %s", pk, di.keyVer,
+			di.keySet & 2 ? "free" : "keyed", di.keySet & 4 ? "free" : "keyed");
+	uiText(14, y, S_SMALL, di.keySt && !di.piccKey.known ? dim : txt, "%s", uiFit(s, UI_W - 28, S_SMALL));
 	y += SMALL_H + 6;
 
 	int n = di.napps < DF_MAX_APPS ? di.napps : DF_MAX_APPS;
@@ -155,14 +181,18 @@ static void cardDraw(void)
 				uiText(x, y + 1, S_SMALL, uiCol[COL_WARN], "select: %s", dfStatusName(a->selSt));
 				continue;
 			}
-			if (!a->keySt) uiText(x, y + 1, S_SMALL, txt, "%d %s key%s", a->maxKeys & 0xF, dfKeyType(a->maxKeys),
-				(a->maxKeys & 0xF) == 1 ? "" : "s");
+			int nk = a->maxKeys & 0xF, found = 0;
+			for (int k = 0; k < nk && k < 14; k++) found += a->keys[k].known;
+			if (!a->keySt && di.keyed) uiText(x, y + 1, S_SMALL, txt, "%d %s key%s, %d found", nk, dfKeyType(a->maxKeys),
+				nk == 1 ? "" : "s", found);
+			else if (!a->keySt) uiText(x, y + 1, S_SMALL, txt, "%d %s key%s", nk, dfKeyType(a->maxKeys), nk == 1 ? "" : "s");
+			else if (a->keys[0].known) uiText(x, y + 1, S_SMALL, txt, "key 0 found");
 			if (a->fileSt) uiTextRight(UI_W - 14, y + 1, S_SMALL, dim, "files: %s", dfStatusName(a->fileSt));
 			else uiTextRight(UI_W - 14, y + 1, S_SMALL, txt, "%d file%s", a->nfiles, a->nfiles == 1 ? "" : "s");
 		}
 	}
-	uiFooter(n ? BTN_A " application   " BTN_X " scan again   " BTN_Y " save   " BTN_B " back"
-	           : BTN_X " scan again   " BTN_Y " save   " BTN_B " back");
+	uiFooter(n ? BTN_A " application   " BTN_X " scan   " BTN_R " with keys   " BTN_Y " save   " BTN_B " back"
+	           : BTN_X " scan   " BTN_R " with keys   " BTN_Y " save   " BTN_B " back");
 }
 
 static UiList fl;
@@ -179,6 +209,7 @@ static void cardInput(u32 kDown, u32 kRepeat)
 			appScreen(&appScreen_);
 		}
 		if (kDown & KEY_X) startScan();
+		if (kDown & KEY_R) startKeyScan();
 		if (kDown & KEY_Y) save();
 	}
 	if (kDown & KEY_B) appBack();
@@ -189,6 +220,20 @@ static const Screen cardScreen = { NULL, cardInput, cardDraw };
 // --- application screen ---
 
 #define FILE_ROWS 4 // two lines each, under up to four lines of key settings
+
+// The dictionary's finds: "Keys: 0 DES 00000000..  1 AES 00112233..  2 ?", the start of each key
+static void keysLine(const DfApp *a, float y)
+{
+	char s[160] = "Keys:";
+	int n = a->keySt ? 1 : a->maxKeys & 0xF;
+	for (int k = 0, o = 5; k < n && k < 14 && o < (int)sizeof(s) - 24; k++) {
+		char hex[49];
+		dfKeyHex(&a->keys[k], hex);
+		if (a->keys[k].known) o += sprintf(s + o, "  %d %s %.8s..", k, dfKeyName(&a->keys[k]), hex);
+		else o += sprintf(s + o, "  %d ?", k);
+	}
+	uiText(12, y, S_SMALL, uiCol[COL_TEXT], "%s", uiFit(s, UI_W - 24, S_SMALL));
+}
 
 static void appDraw(void)
 {
@@ -222,6 +267,7 @@ static void appDraw(void)
 	if (a->keySt) {
 		uiText(12, y, S_SMALL, dim, "Key settings: %s", dfStatusName(a->keySt));
 		y += SMALL_H;
+		if (di.keyed) keysLine(a, y), y += SMALL_H;
 	} else {
 		u8 ks = a->keySet, ck = ks >> 4;
 		char kv[48] = "?";
@@ -239,7 +285,8 @@ static void appDraw(void)
 		if (ck == 0xF) snprintf(ckey, sizeof(ckey), "frozen");
 		else if (ck == 0xE) snprintf(ckey, sizeof(ckey), "changed with the same key");
 		else snprintf(ckey, sizeof(ckey), "changed with key %X", ck);
-		uiText(12, y, S_SMALL, txt, "Master key: %s   other keys: %s", ks & 1 ? "changeable" : "frozen", ckey);
+		if (di.keyed) keysLine(a, y);
+		else uiText(12, y, S_SMALL, txt, "Master key: %s   other keys: %s", ks & 1 ? "changeable" : "frozen", ckey);
 		y += SMALL_H;
 	}
 	y += 4;
@@ -258,14 +305,17 @@ static void appDraw(void)
 			if (fl.top + i == fl.sel) uiRect(8, y - 1, UI_W - 16, 2 * SMALL_H + 1, uiCol[COL_SEL]);
 			uiText(14, y, S_SMALL, uiCol[COL_ACCENT], "%02X", f->fid);
 			// what the read got, on the right of whichever line has room for it
+			bool noKey = di.keyed && !f->hasData && !f->st && !dfFreeRead(f);
 			if (f->hasData && f->dataSt) snprintf(data, sizeof(data), "%s", dfStatusName(f->dataSt));
+			else if (f->hasData && f->dataKey != 0xE) snprintf(data, sizeof(data), "%d bytes, key %X", f->dataLen, f->dataKey);
 			else if (f->hasData) snprintf(data, sizeof(data), "%d bytes read", f->dataLen);
+			else if (noKey) snprintf(data, sizeof(data), "no key");
 			float dw = *data ? uiTextWidth(S_SMALL, data) + 10 : 0, room = UI_W - 14 - 34;
 			int dl = !*data || 34 + uiTextWidth(S_SMALL, desc) + dw <= UI_W - 14 ? 0 :
 				34 + uiTextWidth(S_SMALL, keys) + dw <= UI_W - 14 ? 1 : 0;
 			uiText(34, y, S_SMALL, f->st ? uiCol[COL_WARN] : txt, "%s", uiFit(desc, room - (dl ? 0 : dw), S_SMALL));
 			uiText(34, y + SMALL_H, S_SMALL, dim, "%s", uiFit(keys, room - (dl ? dw : 0), S_SMALL));
-			if (*data) uiTextRight(UI_W - 14, y + dl * SMALL_H, S_SMALL, uiCol[f->dataSt ? COL_WARN : COL_OK], "%s", data);
+			if (*data) uiTextRight(UI_W - 14, y + dl * SMALL_H, S_SMALL, noKey ? dim : uiCol[f->dataSt ? COL_WARN : COL_OK], "%s", data);
 		}
 	}
 	const DfFile *f = a->fileSt || !a->nfiles ? NULL : &a->files[fl.sel];
@@ -273,25 +323,75 @@ static void appDraw(void)
 	                                       : BTN_UD " files   " BTN_LR " application   " BTN_Y " save   " BTN_B " back");
 }
 
-// A free-read file's contents: hex + ASCII, as much as fits a message box.
-static void showData(const DfApp *a, const DfFile *f)
+// --- file contents: a hex + ASCII grid on the dump editor's layout (editor.c) ---
+
+#define DATA_Y    39
+#define DATA_ROWS 13
+#define HEX_X     26
+#define BYTE_W    16.5f
+#define ASCII_X   300
+#define ASCII_W   5.8f
+#define S_ASCII   0.34f
+
+static const DfFile *df_;
+static int dtop;
+
+static float byteX(int i)
 {
-	char msg[480];
-	int o = 0, n = f->dataLen < 96 ? f->dataLen : 96;
-	for (int r = 0; r < n; r += 8) {
-		for (int i = r; i < r + 8; i++)
-			o += i < n ? sprintf(msg + o, "%02X ", di.pool[f->dataOff + i]) : sprintf(msg + o, "   ");
-		for (int i = r; i < r + 8 && i < n; i++) {
-			u8 c = di.pool[f->dataOff + i];
-			msg[o++] = c >= 32 && c < 127 ? c : '.';
-		}
-		msg[o++] = '\n';
+	return HEX_X + i * BYTE_W + (i >= 8 ? 3 : 0);
+}
+
+static void dataDraw(void)
+{
+	const DfApp *a = &di.apps[al.sel];
+	const DfFile *f = df_;
+	const u8 *p = di.pool + f->dataOff;
+	char t[48], h[32];
+	snprintf(t, sizeof(t), "DESFire: %06lX file %02X", a->aid, f->fid);
+	if (f->dataKey == 0xE) snprintf(h, sizeof(h), "%d bytes, free read", f->dataLen);
+	else snprintf(h, sizeof(h), "%d bytes, key %X", f->dataLen, f->dataKey);
+	uiHeader(t, h);
+	for (int i = 0; i < 16; i++) {
+		char c[2] = { "0123456789ABCDEF"[i], 0 };
+		uiMono(byteX(i) + MONO_W / 2, DATA_Y - 9, uiCol[COL_DIM], c);
 	}
-	snprintf(msg + o, sizeof(msg) - o, f->dataLen > n ? "(%d more bytes in the saved file)" : "", f->dataLen - n);
-	if (o && f->dataLen <= n) msg[o - 1] = 0;
-	char title[48];
-	snprintf(title, sizeof(title), "%06lX file %02X: %d bytes", a->aid, f->fid, f->dataLen);
-	msgBox(title, "%s", msg);
+	int rows = (f->dataLen + 15) / 16;
+	for (int r = dtop; r < rows && r < dtop + DATA_ROWS; r++) {
+		float y = DATA_Y + 2 + (r - dtop) * 13;
+		char s[17];
+		snprintf(s, sizeof(s), "%03X", r * 16);
+		uiMonoS(0, y, S_MONO, 7, uiCol[COL_DIM], s);
+		int n = f->dataLen - r * 16 < 16 ? f->dataLen - r * 16 : 16;
+		for (int i = 0; i < n; i++) {
+			u8 c = p[r * 16 + i];
+			snprintf(s, sizeof(s), "%02X", c);
+			uiMono(byteX(i), y, uiCol[COL_TEXT], s);
+		}
+		for (int i = 0; i < n; i++) s[i] = p[r * 16 + i] >= 32 && p[r * 16 + i] < 127 ? p[r * 16 + i] : '.';
+		s[n] = 0;
+		uiMonoS(ASCII_X, y + 1, S_ASCII, ASCII_W, uiCol[COL_DIM], s);
+	}
+	if (rows > DATA_ROWS) {
+		float hh = DATA_ROWS * 13, bar = hh * DATA_ROWS / rows;
+		uiRect(UI_W - 4, DATA_Y + 1, 2, hh, uiCol[COL_PANEL]);
+		uiRect(UI_W - 4, DATA_Y + 1 + hh * dtop / rows, 2, bar, uiCol[COL_DIM]);
+	}
+	uiFooter(rows > DATA_ROWS ? BTN_UD " scroll   " BTN_B " back" : BTN_B " back");
+}
+
+static void dataInput(u32 kDown, u32 kRepeat)
+{
+	int rows = (df_->dataLen + 15) / 16, max = rows > DATA_ROWS ? rows - DATA_ROWS : 0;
+	if ((kRepeat & KEY_UP) && dtop > 0) dtop--;
+	if ((kRepeat & KEY_DOWN) && dtop < max) dtop++;
+	if (kDown & KEY_B) appBack();
+}
+
+static void showData(const DfFile *f)
+{
+	static const Screen s = { NULL, dataInput, dataDraw };
+	df_ = f, dtop = 0;
+	appScreen(&s);
 }
 
 static void appInput(u32 kDown, u32 kRepeat)
@@ -306,7 +406,7 @@ static void appInput(u32 kDown, u32 kRepeat)
 		fl = (UiList){ 0 };
 	}
 	if ((kDown & KEY_A) && !a->fileSt && a->nfiles && a->files[fl.sel].hasData && !a->files[fl.sel].dataSt)
-		showData(a, &a->files[fl.sel]);
+		showData(&a->files[fl.sel]);
 	if (kDown & KEY_Y) save();
 	if (kDown & KEY_B) appBack();
 }
@@ -319,6 +419,9 @@ static const MenuEntry dfEntries[] = {
 	{ "Scan card", "Everything a DESFire tells without a key: version, storage, free memory, originality "
 	               "signature, PICC and application key settings, applications and their files. Any other "
 	               "ISO14443-4 card shows its ATS.", startScan },
+	{ "Scan with keys", "The same, then the key dictionary (built in + " DF_KEYS ") on the PICC master key and "
+	                    "every application key (DES, 2K3DES, 3K3DES, AES). Found keys open protected lists and "
+	                    "files, in plain, MAC and full (encrypted) mode.", startKeyScan },
 };
 
 static void dfExtra(float y)
@@ -353,7 +456,7 @@ static bool dfMatch(const Card *c)
 
 const CardFamily dfFamily = {
 	"DESFire",
-	"MIFARE DESFire (EV1-EV3, Light) without keys: version, storage, signature, key settings, applications "
-	"and files, like pm3 hf mfdes info / lsapp --no-auth. Other ISO14443-4 cards: the ATS.",
+	"MIFARE DESFire (EV1-EV3, Light): version, storage, signature, key settings, applications and files, "
+	"like pm3 hf mfdes info / lsapp; a key dictionary for protected ones. Other ISO14443-4 cards: the ATS.",
 	dfMatch, dfProbe, dfShow, dfOpenMenu,
 };

@@ -754,3 +754,41 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   lines cut). Remote keys don't scroll the on-screen log, so use this for remote tests.
 - Gen1a card C1C1C1C1 (SAK 88, keys FF): no ATS, block 0 WRITE NAK 4 with key A and B -> "Gen1a"
   only on the card screen (no false Gen2); `magic` 0.6 s; block 0 intact.
+
+## Keyed DESFire: EV1 secure messaging, key dictionary (issue #8) -- 2026-11-01
+- Blank EV3 (one of 10): UID 040C686A9F2390, ATS 067577810280, GetVersion 04010133001805 / 04010103001805
+  (EV3, 4096 bytes), batch 2143763030, week 45/2025, 5120 bytes free. PICC key settings 0F, 1 DES key
+  version 00 = all-zero DES (EV1 ISO auth 1A with 00*8 works).
+- dfcrypto.c: DES / 2K3DES / 3K3DES (EDE) / AES-128, CBC with a running IV, CMAC (Rb 1B / 87), CRC32
+  (init FFFFFFFF, no final xor). 400 random vectors against Python cryptography (CBC both ways, CMAC, CRC).
+- desfire.c, as pm3's EV1 channel (desfiresecurechan.c): auth 1A (DES/2K3DES/3K3DES) or AA (AES), RndB
+  decrypted with IV 0, RndA||rol(RndB) encrypted with the IV running on, rol(RndA) checked. Session key
+  pm3 DesfireGenSessionKeyEV1 (2K3DES with equal halves: single DES). Then every command: CMAC over
+  cmd+data updates the IV (our MAC only sent for the writes 3D 3B DB 0C DC 1C C8 in MAC mode); full mode
+  with data: data + CRC32(cmd+hdr+data), zero padded, encrypted; answers: data + 8-byte CMAC over
+  data||status, or (full, no data sent) encrypted data + CRC32(data||00) + padding. Errors and 5A end it.
+  Native TX chaining at 54 bytes (AF). ChangeKey: new key (xor old for another key), AES version,
+  CRC32 over C4+keyNo+cryptogram, + CRC32(new key) for another key; encrypted without our CRC; changing the
+  session's own key ends the session with a bare 00.
+- Verified on the EV3, all from the 3DS (net op 0x25 OP_DF, `nfcnet.py HOST df ...`): created
+  A1A1A1 (3 AES keys; files std plain/MAC/full, value full, linear record MAC, backup plain), B2B2B2
+  (2 3K3DES keys, key settings 09: file list needs key 0), C3C3C3 (2 DES keys, key 1 -> 2K3DES). ChangeKey
+  of other keys and of key 0 itself; writes in all modes incl. a 64-byte full write (chained), commits;
+  reads back identical. GetCardUID (51, full) decrypts to the real UID. A DES key 1 changed to
+  0011..EEFF reads back as key version 55: DES key versions live in the key bytes' LSBs.
+- Test layout keys: PICC DES 00*8; A1A1A1 key 0 AES 00*16, key 1 AES 00112233445566778899AABBCCDDEEFF
+  (v1), key 2 AES 5EC12E7A5EC12E7A0123456789ABCDEF (v2, NOT in the dictionary); B2B2B2 key 0 3K3DES FF*24,
+  key 1 3K3DES 00112233445566778899AABBCCDDEEFF0102030405060708; C3C3C3 key 0 DES 00*8, key 1 2K3DES
+  00112233445566778899AABBCCDDEEFF.
+- Scan with keys (DESFire menu, or R on the card screen): built-in dictionary (17 keys, pm3's commonest)
+  + sdmc:/nfcprobe/desfire/keys.txt (8 / 16 / 24-byte hex lines) on the PICC master key and every app key
+  (by the key type from GetKeySettings; unknown type: AES, 2K3DES, 3K3DES); AE = wrong key, 40 / 9D stop.
+  Key 0 re-reads what was refused (key settings, file list, file settings); every file whose read /
+  read-write (value: also write) key is known is read after a fresh select + auth, in its comm mode.
+  Whole test card: 3.3 s; finds everything but A1A1A1 key 2, its two files show "no key".
+- Not done: legacy D40 auth (0A, MF3ICD40 only), EV2 auth (71) / EV2 secure messaging, LRP, key entry on
+  the 3DS (keys.txt only; untested from the SD so far), write / format / create from the UI (net op only).
+- File contents (A on a read file): its own screen now, a monospace hex + ASCII grid on the Classic dump
+  editor's layout (16 per row, 13 rows, scrolls), the whole file instead of a message box's first 96 bytes.
+- Sim: the UI simulator didn't build at 3978172 (C2D_DrawLine / C2D_DrawTriangle, prog* missing from
+  the fakes); fixed, and it now rebuilds when a ../source/*.c changes (hook_*.c include them).

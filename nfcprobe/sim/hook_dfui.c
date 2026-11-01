@@ -18,5 +18,6 @@ void simDfMenu(void)
 
 void simDfData(int app, int file)
 {
-	showData(&di.apps[app], &di.apps[app].files[file]);
+	al.sel = app;
+	showData(&di.apps[app].files[file]);
 }
