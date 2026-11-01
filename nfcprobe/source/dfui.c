@@ -7,6 +7,7 @@
 
 #include "app.h"
 #include "desfire.h"
+#include "entry.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -17,6 +18,7 @@ static char diWhy[64];
 static UiList al;
 
 static const Screen cardScreen, appScreen_;
+static void cardMenu(void), appMenu(void);
 
 static bool withKeys; // the last scan tried the key dictionary
 
@@ -191,8 +193,8 @@ static void cardDraw(void)
 			else uiTextRight(UI_W - 14, y + 1, S_SMALL, txt, "%d file%s", a->nfiles, a->nfiles == 1 ? "" : "s");
 		}
 	}
-	uiFooter(n ? BTN_A " application   " BTN_X " scan   " BTN_R " with keys   " BTN_Y " save   " BTN_B " back"
-	           : BTN_X " scan   " BTN_R " with keys   " BTN_Y " save   " BTN_B " back");
+	uiFooter(n ? BTN_A " application   " BTN_X " scan   " BTN_R " with keys   " BTN_Y " card   " BTN_B " back"
+	           : BTN_X " scan   " BTN_R " with keys   " BTN_Y " card   " BTN_B " back");
 }
 
 static UiList fl;
@@ -210,7 +212,7 @@ static void cardInput(u32 kDown, u32 kRepeat)
 		}
 		if (kDown & KEY_X) startScan();
 		if (kDown & KEY_R) startKeyScan();
-		if (kDown & KEY_Y) save();
+		if (kDown & KEY_Y) cardMenu();
 	}
 	if (kDown & KEY_B) appBack();
 }
@@ -319,8 +321,8 @@ static void appDraw(void)
 		}
 	}
 	const DfFile *f = a->fileSt || !a->nfiles ? NULL : &a->files[fl.sel];
-	uiFooter(f && f->hasData && !f->dataSt ? BTN_A " contents   " BTN_UD " files   " BTN_LR " application   " BTN_Y " save   " BTN_B " back"
-	                                       : BTN_UD " files   " BTN_LR " application   " BTN_Y " save   " BTN_B " back");
+	uiFooter(f && f->hasData && !f->dataSt ? BTN_A " contents   " BTN_UD " files   " BTN_LR " application   " BTN_Y " application menu   " BTN_B " back"
+	                                       : BTN_UD " files   " BTN_LR " application   " BTN_Y " application menu   " BTN_B " back");
 }
 
 // --- file contents: a hex + ASCII grid on the dump editor's layout (editor.c) ---
@@ -371,6 +373,11 @@ static void dataDraw(void)
 		s[n] = 0;
 		uiMonoS(ASCII_X, y + 1, S_ASCII, ASCII_W, uiCol[COL_DIM], s);
 	}
+	if (f->set[0] == 2 && f->dataLen == 4) {
+		s32 v;
+		memcpy(&v, p, 4);
+		uiText(12, DATA_Y + 2 + 13 + 8, S_BODY, uiCol[COL_TEXT], "Value: %ld", v);
+	}
 	if (rows > DATA_ROWS) {
 		float hh = DATA_ROWS * 13, bar = hh * DATA_ROWS / rows;
 		uiRect(UI_W - 4, DATA_Y + 1, 2, hh, uiCol[COL_PANEL]);
@@ -407,11 +414,874 @@ static void appInput(u32 kDown, u32 kRepeat)
 	}
 	if ((kDown & KEY_A) && !a->fileSt && a->nfiles && a->files[fl.sel].hasData && !a->files[fl.sel].dataSt)
 		showData(&a->files[fl.sel]);
-	if (kDown & KEY_Y) save();
+	if (kDown & KEY_Y) appMenu();
 	if (kDown & KEY_B) appBack();
 }
 
 static const Screen appScreen_ = { NULL, appInput, appDraw };
+
+// --- operations: create / write / delete / format / keys ---
+// Each runs as a job: the scanned card on the reader (same UID), the operation, then a scan with keys
+// so the screens show the result. A key the operation needs and the last scan didn't find is asked
+// for first; keys that worked or were set go into DF_KEYS (the dictionary) for later scans.
+
+static struct {
+	const char *title;
+	u32 aid;      // 0 = PICC
+	u32 focus;    // the application the screens go back to afterwards
+	int k;        // the key to authenticate with, -1 = none
+	DfKey key;
+	u8 c[300];    // the command (len 0: authenticate only)
+	u32 len, hdr;
+	u8 comm;
+	bool commit;
+	bool change, picc; // ChangeKey: key nk becomes nkey (AES: version ver), old = its current one
+	u8 nk, ver;
+	DfKey nkey, old;
+	int result;
+	char why[80];
+} op;
+
+static int file_; // the application screen's file list selection, kept over the rescan
+static DfKey *entered; // a key the user just entered: forgotten if it didn't authenticate
+
+static void runOp(void)
+{
+	op.result = 0;
+	*op.why = 0;
+	if (!cardWait()) return;
+	if (card.uidLen != sc.uidLen || memcmp(card.uid, sc.uid, sc.uidLen)) {
+		snprintf(op.why, sizeof(op.why), "Not the card that was scanned (another UID).");
+		return;
+	}
+	const DfKey *k = op.k < 0 ? NULL : &op.key;
+	if (op.change) op.result = dfOpChangeKey(&di, op.aid, op.k, k, op.nk, &op.nkey, op.ver, &op.old, op.picc);
+	else if (!op.len) op.result = dfOpAuth(&di, op.aid, op.k, k);
+	else op.result = dfOp(&di, op.aid, op.k, k, op.c, op.len, op.hdr, op.comm, op.commit);
+	snprintf(op.why, sizeof(op.why), "%s", dfWhy());
+	logp("%s: %s\n", op.title, op.result > 0 ? "done" : op.why);
+	if (op.result > 0) {
+		if (k) dfRememberKey(k);
+		progOp("Reading the card again");
+		probe(true);
+	}
+	iso14aParity(true);
+}
+
+static void doneOp(void)
+{
+	if (op.result <= 0) {
+		if (entered && !strncmp(op.why, "key ", 4)) entered->known = false;
+		entered = NULL;
+		if (op.result < 0) msgBox(op.title, "The chip stopped answering.\nTry again.");
+		else if (!mfCancel) msgBox(op.title, "Failed: %s", *op.why ? op.why : "no card");
+		return;
+	}
+	entered = NULL;
+	toast("%s: done", op.title);
+	// back where it was: the application by its AID, the file by its place
+	int n = di.napps < DF_MAX_APPS ? di.napps : DF_MAX_APPS, found = -1;
+	for (int i = 0; i < n; i++)
+		if (di.apps[i].aid == op.focus) found = i;
+	if (found >= 0) {
+		al.sel = found, al.top = found >= APP_ROWS ? found - APP_ROWS + 1 : 0;
+		int nf = di.apps[found].nfiles;
+		fl.sel = file_ < nf ? file_ : nf ? nf - 1 : 0;
+		fl.top = fl.sel >= 4 ? fl.sel - 3 : 0;
+	} else if (appTop() == &appScreen_) {
+		appBack(); // its application is gone
+	}
+}
+
+static void opRun(void)
+{
+	jobStart(op.title, runOp, doneOp, true);
+}
+
+static void opReset(const char *title, u32 aid)
+{
+	memset(&op, 0, sizeof(op));
+	op.title = title, op.aid = op.focus = aid, op.k = -1;
+}
+
+static void opAuth(int k, const DfKey *key)
+{
+	op.k = k;
+	if (key) op.key = *key;
+}
+
+static void opCmd(const u8 *c, u32 len, u32 hdr, u8 comm, bool commit)
+{
+	memcpy(op.c, c, len);
+	op.len = len, op.hdr = hdr, op.comm = comm, op.commit = commit;
+}
+
+// --- keys the user enters ---
+
+static struct {
+	DfKey *slot;
+	void (*cont)(void);
+	char title[64], what[128];
+} need;
+
+static void needEntered(const u8 *b, u32 len)
+{
+	DfKey *s = need.slot;
+	u8 type = s->type; // needAs set it
+	memset(s, 0, sizeof(*s));
+	s->known = true;
+	s->type = type;
+	memcpy(s->key, b, len);
+	if (len == 8) memcpy(s->key + 8, b, 8), s->type = DF_2K3DES;
+	entered = s;
+	need.cont();
+}
+
+static void needAs(u8 type, u32 len)
+{
+	need.slot->type = type;
+	char what[160];
+	snprintf(what, sizeof(what), "%s (%s, %lu bytes).", need.what, len == 8 ? "DES" : dfKeyTypeName(type), len);
+	entryHex(need.title, what, len, NULL, needEntered);
+}
+
+static void needDes(void) { needAs(DF_2K3DES, 8); }
+static void need2k(void) { needAs(DF_2K3DES, 16); }
+static void need3k(void) { needAs(DF_3K3DES, 24); }
+static void needAes(void) { needAs(DF_AES, 16); }
+
+// Asks for a key of type kt (GetKeySettings bits 6-7; -1 = unknown) into slot, then cont.
+static void askKey(DfKey *slot, int kt, const char *title, const char *what, void (*cont)(void))
+{
+	need.slot = slot, need.cont = cont;
+	snprintf(need.title, sizeof(need.title), "%s", title);
+	snprintf(need.what, sizeof(need.what), "%s", what);
+	if (kt == 1) need3k();
+	else if (kt == 2) needAes();
+	else if (kt == 0) {
+		static const MenuItem items[] = { { "DES (8 bytes)", needDes }, { "2K3DES (16 bytes)", need2k } };
+		popup("Key type", items, 2);
+	} else {
+		static const MenuItem items[] = { { "AES (16 bytes)", needAes }, { "DES (8 bytes)", needDes },
+			{ "2K3DES (16 bytes)", need2k }, { "3K3DES (24 bytes)", need3k } };
+		popup("Key type", items, 4);
+	}
+}
+
+// Key k of aid (slot): known goes straight on, else the user enters it first.
+static void needKey(u32 aid, int k, DfKey *slot, int kt, void (*cont)(void))
+{
+	if (slot->known) {
+		cont();
+		return;
+	}
+	char t[64], w[128];
+	if (aid) snprintf(t, sizeof(t), "%06lX key %d", aid, k), snprintf(w, sizeof(w), "Key %d of application %06lX is not known: enter it", k, aid);
+	else snprintf(t, sizeof(t), "PICC master key"), snprintf(w, sizeof(w), "The PICC master key is not known: enter it");
+	askKey(slot, kt, t, w, cont);
+}
+
+static int piccType(void)
+{
+	return di.keySt ? -1 : di.maxKeys >> 6;
+}
+
+static int appType(const DfApp *a)
+{
+	return a->keySt ? -1 : a->maxKeys >> 6;
+}
+
+static DfApp *curApp(void)
+{
+	return &di.apps[al.sel];
+}
+
+static DfFile *curFile(void)
+{
+	DfApp *a = curApp();
+	return a->fileSt || !a->nfiles ? NULL : &a->files[fl.sel];
+}
+
+// --- a form: fields, A edits one, the last row runs it ---
+
+typedef struct {
+	const char *label;
+	void (*value)(char *out); // its current value, in words
+	void (*edit)(void);
+} Field;
+
+static struct {
+	const char *title, *go, *help;
+	const Field *f;
+	int (*count)(void); // fields shown (they may depend on each other)
+	void (*run)(void);
+	UiList l;
+} form;
+
+#define FORM_ROWS 11
+
+static void formDraw(void)
+{
+	int n = form.count();
+	uiHeader(form.title, NULL);
+	float y = 26;
+	for (int i = 0; i <= n; i++, y += LINE_H) {
+		if (i == form.l.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
+		if (i == n) {
+			uiText(14, y, S_BODY, uiCol[COL_ACCENT], "%s", form.go);
+			break;
+		}
+		char v[64];
+		form.f[i].value(v);
+		uiText(14, y, S_BODY, uiCol[COL_DIM], "%s", form.f[i].label);
+		uiTextRight(UI_W - 14, y, S_BODY, uiCol[COL_TEXT], "%s", v);
+	}
+	if (form.help) uiTextWrap(12, y + LINE_H + 4, UI_W - 24, S_SMALL, uiCol[COL_DIM], form.help);
+	uiFooter(BTN_UD " field   " BTN_A " change / go   " BTN_B " cancel");
+}
+
+static void formInput(u32 kDown, u32 kRepeat)
+{
+	int n = form.count();
+	uiListNav(&form.l, n + 1, FORM_ROWS + 1, kRepeat & (KEY_UP | KEY_DOWN));
+	if (kDown & KEY_A) {
+		if (form.l.sel == n) {
+			appBack();
+			form.run();
+		} else {
+			form.f[form.l.sel].edit();
+		}
+	} else if (kDown & KEY_B) {
+		appBack();
+	}
+}
+
+// The fields as touch buttons (two columns for a long form): a tap edits that one.
+static void formBottom(void)
+{
+	int n = form.count();
+	if (n + 1 <= 7) {
+		for (int i = 0; i <= n; i++) {
+			char v[64], l[96];
+			if (i < n) form.f[i].value(v), snprintf(l, sizeof(l), "%s: %s", form.f[i].label, v);
+			else snprintf(l, sizeof(l), "%s", form.go);
+			if (uiButton(4, 4 + i * 30, UI_BW - 8, 28, i == n ? uiCol[COL_SEL] : uiCol[COL_BAR], l)) {
+				form.l.sel = i;
+				appPress(KEY_A);
+			}
+		}
+		if (uiButton(4, UI_H - 30, UI_BW - 8, 26, uiCol[COL_PANEL], "Cancel")) appPress(KEY_B);
+		return;
+	}
+	// fields, then Create and Cancel, down the columns
+	int rows = (n + 3) / 2;
+	float w = (UI_BW - 12) / 2, h = 31;
+	for (int i = 0; i < n + 2; i++) {
+		float x = 4 + (i / rows) * (w + 4), y = 4 + (i % rows) * (h + 2);
+		bool hit;
+		if (i < n) {
+			char v[64];
+			form.f[i].value(v);
+			hit = uiButton2(x, y, w, h, uiCol[COL_BAR], form.f[i].label, v);
+		} else {
+			hit = uiButton(x, y, w, h, i == n ? uiCol[COL_SEL] : uiCol[COL_PANEL], i == n ? form.go : "Cancel");
+		}
+		if (!hit) continue;
+		if (i == n + 1) {
+			appPress(KEY_B);
+		} else {
+			form.l.sel = i;
+			appPress(KEY_A);
+		}
+	}
+}
+
+static const Screen formScreen = { NULL, formInput, formDraw, formBottom };
+
+static void formOpen(const char *title, const char *go, const char *help, const Field *f, int (*count)(void), void (*run)(void))
+{
+	form.title = title, form.go = go, form.help = help, form.f = f, form.count = count, form.run = run;
+	form.l = (UiList){ 0 };
+	appScreen(&formScreen);
+}
+
+static const char *const keyTypes[] = { "DES / 2K3DES", "3K3DES", "AES" };
+
+// --- create application ---
+
+static struct {
+	u32 aid;
+	int type, nkeys; // type: GetKeySettings bits 6-7
+	u8 ks;
+} ca = { 0x112233, 2, 2, 0x0F };
+
+static void caAidV(char *o) { sprintf(o, "%06lX", ca.aid); }
+static void caTypeV(char *o) { sprintf(o, "%s", keyTypes[ca.type]); }
+static void caKeysV(char *o) { sprintf(o, "%d", ca.nkeys); }
+static void caKsV(char *o) { sprintf(o, "%02X", ca.ks); }
+static void caAidSet(const u8 *b, u32 len) { ca.aid = b[0] << 16 | b[1] << 8 | b[2]; }
+static void caAidE(void)
+{
+	u8 b[3] = { ca.aid >> 16, ca.aid >> 8, ca.aid };
+	entryHex("Application ID", "The new application's AID (3 bytes, as shown). 000000 is the PICC.", 3, b, caAidSet);
+}
+static void caT0(void) { ca.type = 0; }
+static void caT1(void) { ca.type = 1; }
+static void caT2(void) { ca.type = 2; }
+static void caTypeE(void)
+{
+	static const MenuItem items[] = { { "DES / 2K3DES", caT0 }, { "3K3DES", caT1 }, { "AES", caT2 } };
+	popup("Key type", items, 3);
+}
+static void caKeysSet(s64 v) { ca.nkeys = v; }
+static void caKeysE(void) { entryDec("Number of keys", "Keys in the application (key 0 is its master key).", 1, 14, ca.nkeys, caKeysSet); }
+static void caKsSet(const u8 *b, u32 len) { ca.ks = b[0]; }
+static void caKsE(void)
+{
+	entryHex("Key settings", "Bit 0: master key changeable, 1: file list free, 2: create / delete free, 3: "
+		"configuration changeable; bits 4-7: the key that changes keys (E: the key itself, F: frozen). 0F = all open, "
+		"keys changed with the master key.", 1, &ca.ks, caKsSet);
+}
+
+static const Field caFields[] = {
+	{ "Application ID", caAidV, caAidE }, { "Key type", caTypeV, caTypeE },
+	{ "Keys", caKeysV, caKeysE }, { "Key settings", caKsV, caKsE },
+};
+static int caCount(void) { return 4; }
+
+static void caGo(void)
+{
+	opReset("Create application", 0); // on the PICC
+	op.focus = ca.aid;
+	if (!(di.keySet & 4) || di.keySt) opAuth(0, &di.piccKey);
+	u8 c[6] = { 0xCA, ca.aid, ca.aid >> 8, ca.aid >> 16, ca.ks, ca.nkeys | ca.type << 6 };
+	opCmd(c, 6, 0, DF_PLAIN, false);
+	opRun();
+}
+
+static void caRun(void)
+{
+	if (ca.aid == 0) {
+		msgBox("Create application", "AID 000000 is the PICC itself.");
+		return;
+	}
+	// creating needs the PICC master key unless the PICC's key settings make it free
+	if ((di.keySet & 4) && !di.keySt) caGo();
+	else needKey(0, 0, &di.piccKey, piccType(), caGo);
+}
+
+static void createApp(void)
+{
+	formOpen("DESFire: create application", "Create", "Its keys start as all zeros of the key type.",
+		caFields, caCount, caRun);
+}
+
+// --- format ---
+
+static void fmtGo(void)
+{
+	opReset("Format card", 0);
+	opAuth(0, &di.piccKey);
+	u8 c = 0xFC;
+	opCmd(&c, 1, 0, DF_PLAIN, false);
+	opRun();
+}
+
+static void fmtAsk(void)
+{
+	confirm("Format card", fmtGo, "Delete every application and file on this card? The PICC master key stays. "
+		"This can't be undone.");
+}
+
+static void format(void)
+{
+	needKey(0, 0, &di.piccKey, piccType(), fmtAsk);
+}
+
+// --- delete application ---
+
+static void daGo(void)
+{
+	u32 aid = curApp()->aid;
+	opReset("Delete application", 0);
+	op.focus = aid; // gone afterwards: back to the card screen
+	opAuth(0, &di.piccKey);
+	u8 c[4] = { 0xDA, aid, aid >> 8, aid >> 16 };
+	opCmd(c, 4, 0, DF_PLAIN, false);
+	opRun();
+}
+
+static void daNeed(void)
+{
+	needKey(0, 0, &di.piccKey, piccType(), daGo);
+}
+
+static void deleteApp(void)
+{
+	confirm("Delete application", daNeed, "Delete application %06lX and all of its files? This can't be undone.",
+		curApp()->aid);
+}
+
+// --- create file ---
+
+static struct {
+	int fid, type, comm, r, w, rw, ch;
+	s64 size, lower, upper, value, recSize, recMax;
+	bool lc;
+} cf = { 1, 0, 0, 0xE, 0, 0, 0, 32, 0, 1000, 0, 16, 4, false };
+
+static const char *const fileTypes[] = { "standard", "backup", "value", "linear record", "cyclic record" };
+static const char *const commModes[] = { "plain", "MAC", "full (encrypted)" };
+
+static void keyWord(char *o, int k)
+{
+	if (k == 0xE) strcpy(o, "free");
+	else if (k == 0xF) strcpy(o, "never");
+	else sprintf(o, "key %d", k);
+}
+
+static void cfFidV(char *o) { sprintf(o, "%02X", cf.fid); }
+static void cfTypeV(char *o) { strcpy(o, fileTypes[cf.type]); }
+static void cfCommV(char *o) { strcpy(o, commModes[cf.comm]); }
+static void cfRV(char *o) { keyWord(o, cf.r); }
+static void cfWV(char *o) { keyWord(o, cf.w); }
+static void cfRwV(char *o) { keyWord(o, cf.rw); }
+static void cfChV(char *o) { keyWord(o, cf.ch); }
+static void cfSizeV(char *o) { sprintf(o, "%lld bytes", cf.size); }
+static void cfLowerV(char *o) { sprintf(o, "%lld", cf.lower); }
+static void cfUpperV(char *o) { sprintf(o, "%lld", cf.upper); }
+static void cfValueV(char *o) { sprintf(o, "%lld", cf.value); }
+static void cfLcV(char *o) { strcpy(o, cf.lc ? "on" : "off"); }
+static void cfRecSizeV(char *o) { sprintf(o, "%lld bytes", cf.recSize); }
+static void cfRecMaxV(char *o) { sprintf(o, "%lld", cf.recMax); }
+
+static void cfFidSet(s64 v) { cf.fid = v; }
+static void cfFidE(void) { entryDec("File number", "The new file's number, 0-31.", 0, 31, cf.fid, cfFidSet); }
+static void cfT0(void) { cf.type = 0; }
+static void cfT1(void) { cf.type = 1; }
+static void cfT2(void) { cf.type = 2; }
+static void cfT3(void) { cf.type = 3; }
+static void cfT4(void) { cf.type = 4; }
+static void cfTypeE(void)
+{
+	static const MenuItem items[] = { { "Standard data", cfT0 }, { "Backup data", cfT1 }, { "Value", cfT2 },
+		{ "Linear record", cfT3 }, { "Cyclic record", cfT4 } };
+	popup("File type", items, 5);
+}
+static void cfC0(void) { cf.comm = 0; }
+static void cfC1(void) { cf.comm = 1; }
+static void cfC2(void) { cf.comm = 2; }
+static void cfCommE(void)
+{
+	static const MenuItem items[] = { { "Plain", cfC0 }, { "MAC", cfC1 }, { "Full (encrypted)", cfC2 } };
+	popup("Communication", items, 3);
+}
+static int *cfKeyField;
+static void cfKeySet(s64 v) { *cfKeyField = v; }
+static void cfKeyE(int *k, const char *what)
+{
+	cfKeyField = k;
+	char w[96];
+	snprintf(w, sizeof(w), "The key for %s: 0-13 a key number, 14 free, 15 never.", what);
+	entryDec("Access key", w, 0, 15, *k, cfKeySet);
+}
+static void cfRE(void) { cfKeyE(&cf.r, "reading"); }
+static void cfWE(void) { cfKeyE(&cf.w, "writing"); }
+static void cfRwE(void) { cfKeyE(&cf.rw, "reading and writing"); }
+static void cfChE(void) { cfKeyE(&cf.ch, "changing the file's settings"); }
+static s64 *cfNum;
+static void cfNumSet(s64 v) { *cfNum = v; }
+static void cfNumE(s64 *v, const char *title, const char *what, s64 min, s64 max)
+{
+	cfNum = v;
+	entryDec(title, what, min, max, *v, cfNumSet);
+}
+static void cfSizeE(void) { cfNumE(&cf.size, "File size", "Bytes in the file.", 1, 8192); }
+static void cfLowerE(void) { cfNumE(&cf.lower, "Lower limit", "The lowest value the file may hold.", 0, 0x7FFFFFFF); }
+static void cfUpperE(void) { cfNumE(&cf.upper, "Upper limit", "The highest value the file may hold.", 0, 0x7FFFFFFF); }
+static void cfValueE(void) { cfNumE(&cf.value, "Value", "The value it starts with.", 0, 0x7FFFFFFF); }
+static void cfLcE(void) { cf.lc = !cf.lc; }
+static void cfRecSizeE(void) { cfNumE(&cf.recSize, "Record size", "Bytes per record.", 1, 1024); }
+static void cfRecMaxE(void) { cfNumE(&cf.recMax, "Records", "How many records the file holds.", 1, 1024); }
+
+// The fields shown: the common ones, then the type's own.
+static Field cfShown[14];
+
+static int cfCount(void)
+{
+	static const Field common[] = {
+		{ "File number", cfFidV, cfFidE }, { "Type", cfTypeV, cfTypeE }, { "Communication", cfCommV, cfCommE },
+		{ "Read", cfRV, cfRE }, { "Write", cfWV, cfWE }, { "Read / write", cfRwV, cfRwE },
+		{ "Change settings", cfChV, cfChE },
+	};
+	int n = 0;
+	for (; n < 7; n++) cfShown[n] = common[n];
+	if (cf.type <= 1) {
+		cfShown[n++] = (Field){ "Size", cfSizeV, cfSizeE };
+	} else if (cf.type == 2) {
+		cfShown[n++] = (Field){ "Lower limit", cfLowerV, cfLowerE };
+		cfShown[n++] = (Field){ "Upper limit", cfUpperV, cfUpperE };
+		cfShown[n++] = (Field){ "Value", cfValueV, cfValueE };
+		cfShown[n++] = (Field){ "Limited credit", cfLcV, cfLcE };
+	} else {
+		cfShown[n++] = (Field){ "Record size", cfRecSizeV, cfRecSizeE };
+		cfShown[n++] = (Field){ "Records", cfRecMaxV, cfRecMaxE };
+	}
+	return n;
+}
+
+static void put24(u8 *p, u32 v)
+{
+	p[0] = v, p[1] = v >> 8, p[2] = v >> 16;
+}
+
+static void put32le(u8 *p, u32 v)
+{
+	p[0] = v, p[1] = v >> 8, p[2] = v >> 16, p[3] = v >> 24;
+}
+
+static void cfGo(void)
+{
+	DfApp *a = curApp();
+	opReset("Create file", a->aid);
+	if (!(a->keySet & 4) || a->keySt) opAuth(0, &a->keys[0]);
+	static const u8 cmds[] = { 0xCD, 0xCB, 0xCC, 0xC1, 0xC0 };
+	u8 c[20] = { cmds[cf.type], cf.fid, cf.comm == 2 ? 3 : cf.comm, cf.rw << 4 | cf.ch, cf.r << 4 | cf.w };
+	u32 n = 5;
+	if (cf.type <= 1) {
+		put24(c + n, cf.size), n += 3;
+	} else if (cf.type == 2) {
+		put32le(c + n, cf.lower), put32le(c + n + 4, cf.upper), put32le(c + n + 8, cf.value), n += 12;
+		c[n++] = cf.lc;
+	} else {
+		put24(c + n, cf.recSize), put24(c + n + 3, cf.recMax), n += 6;
+	}
+	opCmd(c, n, 0, DF_PLAIN, false);
+	file_ = a->nfiles; // the new one: its place once the list is read again (IDs come sorted)
+	opRun();
+}
+
+static void cfRun(void)
+{
+	DfApp *a = curApp();
+	if (cf.type == 2 && (cf.lower > cf.upper || cf.value < cf.lower || cf.value > cf.upper)) {
+		msgBox("Create file", "The value must lie within the limits.");
+		return;
+	}
+	if ((a->keySet & 4) && !a->keySt) cfGo();
+	else needKey(a->aid, 0, &a->keys[0], appType(a), cfGo);
+}
+
+static void createFile(void)
+{
+	// the first free file number
+	DfApp *a = curApp();
+	for (cf.fid = 0; cf.fid < 32; cf.fid++) {
+		bool used = false;
+		for (int i = 0; i < a->nfiles; i++) used |= a->files[i].fid == cf.fid;
+		if (!used) break;
+	}
+	formOpen("DESFire: create file", "Create", NULL, cfShown, cfCount, cfRun);
+}
+
+// --- delete file ---
+
+static void dfGo(void)
+{
+	DfApp *a = curApp();
+	opReset("Delete file", a->aid);
+	if (!(a->keySet & 4) || a->keySt) opAuth(0, &a->keys[0]);
+	u8 c[2] = { 0xDF, curFile()->fid };
+	opCmd(c, 2, 0, DF_PLAIN, false);
+	file_ = fl.sel;
+	opRun();
+}
+
+static void dfNeed(void)
+{
+	DfApp *a = curApp();
+	if ((a->keySet & 4) && !a->keySt) dfGo();
+	else needKey(a->aid, 0, &a->keys[0], appType(a), dfGo);
+}
+
+static void deleteFile(void)
+{
+	DfFile *f = curFile();
+	if (!f) {
+		msgBox("Delete file", "No file selected.");
+		return;
+	}
+	confirm("Delete file", dfNeed, "Delete file %02X of application %06lX? This can't be undone.", f->fid, curApp()->aid);
+}
+
+// --- write a file ---
+
+static struct {
+	int k;   // the key it writes with, 0xE = free
+	u8 op;   // value files: 0C credit, DC debit, 1C limited credit
+} wr;
+
+static u32 fileSize(const DfFile *f)
+{
+	return f->len >= 7 ? f->set[4] | f->set[5] << 8 | f->set[6] << 16 : 0;
+}
+
+// The key for a write-type access from the candidates (access nibbles): free, then a known one, then
+// the first real key (asked for). -1 = never.
+static int pickKey(const DfApp *a, const int *cand, int n)
+{
+	for (int i = 0; i < n; i++)
+		if (cand[i] == 0xE) return 0xE;
+	for (int i = 0; i < n; i++)
+		if (cand[i] < 14 && a->keys[cand[i]].known) return cand[i];
+	for (int i = 0; i < n; i++)
+		if (cand[i] < 14) return cand[i];
+	return -1;
+}
+
+static void wrSend(void)
+{
+	DfApp *a = curApp();
+	DfFile *f = curFile();
+	if (wr.k != 0xE) opAuth(wr.k, &a->keys[wr.k]);
+	u8 comm = wr.k == 0xE || (f->set[1] & 3) == 2 ? DF_PLAIN : f->set[1] & 3;
+	op.comm = comm;
+	file_ = fl.sel;
+	opRun();
+}
+
+static void wrNeed(void)
+{
+	DfApp *a = curApp();
+	if (wr.k == 0xE) wrSend();
+	else needKey(a->aid, wr.k, &a->keys[wr.k], appType(a), wrSend);
+}
+
+static void wrData(const u8 *b, u32 len)
+{
+	DfApp *a = curApp();
+	DfFile *f = curFile();
+	bool rec = f->set[0] == 3 || f->set[0] == 4;
+	opReset(rec ? "Write record" : "Write file", a->aid);
+	u8 c[300] = { rec ? 0x3B : 0x3D, f->fid, 0, 0, 0 };
+	put24(c + 5, len);
+	memcpy(c + 8, b, len);
+	opCmd(c, 8 + len, 7, DF_PLAIN, f->set[0] != 0);
+	wrNeed();
+}
+
+static void wrAmount(s64 v)
+{
+	DfApp *a = curApp();
+	DfFile *f = curFile();
+	opReset(wr.op == 0x0C ? "Credit" : wr.op == 0xDC ? "Debit" : "Limited credit", a->aid);
+	u8 c[6] = { wr.op, f->fid };
+	put32le(c + 2, v);
+	opCmd(c, 6, 1, DF_PLAIN, true);
+	wrNeed();
+}
+
+static void wrValue(u8 cmd, const char *what)
+{
+	DfApp *a = curApp();
+	DfFile *f = curFile();
+	u8 r = f->set[3] >> 4, w = f->set[3] & 0xF, rw = f->set[2] >> 4;
+	// credit: read/write; debit: read, write or read/write; limited credit: write or read/write
+	int cand[3], n = 0;
+	if (cmd == 0x0C) cand[n++] = rw;
+	else if (cmd == 0xDC) cand[n++] = r, cand[n++] = w, cand[n++] = rw;
+	else cand[n++] = w, cand[n++] = rw;
+	if ((wr.k = pickKey(a, cand, n)) < 0) {
+		msgBox(what, "This file's access rights allow no %s.", what);
+		return;
+	}
+	wr.op = cmd;
+	char t[48], d[96];
+	snprintf(t, sizeof(t), "%s %06lX file %02X", what, a->aid, f->fid);
+	snprintf(d, sizeof(d), "Amount (%s with %s).", what, wr.k == 0xE ? "free access" : "the file's key");
+	entryDec(t, d, 0, 0x7FFFFFFF, 0, wrAmount);
+}
+
+static void wrCredit(void) { wrValue(0x0C, "Credit"); }
+static void wrDebit(void) { wrValue(0xDC, "Debit"); }
+static void wrLimited(void) { wrValue(0x1C, "Limited credit"); }
+
+static void writeFile(void)
+{
+	DfApp *a = curApp();
+	DfFile *f = curFile();
+	if (!f || f->st || f->len < 7) {
+		msgBox("Write", f ? "This file's settings didn't read." : "No file selected.");
+		return;
+	}
+	if (f->set[0] == 2) {
+		static const MenuItem items[] = { { "Credit", wrCredit }, { "Debit", wrDebit }, { "Limited credit", wrLimited } };
+		popup("Value file", items, 3);
+		return;
+	}
+	int cand[2] = { f->set[3] & 0xF, f->set[2] >> 4 };
+	if ((wr.k = pickKey(a, cand, 2)) < 0) {
+		msgBox("Write", "This file can never be written.");
+		return;
+	}
+	bool rec = f->set[0] == 3 || f->set[0] == 4;
+	u32 len = rec ? (f->len >= 13 ? f->set[4] | f->set[5] << 8 | f->set[6] << 16 : 0) : fileSize(f);
+	if (!len) return;
+	char t[48], w[160];
+	if (len > ENTRY_MAX) len = ENTRY_MAX;
+	snprintf(t, sizeof(t), "%s %06lX file %02X", rec ? "Add a record to" : "Write", a->aid, f->fid);
+	snprintf(w, sizeof(w), "%s (%lu bytes%s), sent %s.", rec ? "The new record" : fileSize(f) > len ? "The file's start" : "The file's contents",
+		len, rec ? "" : ", from offset 0", wr.k == 0xE ? "with free access" : "with the file's key");
+	const u8 *init = f->hasData && !f->dataSt && !rec && f->dataLen >= len ? di.pool + f->dataOff : NULL;
+	entryHex(t, w, len, init, wrData);
+}
+
+// --- keys: enter one, change one ---
+
+static int keyNo;
+static DfKey newKey;
+
+static void enterDone(void)
+{
+	DfApp *a = curApp();
+	bool picc = need.slot == &di.piccKey;
+	opReset(picc ? "PICC master key" : "Key check", picc ? 0 : a->aid);
+	opAuth(picc ? 0 : keyNo, need.slot);
+	opRun();
+}
+
+static void enterPicc(void)
+{
+	askKey(&di.piccKey, piccType(), "PICC master key", "The PICC master key, checked on the card", enterDone);
+}
+
+static void enterAppKeyNo(s64 v)
+{
+	DfApp *a = curApp();
+	keyNo = v;
+	char t[48], w[96];
+	snprintf(t, sizeof(t), "%06lX key %d", a->aid, keyNo);
+	snprintf(w, sizeof(w), "Key %d of application %06lX, checked on the card", keyNo, a->aid);
+	askKey(&a->keys[keyNo], appType(a), t, w, enterDone);
+}
+
+static void enterAppKey(void)
+{
+	DfApp *a = curApp();
+	int n = a->keySt ? 14 : a->maxKeys & 0xF;
+	entryDec("Key number", "Which key of the application to enter.", 0, n - 1, 0, enterAppKeyNo);
+}
+
+// changing: the new key into newKey (askKey on a scratch slot), then the key that authorizes it
+static void ckGo(void)
+{
+	DfApp *a = curApp();
+	bool picc = keyNo < 0;
+	opReset(picc ? "Change PICC master key" : "Change key", picc ? 0 : a->aid);
+	op.change = true, op.nkey = newKey, op.ver = 0;
+	if (picc) {
+		op.picc = true, op.nk = 0;
+		opAuth(0, &di.piccKey);
+	} else {
+		u8 ck = a->keySet >> 4;
+		op.nk = keyNo;
+		int by = keyNo == 0 || ck == 0xE ? keyNo : ck;
+		opAuth(by, &a->keys[by]);
+		if (by != keyNo) op.old = a->keys[keyNo];
+	}
+	opRun();
+}
+
+static void ckNeedOld(void)
+{
+	DfApp *a = curApp();
+	u8 ck = a->keySet >> 4;
+	int by = keyNo == 0 || ck == 0xE ? keyNo : ck;
+	if (by != keyNo) needKey(a->aid, keyNo, &a->keys[keyNo], appType(a), ckGo); // the old key goes in the cryptogram
+	else ckGo();
+}
+
+static void ckNeedAuth(void)
+{
+	DfApp *a = curApp();
+	if (keyNo < 0) {
+		needKey(0, 0, &di.piccKey, piccType(), ckGo);
+		return;
+	}
+	u8 ck = a->keySet >> 4;
+	int by = keyNo == 0 || ck == 0xE ? keyNo : ck;
+	needKey(a->aid, by, &a->keys[by], appType(a), ckNeedOld);
+}
+
+static void ckAsk(void)
+{
+	char hex[49];
+	dfKeyHex(&newKey, hex);
+	if (keyNo < 0)
+		confirm("Change PICC master key", ckNeedAuth, "The PICC master key becomes %s %s. It goes into the "
+			"dictionary; without it the card can't be formatted again.", dfKeyName(&newKey), hex);
+	else
+		confirm("Change key", ckNeedAuth, "Key %d of %06lX becomes %s %s.", keyNo, curApp()->aid, dfKeyName(&newKey), hex);
+}
+
+static void changeAppKeyNo(s64 v)
+{
+	DfApp *a = curApp();
+	u8 ck = a->keySet >> 4;
+	keyNo = v;
+	if (keyNo != 0 && ck == 0xF) {
+		msgBox("Change key", "This application's keys are frozen: only the master key (0) changes, itself.");
+		return;
+	}
+	char t[48];
+	snprintf(t, sizeof(t), "New %06lX key %d", a->aid, keyNo);
+	askKey(&newKey, appType(a), t, "The new key", ckAsk);
+}
+
+static void changeAppKey(void)
+{
+	DfApp *a = curApp();
+	if (a->keySt) {
+		msgBox("Change key", "The key settings didn't read: scan with keys (or enter the master key) first.");
+		return;
+	}
+	if (!(a->keySet & 1) && (a->keySet >> 4) == 0xF) {
+		msgBox("Change key", "This application's keys can't be changed (master key frozen, keys frozen).");
+		return;
+	}
+	entryDec("Key number", "Which key to change.", 0, (a->maxKeys & 0xF) - 1, 0, changeAppKeyNo);
+}
+
+static void changePicc(void)
+{
+	if (!di.keySt && !(di.keySet & 1)) {
+		msgBox("Change PICC master key", "The PICC master key is frozen.");
+		return;
+	}
+	keyNo = -1;
+	askKey(&newKey, -1, "New PICC master key", "The new PICC master key", ckAsk);
+}
+
+// --- the menus ---
+
+static void cardMenu(void)
+{
+	static const MenuItem items[] = {
+		{ "Save info", save }, { "Create application", createApp }, { "Enter PICC master key", enterPicc },
+		{ "Change PICC master key", changePicc }, { "Format card", format },
+	};
+	popup("Card", items, 5);
+}
+
+static void appMenu(void)
+{
+	static const MenuItem items[] = {
+		{ "Write file", writeFile }, { "Create file", createFile }, { "Delete file", deleteFile },
+		{ "Enter a key", enterAppKey }, { "Change a key", changeAppKey }, { "Delete application", deleteApp },
+		{ "Save info", save },
+	};
+	popup("Application", items, 7);
+}
 
 // --- menu and family ---
 

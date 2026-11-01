@@ -20,7 +20,7 @@
 
 static FILE *logFile;
 
-// Log: the top screen's log view, the bottom screen console and the log file.
+// Log: the top screen's log view, the bottom screen's tail of it and the log file.
 void logp(const char *fmt, ...)
 {
 	char s[512];
@@ -29,7 +29,6 @@ void logp(const char *fmt, ...)
 	vsnprintf(s, sizeof(s), fmt, va);
 	va_end(va);
 	uiLogAppend(s);
-	fputs(s, stdout);
 	if (logFile) {
 		fputs(s, logFile);
 		fflush(logFile);
@@ -478,7 +477,6 @@ int main(int argc, char *argv[])
 	if (argc > 0 && argv[0] && !strncmp(argv[0], "sdmc:/", 6))
 		snprintf(appPath, sizeof(appPath), "%s", argv[0]);
 	gfxInitDefault();
-	consoleInit(GFX_BOTTOM, NULL);
 	uiInit();
 	logFile = fopen(LOG_PATH, "a");
 	logp("--- nfcprobe (built " __DATE__ " " __TIME__ ") ---\n");

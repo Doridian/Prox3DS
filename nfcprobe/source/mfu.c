@@ -261,7 +261,7 @@ static int gtuPage(u8 page, const u8 data[4])
 {
 	u8 b[16] = { 0 };
 	memcpy(b, data, 4);
-	int r = mfGen4Write(mfGen4DefaultPwd, page, b);
+	int r = mfGen4Write(mfGen4Pwd, page, b);
 	if (r <= 0) snprintf(why, sizeof(why), "page %02X: %s", page, mfWhy());
 	return r;
 }
@@ -282,11 +282,11 @@ int mfuCloneToGtu(const MfuDump *d)
 	if (!t) FAIL(0, "unknown dump type");
 	if (!d->valid[0] || !d->valid[1] || !d->valid[2]) FAIL(0, "the dump has no UID (pages 0-2)");
 	u8 cfg[32], ver[8];
-	int r = mfGen4Config(mfGen4DefaultPwd, cfg, sizeof(cfg));
+	int r = mfGen4Config(mfGen4Pwd, cfg, sizeof(cfg));
 	if (r < 0) return -1;
 	if (!r) FAIL(0, "not a Gen4 GTU (password 00000000)");
 	if (r != MF_GEN4_CFG) FAIL(0, "GTU config is %d bytes", r);
-	int vn = mfGen4Version(mfGen4DefaultPwd, ver, sizeof(ver));
+	int vn = mfGen4Version(mfGen4Pwd, ver, sizeof(ver));
 	if (vn < 0) return -1;
 	bool pack13 = vn >= 2 && ((ver[vn - 2] == 0x66 && ver[vn - 1] == 0x66) || (ver[vn - 2] == 0x06 && ver[vn - 1] == 0xA0));
 	u8 mode = t == &mfuTypeULC ? 2 : t == &tUL || t == &tN203 ? 3 : d->info.version[2] == 0x04 ? 1 : 0;
@@ -300,7 +300,7 @@ int mfuCloneToGtu(const MfuDump *d)
 	want[27] = mode;
 	if (memcmp(want, cfg, MF_GEN4_CFG)) {
 		logp("gtu: Ultralight mode %d\n", mode);
-		if ((r = mfGen4SetConfig(mfGen4DefaultPwd, want)) <= 0) {
+		if ((r = mfGen4SetConfig(mfGen4Pwd, want)) <= 0) {
 			snprintf(why, sizeof(why), "config: %s", mfWhy());
 			return r;
 		}

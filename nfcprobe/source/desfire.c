@@ -449,6 +449,80 @@ static int findKey(u8 k, int kt, DfKey *out)
 	return 0;
 }
 
+static void loadDict(void);
+static int selectApp(u32 aid, u8 *st);
+
+// --- operations ---
+
+bool dfUsesEv2(const DfInfo *d)
+{
+	return d->ver[1] == 0x01 && d->ver[3] >= 0x12 && d->ver[3] != 0x30;
+}
+
+bool dfRememberKey(const DfKey *k)
+{
+	loadDict();
+	u8 len = dfKeyLen(k->type);
+	for (int i = 0; i < ndict; i++)
+		if (dict[i].len == len && !memcmp(dict[i].key, k->key, len)) return true;
+	mkdir(MF_DIR, 0777);
+	mkdir(DF_DIR, 0777);
+	FILE *f = fopen(DF_KEYS, "a");
+	if (!f) return false;
+	char hex[49];
+	for (int i = 0; i < len; i++) sprintf(hex + 2 * i, "%02X", k->key[i]);
+	fprintf(f, "%s # %s\n", hex, dfKeyTypeName(k->type));
+	return !fclose(f);
+}
+
+// ISO-DEP, select, authenticate: the common start of an operation.
+static int opStart(const DfInfo *d, u32 aid, u8 k, const DfKey *key)
+{
+	u8 ats[32], st;
+	ses.on = false;
+	int r = isoDepActivate(ats, sizeof(ats));
+	if (r <= 0) FAIL(r, "%s", isoDepWhy());
+	if ((r = selectApp(aid, &st)) <= 0) return r;
+	if (st) FAIL(0, "select %06lX: %s", aid, dfStatusName(st));
+	if (!key) return 1;
+	if ((r = dfAuth(k, key, dfUsesEv2(d), &st)) < 0) return r;
+	if (!r) FAIL(0, "key %d: %s", k, dfStatusName(st));
+	return 1;
+}
+
+int dfOpAuth(const DfInfo *d, u32 aid, u8 k, const DfKey *key)
+{
+	return opStart(d, aid, k, key);
+}
+
+int dfOp(const DfInfo *d, u32 aid, u8 k, const DfKey *key, const u8 *c, u32 len, u32 hdr, u8 comm, bool commit)
+{
+	u8 out[64], st;
+	int r = opStart(d, aid, k, key);
+	if (r <= 0) return r;
+	if ((r = dfCmd(c, len, hdr, comm, out, sizeof(out), &st)) == -2) FAIL(-1, "monitor");
+	if (r < 0) return 0;
+	if (st) FAIL(0, "%s", dfStatusName(st));
+	if (!commit) return 1;
+	u8 cc = 0xC7;
+	if ((r = dfCmd(&cc, 1, 0, DF_PLAIN, out, sizeof(out), &st)) == -2) FAIL(-1, "monitor");
+	if (r < 0) return 0;
+	if (st) FAIL(0, "commit: %s", dfStatusName(st));
+	return 1;
+}
+
+int dfOpChangeKey(const DfInfo *d, u32 aid, u8 authK, const DfKey *authKey, u8 k, const DfKey *key, u8 ver,
+	const DfKey *old, bool picc)
+{
+	u8 st;
+	int r = opStart(d, aid, authK, authKey);
+	if (r <= 0) return r;
+	if ((r = dfChangeKey(k, key, ver, old, picc, &st)) < 0) return r;
+	if (!r) FAIL(0, "ChangeKey: %s", dfStatusName(st));
+	dfRememberKey(key);
+	return 1;
+}
+
 // --- reading ---
 
 static DfApp *findApp(DfInfo *d, u32 aid)
@@ -594,7 +668,7 @@ int dfReadInfo(DfInfo *d, bool keys)
 		loadDict();
 		d->keyed = true, d->dictKeys = ndict;
 		// EV2 or later DESFire (not Light): EV2 secure messaging for AES keys
-		d->ev2 = useEv2 = d->ver[1] == 0x01 && d->ver[3] >= 0x12 && d->ver[3] != 0x30;
+		d->ev2 = useEv2 = dfUsesEv2(d);
 	}
 
 	c[0] = 0x6E;

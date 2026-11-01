@@ -10,7 +10,8 @@
 
 u32 uiCol[COL_N];
 
-static C3D_RenderTarget *top;
+static C3D_RenderTarget *top, *bot;
+static char hints[256];
 static C2D_TextBuf frameBuf, monoBuf;
 static C2D_Text mono[95]; // ' ' .. '~'
 static u8 asciiW[128];     // glyph advances, wrapping measures a lot
@@ -23,6 +24,7 @@ void uiInit(void)
 	fontEnsureMapped(); // uiTextWidth reads the system font's widths
 	for (int c = 0; c < 128; c++) asciiW[c] = fontGetCharWidthInfo(NULL, fontGlyphIndexFromCodePoint(NULL, c))->charWidth;
 	top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+	bot = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 	frameBuf = C2D_TextBufNew(8192);
 	monoBuf = C2D_TextBufNew(256);
 	for (int c = 0; c < 95; c++) {
@@ -51,8 +53,57 @@ void uiFrameBegin(void)
 {
 	C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 	C2D_TargetClear(top, uiCol[COL_BG]);
+	C2D_TargetClear(bot, uiCol[COL_BG]);
 	C2D_SceneBegin(top);
 	C2D_TextBufClear(frameBuf);
+	*hints = 0;
+}
+
+void uiBottom(void)
+{
+	C2D_SceneBegin(bot);
+}
+
+static bool touchDown, touchRep;
+static float touchX, touchY;
+
+void uiTouch(bool down, bool repeat, float x, float y)
+{
+	touchDown = down, touchRep = repeat, touchX = x, touchY = y;
+}
+
+static bool button(float x, float y, float w, float h, u32 color, const char *label, bool rep)
+{
+	bool hit = touchDown && (rep || !touchRep) && touchX >= x && touchX < x + w && touchY >= y && touchY < y + h;
+	uiRect(x, y, w, h, hit ? uiCol[COL_ACCENT] : color);
+	char t[64];
+	snprintf(t, sizeof(t), "%s", label);
+	uiTextCenter(x + w / 2, y + (h - 16) / 2, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, w - 6, S_BODY));
+	if (hit) touchDown = false; // one button per tap
+	return hit;
+}
+
+bool uiButton2(float x, float y, float w, float h, u32 color, const char *caption, const char *label)
+{
+	bool hit = touchDown && !touchRep && touchX >= x && touchX < x + w && touchY >= y && touchY < y + h;
+	uiRect(x, y, w, h, hit ? uiCol[COL_ACCENT] : color);
+	char t[64];
+	snprintf(t, sizeof(t), "%s", caption);
+	uiTextCenter(x + w / 2, y + 1, 0.34f, uiCol[COL_DIM], "%s", uiFit(t, w - 6, 0.34f));
+	snprintf(t, sizeof(t), "%s", label);
+	uiTextCenter(x + w / 2, y + h - 15, S_SMALL, uiCol[COL_TEXT], "%s", uiFit(t, w - 6, S_SMALL));
+	if (hit) touchDown = false;
+	return hit;
+}
+
+bool uiButton(float x, float y, float w, float h, u32 color, const char *label)
+{
+	return button(x, y, w, h, color, label, false);
+}
+
+bool uiButtonRep(float x, float y, float w, float h, u32 color, const char *label)
+{
+	return button(x, y, w, h, color, label, true);
 }
 
 void uiFrameEnd(void)
@@ -238,10 +289,21 @@ void uiHeader(const char *title, const char *right)
 	if (right) uiTextRight(UI_W - 6, 3, S_SMALL, uiCol[COL_DIM], "%s", right);
 }
 
-void uiFooter(const char *hints)
+void uiFooter(const char *h)
 {
 	uiRect(0, UI_H - 18, UI_W, 18, uiCol[COL_BAR]);
-	uiText(6, UI_H - 16, S_SMALL, uiCol[COL_DIM], "%s", hints);
+	uiText(6, UI_H - 16, S_SMALL, uiCol[COL_DIM], "%s", h);
+	uiHints(h);
+}
+
+void uiHints(const char *h)
+{
+	snprintf(hints, sizeof(hints), "%s", h);
+}
+
+const char *uiHintsNow(void)
+{
+	return hints;
 }
 
 float uiBox(float w, float h, const char *title)

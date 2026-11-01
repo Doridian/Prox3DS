@@ -1,11 +1,13 @@
 #pragma once
 #include <citro2d.h>
 
-// Top-screen drawing (citro2d, system font). Cards cover the whole bottom screen, so everything the
-// user needs is up here; the bottom screen only mirrors the log.
+// Drawing (citro2d, system font). Everything the user needs is on the top screen and works with the
+// buttons: a card on the reader covers the whole bottom screen. The bottom screen (touch) doubles the
+// buttons: the footer's hints as touch buttons, a D-pad, or a screen's own keypad; and the log's tail.
 
 #define UI_W 400
 #define UI_H 240
+#define UI_BW 320 // the bottom screen, as tall
 
 #define S_TITLE 0.55f
 #define S_BODY  0.5f
@@ -36,6 +38,21 @@ void uiInit(void);
 void uiExit(void);
 void uiFrameBegin(void);
 void uiFrameEnd(void);
+
+void uiBottom(void); // draws from here to uiFrameEnd go to the bottom screen
+
+// Touch, immediate mode: the app loop hands over each frame's new touch (uiTouch), and a button drawn
+// on the bottom screen that frame holds it or not.
+// A touch held past the repeat delay comes again every few frames as a repeat, which only uiButtonRep
+// takes (D-pad, digits; not OK / Cancel).
+void uiTouch(bool down, bool repeat, float x, float y);
+bool uiButton(float x, float y, float w, float h, u32 color, const char *label); // true = tapped now
+bool uiButtonRep(float x, float y, float w, float h, u32 color, const char *label);
+// Two lines: a small dim caption over the label (form fields).
+bool uiButton2(float x, float y, float w, float h, u32 color, const char *caption, const char *label);
+// The footer's hints ("<button glyph> what it does" ...), for the bottom screen's touch buttons.
+void uiHints(const char *hints);
+const char *uiHintsNow(void);
 
 void uiRect(float x, float y, float w, float h, u32 color);
 void uiLine(float x0, float y0, float x1, float y1, float thick, u32 color);

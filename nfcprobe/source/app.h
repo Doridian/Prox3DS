@@ -14,9 +14,14 @@ typedef struct {
 	void (*show)(void); // whenever it becomes the top screen (entered, or returned to); may be NULL
 	void (*input)(u32 kDown, u32 kRepeat);
 	void (*draw)(void);
+	void (*bottom)(void); // its own bottom screen (uiButton...); NULL = the default: the footer's hints
+	                      // as touch buttons, a D-pad and the log
 } Screen;
+// From a bottom screen: keys to press next frame, as if from the buttons.
+void appPress(u32 keys);
 void appScreen(const Screen *s); // push (nothing if it is on top already)
 void appBack(void);              // pop to the screen it was entered from
+const Screen *appTop(void);      // the screen on top
 
 void appRun(void);       // UI loop, returns on exit
 void appShutdown(void);  // cancels a running job and waits for it a while

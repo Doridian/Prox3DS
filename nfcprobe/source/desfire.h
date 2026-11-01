@@ -89,6 +89,20 @@ int dfAuth(u8 k, const DfKey *key, bool ev2, u8 *st);
 // AES keys get version ver. 1 = ok, 0 = refused (*st), -1 = no answer / monitor error.
 int dfChangeKey(u8 k, const DfKey *key, u8 ver, const DfKey *old, bool picc, u8 *st);
 void dfKeyHex(const DfKey *k, char *out); // hex, 16 digits for a DES key
+bool dfUsesEv2(const DfInfo *d);          // EV2 or later (not Light): AES keys go over EV2
+// Appends a key to DF_KEYS unless the dictionary has it already (entered and newly set keys).
+bool dfRememberKey(const DfKey *k);
+
+// One operation, in a job with the card active: ISO-DEP up, select aid (0 = the PICC), authenticate
+// key k with key (NULL: no authentication), then the command c in comm mode (hdr: dfCmd), and
+// CommitTransaction after it with commit. 1 = done, 0 = refused / lost card (dfWhy), -1 = monitor error.
+int dfOp(const DfInfo *d, u32 aid, u8 k, const DfKey *key, const u8 *c, u32 len, u32 hdr, u8 comm, bool commit);
+// Just the authentication (checks an entered key).
+int dfOpAuth(const DfInfo *d, u32 aid, u8 k, const DfKey *key);
+// ChangeKey the same way: authenticated with key authK (authKey), key k becomes key (AES: version ver);
+// old = k's current key when authK is another key. picc: the PICC master key (its type may change).
+int dfOpChangeKey(const DfInfo *d, u32 aid, u8 authK, const DfKey *authKey, u8 k, const DfKey *key, u8 ver,
+	const DfKey *old, bool picc);
 const char *dfKeyName(const DfKey *k);    // "DES" / "2K3DES" / "3K3DES" / "AES"
 
 const char *dfVersionName(const DfInfo *d); // "DESFire EV2" etc., from the hardware version

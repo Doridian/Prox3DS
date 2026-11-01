@@ -18,6 +18,7 @@ SIZE, LINE = 26.8, 30.0
 ERR = 0.05  # width error of the stand-in font
 BUTTONS = {0xE000: "A", 0xE001: "B", 0xE002: "X", 0xE003: "Y", 0xE004: "L", 0xE005: "R", 0xE006: "+",
            0xE07D: "↕", 0xE07E: "↔"}
+ARROWS = {0xE079: "▲", 0xE07A: "▼", 0xE07B: "◀", 0xE07C: "▶"}  # the D-pad directions alone
 fonts = {}
 
 
@@ -34,21 +35,25 @@ def color(hexabgr):
 
 
 def parse(path):
-    ops = []
+    """Draw lists per screen: 0 = top (400x240), 1 = bottom (320x240); "S n" switches."""
+    screens = {0: [], 1: []}
+    ops = screens[0]
     for line in open(path, encoding="utf-8", errors="replace"):
         line = line.rstrip("\n")
-        if line.startswith("R "):
+        if line.startswith("S "):
+            ops = screens[int(line[2:])]
+        elif line.startswith("R "):
             x, y, w, h, c = line[2:].split(" ")
             ops.append(("R", float(x), float(y), float(w), float(h), color(c)))
         elif line.startswith("T "):
             parts = line[2:].split(" ", 7)
             x, y, w, s, n = map(float, parts[:5])
             ops.append(("T", x, y, w, s, int(n), color(parts[5]), parts[7].replace("\x1f", "\n"), parts[6]))
-    return ops
+    return screens
 
 
-def draw(ops, scale):
-    im = Image.new("RGBA", (400 * scale, 240 * scale), (0, 0, 0, 255))
+def draw(ops, scale, W=400):
+    im = Image.new("RGBA", (W * scale, 240 * scale), (0, 0, 0, 255))
     for op in ops:
         layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
         d = ImageDraw.Draw(layer)
@@ -63,6 +68,10 @@ def draw(ops, scale):
                 cx, base = x * scale, (y + (i * LINE + 24.5) * s) * scale
                 for ch in ln:
                     cp = ord(ch)
+                    if cp in ARROWS:
+                        d.text((cx, base), ARROWS[cp], fill=c, anchor="ls", font=f)
+                        cx += 25 * s * scale
+                        continue
                     if cp in BUTTONS:
                         r = 10.5 * s * scale
                         d.ellipse([cx + 1, base - 2 * r + 2, cx + 2 * r + 1, base + 2], fill=c)
@@ -90,13 +99,13 @@ def slack(op, side):
     return w * ERR if (side == "right") == (align == "L") else 0
 
 
-def check(ops):
+def check(ops, W=400):
     issues = []
     # A translucent full-screen rect (a dialog's backdrop) starts a new layer: texts behind it are
     # only compared with each other.
     layer, layers = 0, []
     for op in ops:
-        if op[0] == "R" and op[3] >= 400 and op[4] >= 240 and op[5][3] < 0xF0:
+        if op[0] == "R" and op[3] >= W and op[4] >= 240 and op[5][3] < 0xF0:
             layer += 1
         layers.append(layer)
 
@@ -112,13 +121,13 @@ def check(ops):
     for i, op, (x0, x1, y0, y1) in vis:
         text = op[7]
         r = max(1.0, slack(op, "right"))
-        if x0 < 0 or x1 > 400:
-            issues.append(("offscreen", text, (x0, y0, x1, y1), f"{x1 - 400:+.0f}px"))
-        elif x1 > 400 - r:
-            issues.append(("tight", text, (x0, y0, x1, y1), f"{400 - x1:.0f}px to the screen edge"))
+        if x0 < 0 or x1 > W:
+            issues.append(("offscreen", text, (x0, y0, x1, y1), f"{x1 - W:+.0f}px"))
+        elif x1 > W - r:
+            issues.append(("tight", text, (x0, y0, x1, y1), f"{W - x1:.0f}px to the screen edge"))
         host = None  # the latest rect (not full screen) under the text's start
         for op2 in reversed(ops[:i]):
-            if op2[0] != "R" or (op2[3] >= 400 and op2[4] >= 240):
+            if op2[0] != "R" or (op2[3] >= W and op2[4] >= 240):
                 continue
             rx, ry, rw, rh = op2[1:5]
             if rx <= x0 + 1 <= rx + rw and ry <= (y0 + y1) / 2 <= ry + rh:
@@ -160,15 +169,21 @@ def main():
         if path.endswith("report.txt"):
             continue
         name = os.path.basename(path)[:-4]
-        ops = parse(path)
-        im = draw(ops, scale)
-        issues = check(ops)
-        d = ImageDraw.Draw(im)
-        for kind, text, (x0, y0, x1, y1), what in issues:
-            col = (255, 0, 0, 255) if kind != "tight" else (255, 160, 0, 255)
-            d.rectangle([x0 * scale - 1, y0 * scale - 1, x1 * scale + 1, y1 * scale + 1], outline=col)
-            report.append(f"{name}: {kind}: {what}: {text!r}" if kind != "overlap" else f"{name}: {kind}: {what}: {text}")
-            counts[kind] = counts.get(kind, 0) + 1
+        screens = parse(path)
+        # the top screen, the bottom one centered under it (as on the console)
+        im = Image.new("RGBA", (400 * scale, 484 * scale), (60, 60, 60, 255))
+        for scr, W, ox, oy in ((0, 400, 0, 0), (1, 320, 40, 244)):
+            if not screens[scr]:
+                continue
+            part = draw(screens[scr], scale, W)
+            d = ImageDraw.Draw(part)
+            for kind, text, (x0, y0, x1, y1), what in check(screens[scr], W):
+                col = (255, 0, 0, 255) if kind != "tight" else (255, 160, 0, 255)
+                d.rectangle([x0 * scale - 1, y0 * scale - 1, x1 * scale + 1, y1 * scale + 1], outline=col)
+                where = name + (" (bottom)" if scr else "")
+                report.append(f"{where}: {kind}: {what}: {text!r}" if kind != "overlap" else f"{where}: {kind}: {what}: {text}")
+                counts[kind] = counts.get(kind, 0) + 1
+            im.paste(part, (ox * scale, oy * scale))
         im.convert("RGB").save(os.path.join(out, name + ".png"))
     with open(os.path.join(out, "report.txt"), "w") as f:
         f.write("\n".join(report) + "\n")

@@ -1,6 +1,7 @@
-// App shell: screen stack, dialogs, the card job worker, the root menu with the generic scan, the log.
-// Top screen and buttons only: a card on the reader covers the whole bottom screen. Card families
-// bring their own screens (MIFARE Classic: mfui.c, editor.c).
+// App shell: screen stack, dialogs, the card job worker, the root menu with the generic scan, the log,
+// and the bottom screen. Everything works on the top screen with the buttons (a card on the reader
+// covers the whole bottom screen); the bottom screen doubles them for touch. Card families bring
+// their own screens (MIFARE Classic: mfui.c, editor.c).
 
 #include <dirent.h>
 #include <stdarg.h>
@@ -32,6 +33,11 @@ void appScreen(const Screen *s)
 	else depth++;
 	stack[depth - 1] = s;
 	showTop();
+}
+
+const Screen *appTop(void)
+{
+	return stack[depth - 1];
 }
 
 void appBack(void)
@@ -152,13 +158,15 @@ static void dialogDraw(void)
 			uiText(x + 10, y, S_BODY, uiCol[COL_TEXT], "%s", dlg.items[i].label);
 		}
 		uiText(x + 10, y + 4, S_SMALL, uiCol[COL_DIM], BTN_A " select   " BTN_B " close");
+		uiHints(BTN_UD " item   " BTN_A " select   " BTN_B " close");
 		return;
 	}
 	int lines = uiWrapLines(DLG_W - 20, S_SMALL, dlg.msg);
 	float h = 22 + lines * SMALL_H + 26, y = uiBox(DLG_W, h, dlg.title), x = (UI_W - DLG_W) / 2;
 	uiTextWrap(x + 10, y, DLG_W - 20, S_SMALL, uiCol[COL_TEXT], dlg.msg);
-	uiText(x + 10, y + lines * SMALL_H + 6, S_SMALL, uiCol[COL_DIM], "%s",
-		dlg.kind == DLG_CONFIRM ? BTN_A " yes   " BTN_B " no" : BTN_A " ok");
+	const char *hint = dlg.kind == DLG_CONFIRM ? BTN_A " yes   " BTN_B " no" : BTN_A " ok";
+	uiText(x + 10, y + lines * SMALL_H + 6, S_SMALL, uiCol[COL_DIM], "%s", hint);
+	uiHints(hint);
 }
 
 // --- job worker ---
@@ -505,6 +513,84 @@ static void rootInit(void)
 	appScreen(&rootScreen);
 }
 
+// --- bottom screen ---
+
+static u32 touchKeys; // pressed on the bottom screen, delivered next frame
+
+void appPress(u32 keys)
+{
+	touchKeys |= keys;
+}
+
+// U+E000.. button glyphs in a hints string -> keys (0: the D-pad ones, which the D-pad covers)
+static u32 glyphKey(const u8 *p)
+{
+	if (p[0] != 0xEE) return ~0u;
+	u32 cp = (p[0] & 0x0F) << 12 | (p[1] & 0x3F) << 6 | (p[2] & 0x3F);
+	switch (cp) {
+	case 0xE000: return KEY_A;
+	case 0xE001: return KEY_B;
+	case 0xE002: return KEY_X;
+	case 0xE003: return KEY_Y;
+	case 0xE004: return KEY_L;
+	case 0xE005: return KEY_R;
+	case 0xE006: case 0xE07D: case 0xE07E: return 0;
+	}
+	return ~0u;
+}
+
+#define BOT_LOG 7 // log lines on the default bottom screen
+
+// The default: the log's tail, a D-pad (lists, cursors) and one button per footer hint.
+static void bottomDraw(void)
+{
+	u32 dim = uiCol[COL_DIM];
+	int n = uiLogCount();
+	uiRect(0, 0, UI_BW, BOT_LOG * 12 + 6, uiCol[COL_PANEL]);
+	for (int i = 0; i < BOT_LOG; i++) {
+		int k = n - BOT_LOG + i;
+		if (k < 0) continue;
+		char line[100];
+		uiLogLine(k, line, sizeof(line));
+		char *nl = strchr(line, '\n');
+		if (nl) *nl = 0;
+		uiText(4, 3 + i * 12, S_LOG, dim, "%s", uiFit(line, UI_BW - 28, S_LOG));
+	}
+	float y0 = BOT_LOG * 12 + 14, c = 36; // D-pad cell
+	u32 pad = uiCol[COL_BAR];
+	if (uiButtonRep(c, y0, c, c, pad, "\uE079")) appPress(KEY_UP);
+	if (uiButtonRep(0, y0 + c, c, c, pad, "\uE07B")) appPress(KEY_LEFT);
+	if (uiButtonRep(2 * c, y0 + c, c, c, pad, "\uE07C")) appPress(KEY_RIGHT);
+	if (uiButtonRep(c, y0 + 2 * c, c, c, pad, "\uE07A")) appPress(KEY_DOWN);
+	// the hints: "<glyph> label   <glyph> label ...", two columns right of the D-pad
+	const u8 *h = (const u8 *)uiHintsNow();
+	float bx = 3 * c + 8, bw = (UI_BW - bx - 4) / 2 - 2, bh = 30;
+	int i = 0;
+	while (*h) {
+		u32 key = glyphKey(h);
+		if (key == ~0u) {
+			h++;
+			continue;
+		}
+		const u8 *e = h + 3;
+		while (*e && glyphKey(e) == ~0u) e++;
+		char label[48];
+		int len = e - h < (int)sizeof(label) - 1 ? e - h : (int)sizeof(label) - 1;
+		memcpy(label, h, len);
+		label[len] = 0;
+		char *gap = strstr(label + 3, "   "); // hints end at a wide gap ("... SELECT log" isn't a button)
+		if (gap) *gap = 0;
+		for (len = strlen(label); len > 3 && label[len - 1] == ' ';) label[--len] = 0;
+		h = e;
+		if (!key) continue;
+		float x = bx + (i % 2) * (bw + 4), y = y0 + (i / 2) * (bh + 4);
+		if (y + bh > UI_H - 2) break;
+		if (uiButton(x, y, bw, bh, uiCol[COL_BAR], label)) appPress(key);
+		i++;
+	}
+	if (uiButton(0, UI_H - 26, 3 * c, 24, uiCol[COL_PANEL], "Log")) appPress(KEY_SELECT);
+}
+
 // --- loop ---
 
 void appRun(void)
@@ -514,8 +600,15 @@ void appRun(void)
 	while (aptMainLoop() && !quit && !restartRequested) {
 		frame++;
 		hidScanInput();
-		u32 net = __atomic_exchange_n(&netKeys, 0, __ATOMIC_SEQ_CST);
+		u32 net = __atomic_exchange_n(&netKeys, 0, __ATOMIC_SEQ_CST) | touchKeys;
+		touchKeys = 0;
 		u32 kDown = hidKeysDown() | net, kRepeat = hidKeysDownRepeat() | net;
+		// touch: a new tap, then after a delay repeats while held (for D-pad and digit buttons)
+		static u32 held;
+		touchPosition tp = { 0 };
+		if (hidKeysHeld() & KEY_TOUCH) hidTouchRead(&tp), held++;
+		else held = 0;
+		uiTouch(held == 1 || (held > 24 && held % 5 == 0), held > 1, tp.px, tp.py);
 		if (aptCheckHomePressRejected()) toast("HOME is off while NFC is ours: START exits");
 		jobReap();
 		if (kDown & KEY_START) {
@@ -536,6 +629,7 @@ void appRun(void)
 		stack[depth - 1]->draw();
 		if (jobBusy) busyDraw();
 		else if (dlg.kind) dialogDraw();
+		if (jobBusy) uiHints(jobCancellable ? BTN_B " stop" : "");
 		if (frame < toastUntil && !jobBusy && !dlg.kind) {
 			char t[128];
 			snprintf(t, sizeof(t), "%s", toastMsg);
@@ -544,6 +638,9 @@ void appRun(void)
 			uiRect((UI_W - w) / 2, UI_H - 44, w, 20, uiCol[COL_BAR]);
 			uiTextCenter(UI_W / 2, UI_H - 41, S_SMALL, uiCol[COL_TEXT], "%s", t);
 		}
+		uiBottom();
+		if (!jobBusy && !dlg.kind && stack[depth - 1]->bottom) stack[depth - 1]->bottom();
+		else bottomDraw();
 		uiFrameEnd();
 	}
 	uiFrameBegin();

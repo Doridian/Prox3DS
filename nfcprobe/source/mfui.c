@@ -5,10 +5,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <3ds.h>
 
 #include "app.h"
+#include "entry.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -29,7 +31,7 @@ static const Screen cardScreen;
 static int mfcProbe(void)
 {
 	sc = card;
-	int r = mfMagicDetect(mfGen4DefaultPwd, true, &sm) < 0 ? -1 : 1;
+	int r = mfMagicDetect(mfGen4Pwd, true, &sm) < 0 ? -1 : 1;
 	iso14aParity(true);
 	return r;
 }
@@ -181,7 +183,10 @@ static void cardDraw(void)
 	uiText(12, y, S_BODY, uiCol[COL_TEXT], "Magic:");
 	uiText(62, y, S_BODY, uiCol[*magic ? COL_OK : COL_DIM], "%s", *magic ? magic : "none found");
 	y += LINE_H;
-	if (!*magic) uiText(62, y, S_SMALL, uiCol[COL_DIM], "(Gen2 / CUID needs a default sector 0 key or a known ATS)");
+	if (!*magic && sm.mute)
+		uiText(62, y, S_SMALL, uiCol[COL_WARN], "(went mute: a GTU with another password? Lift it, rescan)");
+	else if (!*magic)
+		uiText(62, y, S_SMALL, uiCol[COL_DIM], "(Gen2 / CUID needs a default sector 0 key or a known ATS)");
 
 	if (sm.flags & MF_MAGIC_GEN4) {
 		const u8 *c = sm.cfg;
@@ -258,12 +263,12 @@ static void runGen4(void)
 {
 	g4result = 0;
 	if (!cardWait()) return;
-	g4result = mfGen4SetConfig(mfGen4DefaultPwd, g4new);
+	g4result = mfGen4SetConfig(mfGen4Pwd, g4new);
 	snprintf(g4why, sizeof(g4why), "%s", mfWhy());
 	// Reactivate: the UID length, ATQA and SAK may all have changed.
 	if (g4result == 1 && iso14aStart()) {
 		sc = card;
-		if (mfMagicDetect(mfGen4DefaultPwd, false, &sm) >= 0) memcpy(g4cfg, sm.cfg, MF_GEN4_CFG);
+		if (mfMagicDetect(mfGen4Pwd, false, &sm) >= 0) memcpy(g4cfg, sm.cfg, MF_GEN4_CFG);
 		iso14aParity(true);
 	}
 }
@@ -508,18 +513,73 @@ static void openFiles(void)
 	appScreen(&filesScreen);
 }
 
+// --- keys the user enters ---
+
+static u8 newKey[6];
+
+static void readNow(void)
+{
+	startRead();
+}
+
+static void keyEntered(const u8 *b, u32 len)
+{
+	static u8 have[MF_MAX_KEYS][6];
+	int n = mfKeyList(have, MF_MAX_KEYS, NULL, 0);
+	memcpy(newKey, b, 6);
+	for (int i = 0; i < n; i++)
+		if (!memcmp(have[i], b, 6)) {
+			confirm("Enter a key", readNow, "%02X%02X%02X%02X%02X%02X is in the dictionary already.\nRead the card now?",
+				b[0], b[1], b[2], b[3], b[4], b[5]);
+			return;
+		}
+	mkdir(MF_DIR, 0777);
+	FILE *f = fopen(MF_KEYS, "a");
+	if (!f) {
+		msgBox("Enter a key", "Could not open " MF_KEYS);
+		return;
+	}
+	fprintf(f, "%02X%02X%02X%02X%02X%02X # entered\n", b[0], b[1], b[2], b[3], b[4], b[5]);
+	fclose(f);
+	dictKeys = mfKeyList(have, MF_MAX_KEYS, NULL, 0);
+	confirm("Enter a key", readNow, "%02X%02X%02X%02X%02X%02X added to the dictionary (" MF_KEYS ").\nRead the card now?",
+		b[0], b[1], b[2], b[3], b[4], b[5]);
+}
+
+static void enterKey(void)
+{
+	entryHex("Classic key", "A sector key (6 bytes, A or B). It goes into the dictionary, which Read card tries "
+		"on every sector before the attacks.", 6, newKey, keyEntered);
+}
+
+static void gtuPwdSet(const u8 *b, u32 len)
+{
+	memcpy(mfGen4Pwd, b, 4);
+	toast("GTU password %02X%02X%02X%02X", b[0], b[1], b[2], b[3]);
+}
+
+static void gtuPwd(void)
+{
+	entryHex("Gen4 GTU password", "The password for the GTU's CF commands (scan, backdoor read, config, clone; "
+		"default 00000000). Until the app restarts.", 4, mfGen4Pwd, gtuPwdSet);
+}
+
 static const MenuEntry mfcEntries[] = {
 	{ "Scan card", "Read the card's UID, ATQA/SAK and magic generation (Gen1a, Gen2 / CUID, Gen4 GTU, USCUID) and the GTU / "
 	               "USCUID config.", startScan },
 	{ "Read card", "Dump every sector. Keys from the dictionary, then the nested and static-nonce attacks and the "
 	               "magic backdoors. Saved to the SD card and opened in the editor.", startRead },
 	{ "Saved dumps", "View and edit dumps, write them onto magic cards.", openFiles },
+	{ "Enter a key", "Type a sector key into the dictionary (" MF_KEYS "), then read the card with it.", enterKey },
+	{ "GTU password", "Set the Gen4 GTU password the magic card operations use (default 00000000).", gtuPwd },
 };
 
 static void mfcExtra(float y)
 {
 	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Dictionary: %d keys (defaults + " MF_KEYS ")", dictKeys);
 	if (sc.uidLen) menuLastCard(y + SMALL_H, &sc, cardTypeName(&sc));
+	if (memcmp(mfGen4Pwd, mfGen4DefaultPwd, 4)) uiText(12, y + 2 * SMALL_H, S_SMALL, uiCol[COL_WARN], "GTU password %02X%02X%02X%02X",
+		mfGen4Pwd[0], mfGen4Pwd[1], mfGen4Pwd[2], mfGen4Pwd[3]);
 }
 
 static Menu mfcMenu = { "MIFARE Classic", mfcEntries, sizeof(mfcEntries) / sizeof(mfcEntries[0]), mfcExtra };

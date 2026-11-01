@@ -39,7 +39,7 @@ Result archive_getmtime(const char *path, u64 *mtime)
 // --- script ---
 
 static const SimStep *step;
-static u32 keys;
+static u32 keys, touch; // touch: KEY_TOUCH held this frame at x << 16 | y
 static char shotName[64];
 static FILE *shot;
 static const char *outDir = "shots";
@@ -53,11 +53,12 @@ void simScript(const SimStep *s)
 
 bool aptMainLoop(void)
 {
-	keys = 0;
+	keys = touch = 0;
 	*shotName = 0;
 	while (step && step->kind == SIM_CALL) (step++)->fn();
 	if (!step || step->kind == SIM_END) return false;
 	if (step->kind == SIM_KEYS) keys = step->keys;
+	else if (step->kind == SIM_TOUCH) touch = step->keys | 1u << 31;
 	else snprintf(shotName, sizeof(shotName), "%s", step->name);
 	step++;
 	return true;
@@ -67,12 +68,14 @@ bool aptCheckHomePressRejected(void) { return false; }
 void hidScanInput(void) {}
 u32 hidKeysDown(void) { return keys; }
 u32 hidKeysDownRepeat(void) { return keys; }
+u32 hidKeysHeld(void) { return keys | (touch ? KEY_TOUCH : 0); }
+void hidTouchRead(touchPosition *p) { p->px = touch >> 16 & 0x7FFF, p->py = touch & 0xFFFF; }
 void hidSetRepeatParameters(u32 delay, u32 interval) {}
 
 // --- citro2d ---
 
-struct C3D_RenderTarget { int dummy; };
-static C3D_RenderTarget theTarget;
+struct C3D_RenderTarget { int screen; };
+static C3D_RenderTarget targets[2] = { { 0 }, { 1 } };
 struct SimTextBuf { char *buf; size_t used, size; };
 
 bool C3D_Init(size_t n) { return true; }
@@ -80,8 +83,13 @@ void C3D_Fini(void) {}
 bool C2D_Init(size_t n) { return true; }
 void C2D_Fini(void) {}
 void C2D_Prepare(void) {}
-C3D_RenderTarget *C2D_CreateScreenTarget(gfxScreen_t s, gfx3dSide_t side) { return &theTarget; }
-void C2D_SceneBegin(C3D_RenderTarget *t) {}
+C3D_RenderTarget *C2D_CreateScreenTarget(gfxScreen_t s, gfx3dSide_t side) { return &targets[s == GFX_BOTTOM]; }
+
+// "S n": the draws after it go to screen n (0 top, 1 bottom)
+void C2D_SceneBegin(C3D_RenderTarget *t)
+{
+	if (shot) fprintf(shot, "S %d\n", t->screen);
+}
 void C2D_TextOptimize(const C2D_Text *t) {}
 
 bool C3D_FrameBegin(u8 flags)
@@ -103,7 +111,7 @@ void C3D_FrameEnd(u8 flags)
 
 void C2D_TargetClear(C3D_RenderTarget *t, u32 color)
 {
-	if (shot) fprintf(shot, "R 0 0 400 240 %08lX\n", color);
+	if (shot) fprintf(shot, "S %d\nR 0 0 %d 240 %08lX\n", t->screen, t->screen ? 320 : 400, color);
 }
 
 bool C2D_DrawRectSolid(float x, float y, float z, float w, float h, u32 clr)

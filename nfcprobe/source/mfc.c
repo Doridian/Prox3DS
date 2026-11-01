@@ -226,6 +226,7 @@ int mfGen1aWrite(u8 block, const u8 data[16])
 }
 
 const u8 mfGen4DefaultPwd[4] = { 0, 0, 0, 0 };
+u8 mfGen4Pwd[4];
 
 // One Gen4 GTU command: CF pwd[4] cmd... in data mode (HW parity + CRC). Tried as is first, then
 // once more after a SELECT (a failed or Crypto1 exchange leaves the card idle or mid-session).
@@ -928,6 +929,7 @@ int mfMagicDetect(const u8 pwd[4], bool testGen2, MfMagic *m)
 		m->flags |= MF_MAGIC_GEN4;
 		m->cfgLen = r;
 	}
+	m->mute = !r && !strncmp(why, "card mute", 9);
 	if (mfGen1aUnlock()) {
 		m->flags |= MF_MAGIC_GEN1A;
 		if ((r = mfUscuidConfig(m->usc)) < 0) return -1;
@@ -1110,7 +1112,7 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 // hold the real keys; they go into the dictionary, which the sweep then confirms by auth.
 static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 {
-	int nb = mfFirstBlock(sectors), r = mfGen4Read(mfGen4DefaultPwd, 0, d->data[0]);
+	int nb = mfFirstBlock(sectors), r = mfGen4Read(mfGen4Pwd, 0, d->data[0]);
 	if (r < 0) return -1;
 	bool gen4 = r;
 	if (!gen4 && !mfGen1aUnlock()) return 0;
@@ -1120,7 +1122,7 @@ static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 		progStep(b, nb);
 		for (int t = 0; t < 3; t++) {
 			if (gen4) {
-				if ((r = mfGen4Read(mfGen4DefaultPwd, b, d->data[b])) < 0) return -1;
+				if ((r = mfGen4Read(mfGen4Pwd, b, d->data[b])) < 0) return -1;
 			} else {
 				r = gen1aRead(b, d->data[b]); // -1 is no answer here, not a monitor error
 				if (r != 1) mfGen1aUnlock();
@@ -1429,7 +1431,7 @@ static int gen2Trailer(const MfDump *tgt, int sec, u8 t, const u8 data[16])
 
 static int cloneBlock(int type, const MfDump *tgt, int sec, u8 b, const u8 data[16])
 {
-	if (type == CLONE_GEN4) return mfGen4Write(mfGen4DefaultPwd, b, data);
+	if (type == CLONE_GEN4) return mfGen4Write(mfGen4Pwd, b, data);
 	if (type == CLONE_GEN1A) return mfGen1aWrite(b, data);
 	for (int kb = 0; kb < 2; kb++) {
 		if (!tgt->keyFound[sec][kb]) continue;
@@ -1446,7 +1448,7 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 	if (mfFirstBlock(sectors) != nblocks) FAIL(0, "%d blocks: not whole sectors", nblocks);
 	if (iso14aSelect() == -2) return -1; // current SAK
 	MfMagic m;
-	if (mfMagicDetect(mfGen4DefaultPwd, false, &m) < 0) return -1;
+	if (mfMagicDetect(mfGen4Pwd, false, &m) < 0) return -1;
 	if ((m.flags & MF_MAGIC_GEN4) && m.cfgLen == MF_GEN4_CFG && m.cfg[0]) {
 		// A GTU in Ultralight mode: back to Classic, sized for the dump (4-byte UID), then reactivated.
 		u8 cfg[MF_GEN4_CFG];
@@ -1456,7 +1458,7 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 		cfg[25] = 0;
 		cfg[26] = sectors == 5 ? 0x09 : sectors == 32 ? 0x19 : sectors == 40 ? 0x18 : 0x08;
 		logp("gen4 GTU in Ultralight mode: switching to Classic\n");
-		int r = mfGen4SetConfig(mfGen4DefaultPwd, cfg);
+		int r = mfGen4SetConfig(mfGen4Pwd, cfg);
 		if (r <= 0) return r;
 		if (!iso14aStart()) FAIL(-1, "reactivate after the mode switch");
 	}
@@ -1466,7 +1468,7 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 		if (valid[t] && !mfAclValid(data[t])) FAIL(0, "sector %d: broken access bits", sec);
 	}
 
-	if (mfMagicDetect(mfGen4DefaultPwd, false, &m) < 0) return -1;
+	if (mfMagicDetect(mfGen4Pwd, false, &m) < 0) return -1;
 	int type = m.flags & MF_MAGIC_GEN4 ? CLONE_GEN4 : m.flags & MF_MAGIC_GEN1A ? CLONE_GEN1A : CLONE_GEN2;
 	// The GTU computes its BCC; the others send block 0's as it is, and a wrong one breaks anticollision.
 	if (type != CLONE_GEN4 && valid[0] && card.uidLen == 4

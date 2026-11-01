@@ -42,6 +42,7 @@ int mfGen1aWrite(u8 block, const u8 data[16]);
 // read back and verified), 0 = no / bad answer (wrong password, not a GTU), -1 = monitor error; the
 // reason is in mfWhy(). The config read returns its length (30 or 32 bytes).
 extern const u8 mfGen4DefaultPwd[4];
+extern u8 mfGen4Pwd[4]; // the GTU password the app's operations use (default 00000000; Classic menu)
 int mfGen4Read(const u8 pwd[4], u8 block, u8 out[16]);
 int mfGen4Write(const u8 pwd[4], u8 block, const u8 data[16]); // WRITES THE CARD
 int mfGen4Config(const u8 pwd[4], u8 *out, u32 max);
@@ -62,6 +63,8 @@ typedef struct {
 	u8 cfgLen;
 	u8 cfg[32]; // Gen4 config (C6)
 	u8 usc[16]; // USCUID config (E000)
+	bool mute;  // the card stopped answering after the GTU command: a GTU with another password (it
+	            // stays mute until the field drops), so the other tests found nothing
 } MfMagic;
 int mfMagicDetect(const u8 pwd[4], bool testGen2, MfMagic *m); // flags, -1 on a monitor error
 

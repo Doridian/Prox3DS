@@ -10,6 +10,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "entry.h"
 #include "mfu.h"
 #include "probe.h"
 #include "ui.h"
@@ -42,7 +43,7 @@ static int mfuProbe(void)
 		}
 	}
 	u8 cfg[32];
-	if ((r = mfGen4Config(mfGen4DefaultPwd, cfg, sizeof(cfg))) < 0) return -1;
+	if ((r = mfGen4Config(mfGen4Pwd, cfg, sizeof(cfg))) < 0) return -1;
 	smGtu = r > 0;
 	return 1;
 }
@@ -74,6 +75,8 @@ static void startScan(void)
 static MfuDump rd;
 static char rdPath[128];
 static int rdResult;
+static bool rdWithPwd;
+static u8 rdPwd[4] = { 0xFF, 0xFF, 0xFF, 0xFF }; // the last one entered
 
 static void runRead(void)
 {
@@ -81,7 +84,7 @@ static void runRead(void)
 	rdPath[0] = 0;
 	if (!cardWait()) return;
 	sc = card;
-	rdResult = mfuDumpCard(&rd, NULL);
+	rdResult = mfuDumpCard(&rd, rdWithPwd ? rdPwd : NULL);
 	iso14aParity(true);
 	if (rdResult > 0 && mfuSaveDump(&rd, rdPath, sizeof(rdPath))) logp("saved %s\n", rdPath);
 }
@@ -100,14 +103,28 @@ static void doneRead(void)
 	int got = 0;
 	for (int p = 0; p < rd.pages; p++) got += rd.valid[p];
 	mfuEditorOpen(&rd, rdPath);
-	msgBox(mfCancel ? "Read card (stopped)" : "Read card", "%s: %d/%d pages read.%s\n%s", rd.info.type->name,
-		got, rd.pages, got < rd.pages ? "\nThe rest is password-protected." : "",
-		rdPath[0] ? rdPath : "Could not save the dump to the SD card!");
+	msgBox(mfCancel ? "Read card (stopped)" : "Read card", "%s: %d/%d pages read.%s%s\n%s", rd.info.type->name,
+		got, rd.pages, !rdWithPwd ? "" : rd.pwdOk ? "\nPassword accepted." : "\nPassword refused.",
+		got < rd.pages ? "\nThe rest is password-protected." : "", rdPath[0] ? rdPath : "Could not save the dump to the SD card!");
 }
 
 static void startRead(void)
 {
+	rdWithPwd = false;
 	jobStart("Reading card", runRead, doneRead, true);
+}
+
+static void pwdEntered(const u8 *b, u32 len)
+{
+	memcpy(rdPwd, b, 4);
+	rdWithPwd = true;
+	jobStart("Reading card with password", runRead, doneRead, true);
+}
+
+static void startPwdRead(void)
+{
+	entryHex("Ultralight / NTAG password", "The 4-byte PWD_AUTH password (EV1, NTAG21x). It is tried once before "
+		"reading: a wrong one counts against the card's AUTHLIM.", 4, rdPwd, pwdEntered);
 }
 
 // Static lock bits (page 2 bytes 2-3): which of pages 3-15 are read-only.
@@ -453,6 +470,7 @@ static const MenuEntry mfuEntries[] = {
 	               "capability container and the password config.", startScan },
 	{ "Read card", "Dump every readable page (a password-protected area stays unread). Saved to the SD card "
 	               "in pm3's format and opened in the editor.", startRead },
+	{ "Read with password", "The same with a password (PWD_AUTH, 4 bytes) first: the protected pages read too.", startPwdRead },
 	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card, or clone them onto a Gen4 GTU.", openFiles },
 };
 

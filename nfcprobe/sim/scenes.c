@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#include "../source/entry.h"
 #include "../source/probe.h"
 #include "scenes.h"
 #include "sim.h"
@@ -329,6 +330,24 @@ static void dfCard(void) { simDfCard(&cardDf, &dfi, 1, ""); }
 static void dfIsoCard(void) { simDfCard(&card10, &dfIso, 0, "GetVersion: permission denied 9D (not a DESFire)"); }
 static void dfData(void) { simDfData(0, 3); }
 static void dfDataShort(void) { simDfData(0, 0); }
+static void dfValueData(void) { simDfData(0, 3); }
+static void entryDone(const u8 *b, u32 len) {}
+static void entryDoneDec(s64 v) {}
+static void entryKey(void)
+{
+	static const u8 k[16] = { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+	entryHex("DESFire: key 1 of A1A1A1", "AES key (16 bytes). It authenticates key 1 and goes into the dictionary.", 16, k, entryDone);
+}
+static void entryData(void)
+{
+	u8 d[96];
+	for (int i = 0; i < 96; i++) d[i] = "WAVELYNX TECH 01 "[i % 17];
+	entryHex("DESFire: write A1A1A1 file 03", "New contents (96 bytes), written in full mode with key 2.", 96, d, entryDone);
+}
+static void entryValue(void)
+{
+	entryDec("DESFire: credit A1A1A1 file 04", "Amount to add to the value (limit 2000000000).", 0, 2147483647, 1000, entryDoneDec);
+}
 static void dfKeyedCard(void) { simDfCard(&cardDf, &dfKeyed, 1, ""); }
 static void dfKeyedData(void) { simDfData(0, 2); }
 
@@ -351,6 +370,9 @@ static const SimStep script[] = {
 	CALL(busyEnd), CALL(toastHome), SHOT("toast_home"), CALL(toastLong), SHOT("toast_long"),
 
 	// MIFARE Classic
+	CALL(reset), CALL(mfcMenu), D, D, D, SHOT("mfc_menu_enterkey"), A, SHOT("mfc_enterkey"), A, SHOT("mfc_enterkey_added"), B,
+	D, SHOT("mfc_menu_gtupwd"), A, KEYS(KEY_UP), A, SHOT("mfc_gtupwd_set"),
+	CALL(reset), CALL(mfuMenu), D, D, SHOT("mfu_menu_pwd"), A, SHOT("mfu_pwd_entry"), B,
 	CALL(reset), CALL(mfcMenu), SHOT("mfc_menu_0"), D, SHOT("mfc_menu_1"), D, SHOT("mfc_menu_2"),
 	A, SHOT("mfc_files"), X, SHOT("mfc_files_clone_confirm"), B, Y, SHOT("mfc_files_delete_confirm"), B,
 	R, SHOT("mfc_files_page2"), L,
@@ -408,6 +430,19 @@ static const SimStep script[] = {
 	CALL(reset), CALL(dfIsoCard), SHOT("df_iso_card"),
 	CALL(reset), CALL(dfKeyedCard), SHOT("df_keyed_card"), A, SHOT("df_keyed_app0"), D, D, D, D, D, SHOT("df_keyed_app0_scrolled"),
 	R, SHOT("df_keyed_app1"), R, SHOT("df_keyed_app2"), B,
+	CALL(reset), CALL(entryKey), SHOT("entry_key"), R, R, R, KEYS(KEY_UP), SHOT("entry_key_edit"), TOUCH(40, 30),
+	SHOT("entry_key_touch"), B,
+	CALL(reset), CALL(entryData), KEYS(KEY_R), KEYS(KEY_R), SHOT("entry_data"), B,
+	CALL(reset), CALL(entryValue), SHOT("entry_value"), TOUCH(150, 30), KEYS(0), TOUCH(90, 170), KEYS(0), TOUCH(30, 30), KEYS(0), SHOT("entry_value_typed"),
+	TOUCH(260, 30), SHOT("entry_value_del"), TOUCH(260, 120), SHOT("entry_value_cancel"),
+	CALL(reset), CALL(dfKeyedCard), Y, SHOT("df_card_menu"), D, A, SHOT("df_create_app"), D, A, SHOT("df_create_app_type"), B,
+	TOUCH(160, 70), KEYS(0), SHOT("df_create_app_keys"), B, B,
+	Y, D, D, D, D, A, SHOT("df_format_confirm"), B,
+	Y, D, D, D, A, SHOT("df_change_picc_type"), A, SHOT("df_change_picc_entry"), A, SHOT("df_change_picc_confirm"), B,
+	A, Y, SHOT("df_app_menu"), D, A, SHOT("df_create_file"), D, A, D, D, A, SHOT("df_create_file_value"), B,
+	Y, A, SHOT("df_write_std"), B, D, D, D, Y, A, SHOT("df_write_value"), A, SHOT("df_write_value_amount"), B,
+	Y, D, D, D, D, A, SHOT("df_change_key_no"), A, SHOT("df_change_key_new"), B,
+	Y, D, D, D, D, D, A, SHOT("df_delete_app_confirm"), B, B,
 	CALL(reset), CALL(dfKeyedCard), CALL(dfKeyedData), SHOT("df_keyed_data256"), D, D, D, D, SHOT("df_keyed_data256_end"), B,
 	CALL(reset), CALL(dfMenu), CALL(dfIsoCard), B, SHOT("df_menu_lastcard"),
 	END,

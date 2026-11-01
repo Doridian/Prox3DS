@@ -164,10 +164,10 @@ static void runWriteBlock(void)
 	if (!cardWait()) return;
 	MfMagic m;
 	wbResult = -1;
-	if (mfMagicDetect(mfGen4DefaultPwd, false, &m) < 0) return;
+	if (mfMagicDetect(mfGen4Pwd, false, &m) < 0) return;
 	if (m.flags & MF_MAGIC_GEN4) {
 		snprintf(wbHow, sizeof(wbHow), "Gen4 GTU backdoor");
-		wbResult = mfGen4Write(mfGen4DefaultPwd, wbBlock, wbData);
+		wbResult = mfGen4Write(mfGen4Pwd, wbBlock, wbData);
 	} else if (m.flags & MF_MAGIC_GEN1A) {
 		snprintf(wbHow, sizeof(wbHow), "Gen1a backdoor");
 		wbResult = mfGen1aWrite(wbBlock, wbData);

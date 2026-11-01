@@ -824,3 +824,37 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   6) answers a normal EV2 challenge (AF + 16 bytes; LRP would be AF 01 + 16 plain bytes). Probe app deleted,
   PICC formatted (FC with the DES PICC key): blank again, 5120 bytes free.
 - LRP needs a DESFire Light (MF2DL(H)x0) or an NTAG 424 DNA (or newer NXP parts with LRP).
+
+## Touch UI, key entry, DESFire create / write / format -- 2026-11-01
+- Bottom screen: citro2d now (the text console is gone). Default: the log's last lines, a D-pad and one
+  touch button per footer hint (uiFooter / dialogs / jobs record their hints; "<glyph> label" pieces,
+  cut at a 3-space gap). A screen may draw its own (Screen.bottom). Taps become key presses next frame
+  (appPress), so everything still works with the buttons alone when a card covers the screen; held
+  D-pad / digit buttons repeat (uiButtonRep), OK / Cancel never do.
+- entry.c: hex (keys, passwords, data up to 256 bytes on a 16-wide grid) and decimal entry. Top screen:
+  left/right digit, up/down value, L/R a byte, X clear, A done, B cancel. Bottom: keypad (hex: types at
+  the cursor and moves on; decimal: calculator style from the right, Del).
+- DESFire (dfui.c): card screen Y = Save / Create application / Enter or change the PICC master key /
+  Format; application screen Y = Write file (std/backup data, add record, credit/debit/limited credit)
+  / Create file (all 5 types, comm mode, access keys) / Delete file / Enter or change a key / Delete
+  application / Save. Each is a job: same UID as scanned, ISO-DEP, select, auth (EV2 for AES on EV2+),
+  command (+ commit), then a scan with keys. Keys it needs and doesn't know are asked for first; keys
+  that worked or were set are appended to desfire/keys.txt. Value files show their value in decimal.
+- Verified on the EV3 (040C686A9F2390) through the UI over nfcnet keys: create app 112233 (2 AES keys),
+  create std file + write it (key 0), create value file + credit 250 with commit (reads FA000000),
+  change key 1 (new key found by the rescan via keys.txt), enter A1A1A1 key 2 (a zero key was refused
+  and forgotten; the right one opened files 03 / 06), delete file, delete application.
+- On the spare EV3 (044D426A9F2390), through the UI: create app, change the PICC master key DES 00*8 ->
+  AES 00*16 (type bits in the key number; the rescan finds it over EV2), Format with the AES key over EV2
+  (5120 bytes free again, no apps), PICC master key back to DES 00*8. Card checked afterwards: key
+  settings 0F, 1 DES key version 00, no apps, 5120 free: as it came.
+- Classic: menu "Enter a key" (6 bytes into keys.txt, then offers Read card) and "GTU password" (mfGen4Pwd,
+  used by every UI GTU op and the dump / clone backdoors; net ops keep their explicit password). Verified
+  on the GTU 11223344: wrong password -> GTU not found, and the card goes MUTE until the field drops (so
+  Gen1a / Gen2 tests find nothing): the card screen now says so (MfMagic.mute). Right password -> GTU +
+  Gen2 again. Entered key FFFFFFFFFFFF -> "already in the dictionary", read 64/64 blocks.
+- Ultralight / NTAG: menu "Read with password" (PWD_AUTH, remembers the last one; the result says
+  accepted / refused). Sim only (no EV1 / NTAG on the reader). UL-C 3DES auth isn't implemented, so no
+  key entry for it.
+- Sim: shots carry both screens (S 0 / S 1 in the draw list; PNGs are top over bottom), TOUCH(x, y)
+  steps (one frame held; put KEYS(0) between taps), D-pad glyphs E079-E07C drawn as arrows.

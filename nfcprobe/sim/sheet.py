@@ -10,11 +10,11 @@ os.makedirs(os.path.join(out, "sheets"), exist_ok=True)
 for k in range(0, len(shots), per):
     group = shots[k:k + per]
     rows = (len(group) + 1) // 2
-    sheet = Image.new("RGB", (2 * 404, rows * 258), (255, 255, 255))
+    sheet = Image.new("RGB", (2 * 404, rows * 502), (255, 255, 255))
     d = ImageDraw.Draw(sheet)
     for i, p in enumerate(group):
-        im = Image.open(p).resize((400, 240), Image.LANCZOS)
-        x, y = (i % 2) * 404, (i // 2) * 258
+        im = Image.open(p).resize((400, 484), Image.LANCZOS)  # top screen over the bottom one
+        x, y = (i % 2) * 404, (i // 2) * 502
         d.text((x + 2, y + 2), os.path.basename(p)[:-4], fill=(0, 0, 0))
         sheet.paste(im, (x + 2, y + 16))
     sheet.save(os.path.join(out, "sheets", f"{k // per:02d}.png"))
