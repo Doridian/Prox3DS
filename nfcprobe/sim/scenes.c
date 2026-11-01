@@ -350,6 +350,15 @@ static void entryValue(void)
 }
 static void dfKeyedCard(void) { simDfCard(&cardDf, &dfKeyed, 1, ""); }
 static void dfKeyedData(void) { simDfData(0, 2); }
+static void dfRandomCard(void)
+{
+	static DfInfo r;
+	static const Card c = { .uidLen = 4, .uid = { 0x08, 0x0E, 0xAF, 0xF8 }, .atqa = { 0x04, 0x03 }, .sak = 0x20 };
+	r = dfKeyed;
+	r.randomUid = r.hasRealUid = true;
+	memcpy(r.realUid, "\x04\x4D\x42\x6A\x9F\x23\x90", 7);
+	simDfCard(&c, &r, 1, "");
+}
 
 #define D KEYS(KEY_DOWN)
 #define U KEYS(KEY_UP)
@@ -437,12 +446,16 @@ static const SimStep script[] = {
 	TOUCH(260, 30), SHOT("entry_value_del"), TOUCH(260, 120), SHOT("entry_value_cancel"),
 	CALL(reset), CALL(dfKeyedCard), Y, SHOT("df_card_menu"), D, A, SHOT("df_create_app"), D, A, SHOT("df_create_app_type"), B,
 	TOUCH(160, 70), KEYS(0), SHOT("df_create_app_keys"), B, B,
-	Y, D, D, D, D, A, SHOT("df_format_confirm"), B,
+	Y, D, D, D, D, D, A, SHOT("df_format_confirm"), B,
+	Y, D, D, D, D, A, SHOT("df_picc_ks_entry"), A, SHOT("df_picc_ks_confirm"), B,
+	Y, D, A, D, D, D, D, A, SHOT("df_create_app_iso"), A, B,
 	Y, D, D, D, A, SHOT("df_change_picc_type"), A, SHOT("df_change_picc_entry"), A, SHOT("df_change_picc_confirm"), B,
 	A, Y, SHOT("df_app_menu"), D, A, SHOT("df_create_file"), D, A, D, D, A, SHOT("df_create_file_value"), B,
 	Y, A, SHOT("df_write_std"), B, D, D, D, Y, A, SHOT("df_write_value"), A, SHOT("df_write_value_amount"), B,
 	Y, D, D, D, D, A, SHOT("df_change_key_no"), A, SHOT("df_change_key_new"), B,
-	Y, D, D, D, D, D, A, SHOT("df_delete_app_confirm"), B, B,
+	Y, D, D, D, D, D, D, D, A, SHOT("df_delete_app_confirm"), B,
+	Y, D, D, D, D, D, A, SHOT("df_app_ks_entry"), KEYS(KEY_DOWN), A, SHOT("df_app_ks_confirm"), B, B,
+	CALL(reset), CALL(dfRandomCard), SHOT("df_random_card"),
 	CALL(reset), CALL(dfKeyedCard), CALL(dfKeyedData), SHOT("df_keyed_data256"), D, D, D, D, SHOT("df_keyed_data256_end"), B,
 	CALL(reset), CALL(dfMenu), CALL(dfIsoCard), B, SHOT("df_menu_lastcard"),
 	END,

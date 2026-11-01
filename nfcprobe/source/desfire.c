@@ -6,6 +6,7 @@
 
 #include "desfire.h"
 #include "isodep.h"
+#include "nxpsig.h"
 #include "probe.h"
 
 static char why[64];
@@ -75,9 +76,9 @@ static bool txMac(u8 c)
 	return c == 0x3D || c == 0x3B || c == 0xDB || c == 0x0C || c == 0xDC || c == 0x1C || c == 0xC8;
 }
 
-// A decrypted full-mode answer: data, CRC32 over data + status 00, padding (zeros, or 80 and zeros).
+// A decrypted full-mode answer: data, CRC32 over data + status (00; Read_Sig's 90), padding (zeros, or 80 and zeros).
 // The data length, -1 = no CRC fits.
-static int crcPos(const u8 *p, u32 n, u8 bs)
+static int crcPos(const u8 *p, u32 n, u8 bs, u8 st)
 {
 	u8 t[320];
 	for (int l = (int)n - 4; l >= 0 && l > (int)n - 4 - bs; l--) {
@@ -85,7 +86,7 @@ static int crcPos(const u8 *p, u32 n, u8 bs)
 		for (u32 i = l + 4; i < n; i++) pad &= !p[i] || (i == (u32)l + 4 && p[i] == 0x80);
 		if (!pad) continue;
 		memcpy(t, p, l);
-		t[l] = 0;
+		t[l] = st;
 		u32 crc = dfCrc32(t, l + 1);
 		if (p[l] == (u8)crc && p[l + 1] == (u8)(crc >> 8) && p[l + 2] == (u8)(crc >> 16) && p[l + 3] == (u8)(crc >> 24))
 			return l;
@@ -125,13 +126,15 @@ static bool dataCmd(u8 c)
 
 int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st)
 {
-	u8 tx[320], rx[320], a[64], af[1 + DF_FRAME] = { 0xAF }, mac[16], bs = ses.c.bs;
+	u8 tx[320], rx[320], a[128], af[1 + DF_FRAME] = { 0xAF }, mac[16], bs = ses.c.bs;
 	if (len + 4 + 16 + 8 > sizeof(tx)) FAIL(-1, "command too long");
 	// SelectApplication ends the session, so does any error; a good answer keeps it
 	bool on = ses.on && c[0] != 0x5A, encRx = false;
 	ses.on = false;
 	memcpy(tx, c, len);
 	u32 n = len;
+	bool pad80 = comm == DF_FULL80;
+	if (pad80) comm = DF_FULL; // EV2 pads with 80 anyway
 	if (on && ses.ev2) {
 		if (comm == DF_PLAIN && !dataCmd(c[0])) comm = DF_MACED;
 		if (comm == DF_ENC || (comm == DF_FULL && len > 1 + hdr)) { // data + 80 00.., encrypted
@@ -150,6 +153,7 @@ int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st)
 		if (comm == DF_ENC || (comm == DF_FULL && len > 1 + hdr)) {
 			u32 d = len - 1 - hdr;
 			if (comm == DF_FULL) put32(tx + len, dfCrc32(c, len)), d += 4;
+			if (pad80) tx[1 + hdr + d++] = 0x80;
 			u32 p = (d + bs - 1) / bs * bs;
 			memset(tx + 1 + hdr + d, 0, p - d);
 			dfCbc(&ses.c, ses.iv, tx + 1 + hdr, p, true);
@@ -182,7 +186,9 @@ int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st)
 		k = isoDepTx(af, 1, a, sizeof(a));
 	}
 	// ChangeKey of the session's own key ends it without a MAC
-	if (on && !*st && !(c[0] == 0xC4 && (c[1] & 0x3F) == ses.keyNo) && ses.ev2) {
+	// Read_Sig (3C) answers 90 when it worked
+	bool ok = !*st || (c[0] == 0x3C && *st == 0x90);
+	if (on && ok && !(c[0] == 0xC4 && (c[1] & 0x3F) == ses.keyNo) && ses.ev2) {
 		ses.ctr++;
 		if (comm != DF_PLAIN) {
 			u8 rm[8];
@@ -201,9 +207,9 @@ int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st)
 			got--;
 		}
 		ses.on = true;
-	} else if (on && !*st && !(c[0] == 0xC4 && (c[1] & 0x3F) == ses.keyNo)) {
+	} else if (on && ok && !(c[0] == 0xC4 && (c[1] & 0x3F) == ses.keyNo)) {
 		if (encRx) {
-			int l = got >= bs && !(got % bs) ? (dfCbc(&ses.c, ses.iv, rx, got, false), crcPos(rx, got, bs)) : -1;
+			int l = got >= bs && !(got % bs) ? (dfCbc(&ses.c, ses.iv, rx, got, false), crcPos(rx, got, bs, *st)) : -1;
 			if (l < 0) goto bad;
 			got = l;
 		} else {
@@ -241,12 +247,13 @@ static bool halvesEqual(const u8 *k)
 
 // AuthenticateEV2First (71): RndB and RndA||rol(RndB) both with IV 0, the answer TI || rol(RndA) ||
 // PDcap2 || PCDcap2; session keys CMAC(K, A55A / 5AA5 0001 0080 || RndA/RndB mix), pm3 DesfireGenSessionKeyEV2.
-static int authEv2(u8 k, const DfKey *key, u8 *st)
+// NonFirst (77, in a running EV2 session): the answer is rol(RndA) alone, TI and CmdCtr carry on.
+static int authEv2(u8 k, const DfKey *key, bool first, u8 *st)
 {
 	DfCipher c;
 	dfCipherInit(&c, DF_AES, key->key);
-	u8 cmd[3] = { 0x71, k, 0x00 }, a[64], iv[16] = { 0 }, ra[16], rb[16], buf[33];
-	int n = isoDepTx(cmd, 3, a, sizeof(a));
+	u8 cmd[3] = { first ? 0x71 : 0x77, k, 0x00 }, a[64], iv[16] = { 0 }, ra[16], rb[16], buf[33];
+	int n = isoDepTx(cmd, first ? 3 : 2, a, sizeof(a));
 	if (n < 0) FAIL(-1, "monitor");
 	if (!n) FAIL(-1, "lost the card: %s", isoDepWhy());
 	*st = a[0];
@@ -264,10 +271,11 @@ static int authEv2(u8 k, const DfKey *key, u8 *st)
 	if (n < 0) FAIL(-1, "monitor");
 	if (!n) FAIL(-1, "lost the card: %s", isoDepWhy());
 	*st = a[0];
-	if (a[0] || n != 33) return 0;
+	if (a[0] || n != (first ? 33 : 17)) return 0;
 	memset(iv, 0, 16);
-	dfCbc(&c, iv, a + 1, 32, false);
-	if (memcmp(a + 5, ra + 1, 15) || a[20] != ra[0]) {
+	dfCbc(&c, iv, a + 1, n - 1, false);
+	const u8 *rot = first ? a + 5 : a + 1; // rol(RndA)
+	if (memcmp(rot, ra + 1, 15) || rot[15] != ra[0]) {
 		*st = DF_ST_MAC;
 		return 0;
 	}
@@ -283,15 +291,25 @@ static int authEv2(u8 k, const DfKey *key, u8 *st)
 	dfCmac(&c, iv, sv, 32, km);
 	dfCipherInit(&ses.c, DF_AES, ke);
 	dfCipherInit(&ses.mac, DF_AES, km);
-	memcpy(ses.ti, a + 1, 4);
-	ses.ctr = 0, ses.keyNo = k, ses.ev2 = ses.on = true;
+	if (first) memcpy(ses.ti, a + 1, 4), ses.ctr = 0;
+	ses.keyNo = k, ses.ev2 = ses.on = true;
 	return 1;
+}
+
+// After a refused one the card still takes another NonFirst (same TI): only ev2 (a TI) is needed.
+int dfAuthEv2NonFirst(u8 k, const DfKey *key, u8 *st)
+{
+	if (!ses.ev2 || key->type != DF_AES) FAIL(0, "no EV2 session to continue");
+	ses.on = false;
+	int r = authEv2(k, key, false, st);
+	if (r <= 0) ses.on = false;
+	return r;
 }
 
 int dfAuth(u8 k, const DfKey *key, bool ev2, u8 *st)
 {
 	ses.on = ses.ev2 = false;
-	if (ev2 && key->type == DF_AES) return authEv2(k, key, st);
+	if (ev2 && key->type == DF_AES) return authEv2(k, key, true, st);
 	DfCipher c;
 	dfCipherInit(&c, key->type, key->key);
 	u8 rl = key->type == DF_2K3DES ? 8 : 16, cmd[2] = { key->type == DF_AES ? 0xAA : 0x1A, k };
@@ -454,6 +472,11 @@ static int selectApp(u32 aid, u8 *st);
 
 // --- operations ---
 
+bool dfRandomUid(const Card *c)
+{
+	return c->uidLen == 4 && c->uid[0] == 0x08;
+}
+
 bool dfUsesEv2(const DfInfo *d)
 {
 	return d->ver[1] == 0x01 && d->ver[3] >= 0x12 && d->ver[3] != 0x30;
@@ -495,20 +518,106 @@ int dfOpAuth(const DfInfo *d, u32 aid, u8 k, const DfKey *key)
 	return opStart(d, aid, k, key);
 }
 
-int dfOp(const DfInfo *d, u32 aid, u8 k, const DfKey *key, const u8 *c, u32 len, u32 hdr, u8 comm, bool commit)
+u8 dfTmac[12], dfTmacLen;
+
+int dfOp(const DfInfo *d, u32 aid, u8 k, const DfKey *key, const u8 *c, u32 len, u32 hdr, u8 comm, u8 flags)
 {
 	u8 out[64], st;
+	dfTmacLen = 0;
 	int r = opStart(d, aid, k, key);
 	if (r <= 0) return r;
 	if ((r = dfCmd(c, len, hdr, comm, out, sizeof(out), &st)) == -2) FAIL(-1, "monitor");
 	if (r < 0) return 0;
 	if (st) FAIL(0, "%s", dfStatusName(st));
-	if (!commit) return 1;
-	u8 cc = 0xC7;
-	if ((r = dfCmd(&cc, 1, 0, DF_PLAIN, out, sizeof(out), &st)) == -2) FAIL(-1, "monitor");
+	if (!(flags & DF_COMMIT)) return 1;
+	if (flags & DF_READER_ID) { // answers the previous reader ID, encrypted with a TM session key
+		u8 rid[17] = { 0xC8, 'n', 'f', 'c', 'p', 'r', 'o', 'b', 'e' };
+		if ((r = dfCmd(rid, 17, 0, DF_MACED, out, sizeof(out), &st)) == -2) FAIL(-1, "monitor");
+		if (r < 0) return 0;
+		if (st) FAIL(0, "CommitReaderID: %s", dfStatusName(st));
+	}
+	u8 cc[2] = { 0xC7, 0x01 };
+	u32 cl = flags & DF_TMAC ? 2 : 1;
+	if ((r = dfCmd(cc, cl, cl - 1, DF_PLAIN, out, sizeof(out), &st)) == -2) FAIL(-1, "monitor");
 	if (r < 0) return 0;
 	if (st) FAIL(0, "commit: %s", dfStatusName(st));
+	if ((flags & DF_TMAC) && r >= 12) memcpy(dfTmac, out, 12), dfTmacLen = 12;
 	return 1;
+}
+
+int dfApdu(const u8 *apdu, u32 len, u8 *out, u32 max, u16 *sw)
+{
+	u8 a[300];
+	int n = isoDepTx(apdu, len, a, sizeof(a));
+	if (n < 0) return -2;
+	if (n < 2) FAIL(-1, "lost the card: %s", isoDepWhy());
+	*sw = a[n - 2] << 8 | a[n - 1];
+	u32 m = (u32)n - 2 < max ? (u32)n - 2 : max;
+	memcpy(out, a, m);
+	return m;
+}
+
+#define APDU(c, len, out, max) ({ \
+	int r_ = dfApdu(c, len, out, max, &sw); \
+	if (r_ == -2) FAIL(-1, "monitor"); \
+	if (r_ < 0) return 0; \
+	r_; })
+
+int dfIsoRead(DfInfo *d, const DfApp *a, DfIsoEf *efs, int max)
+{
+	u8 ats[32], st, buf[64], c[24];
+	u16 sw;
+	ses.on = false;
+	int r = isoDepActivate(ats, sizeof(ats));
+	if (r <= 0) FAIL(r, "%s", isoDepWhy());
+	if ((r = selectApp(a->aid, &st)) <= 0) return r;
+	if (st) FAIL(0, "select %06lX: %s", a->aid, dfStatusName(st));
+	c[0] = 0x61; // GetISOFileIDs: 2 bytes each, LSB first
+	int n = RUN(c, 1, buf, sizeof(buf));
+	if (st) FAIL(0, "GetISOFileIDs: %s", dfStatusName(st));
+	if (!n) FAIL(0, "no file has an ISO FID");
+	// SELECT the application: by DF name, else by its ISO FID
+	u32 l;
+	if (a->nameLen) {
+		u8 s[5] = { 0x00, 0xA4, 0x04, 0x0C, a->nameLen };
+		memcpy(c, s, 5), memcpy(c + 5, a->name, a->nameLen), l = 5 + a->nameLen;
+	} else {
+		u8 s[7] = { 0x00, 0xA4, 0x00, 0x0C, 0x02, a->isoFid >> 8, a->isoFid };
+		memcpy(c, s, 7), l = 7;
+	}
+	APDU(c, l, buf + 32, 32);
+	if (sw != 0x9000) FAIL(0, "ISO SELECT of the application: SW %04X", sw);
+	int count = 0;
+	for (int i = 0; i + 1 < n && count < max; i += 2) {
+		DfIsoEf *e = &efs[count++];
+		memset(e, 0, sizeof(*e));
+		e->fid = buf[i] | buf[i + 1] << 8;
+		u8 sel[7] = { 0x00, 0xA4, 0x02, 0x0C, 0x02, e->fid >> 8, e->fid };
+		APDU(sel, 7, c, sizeof(c));
+		if ((e->sw = sw) != 0x9000) continue;
+		u32 room = sizeof(d->pool) - d->poolUsed;
+		u8 *p = d->pool + d->poolUsed;
+		u8 rb[5] = { 0x00, 0xB0, 0x00, 0x00, 0x00 };
+		int k = APDU(rb, 5, p, room < DF_MAX_DATA ? room : DF_MAX_DATA);
+		e->sw = sw;
+		if (sw == 0x6981 || sw == 0x6985) { // not a binary file (DESFire says 6985): its records, 1 on
+			e->records = true;
+			u32 got = 0;
+			for (int rec = 1; rec < 256 && got < DF_MAX_DATA && got < room; rec++) {
+				u8 rr[5] = { 0x00, 0xB2, rec, 0x04, 0x00 };
+				k = APDU(rr, 5, p + got, room - got < DF_MAX_DATA - got ? room - got : DF_MAX_DATA - got);
+				if (sw != 0x9000) break;
+				got += k, e->records_n++;
+			}
+			if (!e->records_n) e->records = false; // keep READ BINARY's answer
+			else e->sw = 0x9000;
+			k = got;
+		}
+		if (e->sw != 0x9000) continue;
+		e->dataOff = d->poolUsed, e->dataLen = k;
+		d->poolUsed += k;
+	}
+	return count;
 }
 
 int dfOpChangeKey(const DfInfo *d, u32 aid, u8 authK, const DfKey *authKey, u8 k, const DfKey *key, u8 ver,
@@ -537,9 +646,10 @@ static u32 le24(const u8 *p)
 	return p[0] | p[1] << 8 | p[2] << 16;
 }
 
+// A transaction MAC file's read/write right is its CommitReaderID key: only read counts there.
 bool dfFreeRead(const DfFile *f)
 {
-	return !f->st && f->len >= 4 && ((f->set[3] >> 4) == 0xE || (f->set[2] >> 4) == 0xE);
+	return !f->st && f->len >= 4 && ((f->set[3] >> 4) == 0xE || (f->set[0] != 5 && (f->set[2] >> 4) == 0xE));
 }
 
 // ReadData / GetValue / ReadRecords into the pool, in comm mode comm.
@@ -553,6 +663,8 @@ static int readFile(DfInfo *d, DfFile *f, u8 comm)
 		c[5] = want, c[6] = want >> 8, len = 8;
 	} else if (t == 2) {
 		c[0] = 0x6C, want = 4;
+	} else if (t == 5) { // transaction MAC: TMC (4) || TMV (8)
+		c[5] = 12, len = 8, want = 12;
 	} else if ((t == 3 || t == 4) && f->len >= 13) { // offset 0, as many records as fit
 		u32 rs = le24(f->set + 4), cnt = le24(f->set + 10);
 		if (rs && cnt > DF_MAX_DATA / rs) cnt = DF_MAX_DATA / rs;
@@ -612,7 +724,7 @@ static int readKey(const DfApp *a, const DfFile *f)
 {
 	if (f->st || f->len < 4) return -1;
 	u8 ks[3] = { f->set[3] >> 4, f->set[2] >> 4, f->set[3] & 0xF };
-	for (int i = 0; i < (f->set[0] == 2 ? 3 : 2); i++)
+	for (int i = 0; i < (f->set[0] == 2 ? 3 : f->set[0] == 5 ? 1 : 2); i++)
 		if (ks[i] < 14 && a->keys[ks[i]].known) return ks[i];
 	return -1;
 }
@@ -684,12 +796,34 @@ int dfReadInfo(DfInfo *d, bool keys)
 	if (!d->keyVerSt) d->keyVer = buf[0];
 	c[0] = 0x3C, c[1] = 0;
 	n = RUN(c, 2, buf, sizeof(buf));
-	if ((st == 0x90 || !st) && n >= 56) d->hasSig = true, memcpy(d->sig, buf, 56);
+	if ((st == 0x90 || !st) && n >= 56) {
+		d->hasSig = true;
+		memcpy(d->sig, buf, 56);
+	}
+	d->randomUid = dfRandomUid(&card);
 
 	if (keys) {
 		progOp("PICC master key: dictionary");
 		if ((r = findKey(0, d->keySt ? -1 : d->maxKeys >> 6, &d->piccKey)) < 0) return r;
 		if (r) logp("PICC master key: %s\n", dfKeyName(&d->piccKey));
+		if (r && d->randomUid) { // the session runs on the PICC key: GetCardUID (full)
+			c[0] = 0x51;
+			n = RUNC(c, 1, 0, DF_FULL, buf, sizeof(buf));
+			if (!st && n >= 7) d->hasRealUid = true, memcpy(d->realUid, buf, 7);
+			if (!d->hasSig) { // random ID hides the signature too: Read_Sig in the session, encrypted
+				c[0] = 0x3C, c[1] = 0;
+				n = RUNC(c, 2, 1, DF_FULL, buf, sizeof(buf));
+				if (st == 0x90 && n >= 56) d->hasSig = true, memcpy(d->sig, buf, 56);
+			}
+		}
+	}
+	// the signature is over the real UID: GetVersion's, unless random ID zeroes it there
+	if (d->hasSig) {
+		bool zero = true;
+		for (int i = 0; i < 7 && d->verLen >= 21; i++) zero &= !d->ver[14 + i];
+		const u8 *uid = !zero && d->verLen >= 21 ? d->ver + 14 : d->hasRealUid ? d->realUid : NULL;
+		d->sigKey = uid ? nxpSigCheck(SIG_DESFIRE, uid, 7, d->sig, 56) : NULL;
+		logp("signature: %s\n", d->sigKey ? d->sigKey : uid ? "NOT verified by an NXP key" : "real UID unknown (random ID)");
 	}
 	c[0] = 0x6A;
 	n = RUN(c, 1, buf, sizeof(buf));
@@ -763,7 +897,7 @@ const char *dfKeyType(u8 maxKeys)
 
 void dfFileDesc(const DfFile *f, char *out, u32 max)
 {
-	static const char *types[] = { "standard", "backup", "value", "linear record", "cyclic record", "TMAC" };
+	static const char *types[] = { "standard", "backup", "value", "linear record", "cyclic record", "transaction MAC" };
 	static const char *comm[] = { "plain", "MAC", "plain", "full" };
 	const u8 *s = f->set;
 	if (f->st || f->len < 4) {
@@ -779,6 +913,9 @@ void dfFileDesc(const DfFile *f, char *out, u32 max)
 		snprintf(size, sizeof(size), ", %ld..%ld", lo, hi);
 	} else if ((s[0] == 3 || s[0] == 4) && f->len >= 13) {
 		snprintf(size, sizeof(size), ", %lu/%lu records x %lu bytes", le24(s + 10), le24(s + 7), le24(s + 4));
+	}
+	else if (s[0] == 5 && f->len >= 6) {
+		snprintf(size, sizeof(size), ", %s key version %02X", s[4] == 2 ? "AES" : "key", s[5]);
 	}
 	snprintf(out, max, "%s, %s%s%s", s[0] < 6 ? types[s[0]] : "type ?", comm[s[1] & 3],
 		s[1] & 0x80 ? " + more access rights" : "", size);
@@ -798,7 +935,8 @@ void dfFileKeys(const DfFile *f, char *out, u32 max)
 	u16 ar = f->set[2] | f->set[3] << 8;
 	char r[8], w[8], rw[8], ch[8];
 	keyName(ar >> 12, r), keyName(ar >> 8 & 0xF, w), keyName(ar >> 4 & 0xF, rw), keyName(ar & 0xF, ch);
-	snprintf(out, max, "read %s, write %s, read/write %s, change %s", r, w, rw, ch);
+	if (f->set[0] == 5) snprintf(out, max, "read %s, CommitReaderID %s, change %s", r, rw, ch);
+	else snprintf(out, max, "read %s, write %s, read/write %s, change %s", r, w, rw, ch);
 }
 
 static void keySetDesc(FILE *fp, u8 ks, bool picc)
@@ -834,7 +972,11 @@ static void keyLine(FILE *fp, int k, const DfKey *key)
 bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 {
 	char uid[21] = "";
-	if (d->verLen >= 21)
+	bool verZero = true;
+	for (int i = 0; i < 7 && d->verLen >= 21; i++) verZero &= !d->ver[14 + i];
+	if (d->hasRealUid)
+		for (int i = 0; i < 7; i++) sprintf(uid + 2 * i, "%02X", d->realUid[i]);
+	else if (d->verLen >= 21 && !verZero)
 		for (int i = 0; i < 7; i++) sprintf(uid + 2 * i, "%02X", d->ver[14 + i]);
 	else
 		for (int i = 0; i < card.uidLen; i++) sprintf(uid + 2 * i, "%02X", card.uid[i]);
@@ -849,6 +991,7 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 	if (d->keyed) fprintf(fp, "# nfcprobe DESFire info (key dictionary: %d keys, %s secure messaging for AES)\nUID %s\n",
 		d->dictKeys, d->ev2 ? "EV2" : "EV1", uid);
 	else fprintf(fp, "# nfcprobe DESFire info (no keys)\nUID %s\n", uid);
+	if (d->randomUid) fprintf(fp, "random ID on%s\n", d->hasRealUid ? " (real UID by GetCardUID)" : ": real UID unknown (needs the PICC master key)");
 	hexLine(fp, "ATS ", d->ats, d->atsLen);
 	fprintf(fp, "%s\n", dfVersionName(d));
 	hexLine(fp, "hardware ", v, 7);
@@ -861,7 +1004,10 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 		hexLine(fp, "batch ", v + 21, 5);
 		fprintf(fp, "production week %X / 20%02X\n", v[26], v[27]);
 	}
-	if (d->hasSig) hexLine(fp, "signature (not verified) ", d->sig, 56);
+	if (d->hasSig) {
+		hexLine(fp, "signature ", d->sig, 56);
+		fprintf(fp, "  %s%s\n", d->sigKey ? "verified: NXP key " : "NOT verified by any NXP key", d->sigKey ? d->sigKey : "");
+	}
 	else fprintf(fp, "signature: none\n");
 	if (d->hasFree) fprintf(fp, "free memory %lu bytes\n", d->freeMem);
 	fprintf(fp, "\nPICC\n");
@@ -878,7 +1024,9 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 	else fprintf(fp, "  %d application%s\n", d->napps, d->napps == 1 ? "" : "s");
 	for (int i = 0; i < d->napps && i < DF_MAX_APPS; i++) {
 		const DfApp *a = &d->apps[i];
+		const char *vendor, *name = dfAidName(a->aid, &vendor);
 		fprintf(fp, "\nApplication %06lX\n", a->aid);
+		if (name) fprintf(fp, "  %s (%s)\n", name, vendor);
 		if ((a->aid & 0xF00000) == 0xF00000) fprintf(fp, "  MAD AID %04lX\n", a->aid >> 4 & 0xFFFF);
 		if (a->hasIso) {
 			fprintf(fp, "  ISO FID %04X", a->isoFid);

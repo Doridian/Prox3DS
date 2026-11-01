@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 
 #include "mfu.h"
+#include "nxpsig.h"
 #include "probe.h"
 
 static char why[64];
@@ -130,6 +131,10 @@ int mfuIdentify(MfuInfo *in)
 		c[0] = 0x3C, c[1] = 0;
 		if ((r = expect(c, 2, in->sig, 32, "signature")) < 0) return -1;
 		in->hasSig = r;
+		if (r) {
+			in->sigKey = nxpSigCheck(SIG_MFU, card.uid, card.uidLen, in->sig, 32);
+			logp("signature: %s\n", in->sigKey ? in->sigKey : "NOT verified by an NXP key");
+		}
 		for (int i = 0; i < 3; i++) {
 			if (t->counters & 1 << i) {
 				c[0] = 0x39, c[1] = i;

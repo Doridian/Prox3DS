@@ -96,7 +96,21 @@ static void cardDraw(void)
 	uiHeader(diResult > 0 ? "DESFire: card" : "ISO14443-4: card", hdr);
 	float y = 28;
 	uidHex(&sc, s, " ");
-	uiText(12, y, S_SMALL, dim, "UID (%d bytes)", sc.uidLen);
+	if (di.randomUid) {
+		// the random one big on the left, the real one (GetCardUID) on the same row, right
+		uiText(12, y, S_SMALL, uiCol[COL_WARN], "Random UID (new every time)");
+		if (di.hasRealUid) {
+			char r[24];
+			for (int i = 0; i < 7; i++) sprintf(r + 3 * i, "%02X ", di.realUid[i]);
+			r[20] = 0;
+			uiTextRight(UI_W - 12, y, S_SMALL, dim, "real UID (7 bytes)");
+			uiTextRight(UI_W - 12, y + 16, 0.6f, txt, "%s", r);
+		} else {
+			uiTextRight(UI_W - 12, y, S_SMALL, dim, "real UID: needs the PICC key");
+		}
+	} else {
+		uiText(12, y, S_SMALL, dim, "UID (%d bytes)", sc.uidLen);
+	}
 	uiText(12, y + 12, 0.8f, uiCol[COL_ACCENT], "%s", s);
 	y += 40;
 	const u8 *v = di.ver;
@@ -135,6 +149,7 @@ static void cardDraw(void)
 	y += SMALL_H;
 	if (di.hasSig) {
 		uiText(14, y, S_SMALL, txt, "Signature");
+		uiText(14, y + SMALL_H, S_SMALL, uiCol[di.sigKey ? COL_OK : COL_WARN], "%s", di.sigKey ? "valid" : "invalid");
 		for (int h = 0; h < 2; h++, y += SMALL_H) {
 			hexStr(s, di.sig + 28 * h, 28);
 			uiMonoS(72, y + 1, 0.34f, 5.6f, txt, s);
@@ -250,14 +265,17 @@ static void appDraw(void)
 	snprintf(s, sizeof(s), "DESFire: application %06lX", a->aid);
 	uiHeader(s, hdr);
 	float y = 26;
+	const char *vendor, *name = dfAidName(a->aid, &vendor);
+	char nm[96] = "";
+	if (name) snprintf(nm, sizeof(nm), "%s (%s)   ", name, vendor);
 	if (a->hasIso) {
-		snprintf(s, sizeof(s), "ISO FID %04X", a->isoFid);
+		snprintf(s, sizeof(s), "%sISO FID %04X", nm, a->isoFid);
 		if (a->nameLen) {
 			strcat(s, ", DF name ");
 			hexStr(s + strlen(s), a->name, a->nameLen);
 		}
 	} else {
-		snprintf(s, sizeof(s), "No ISO FID / DF name");
+		snprintf(s, sizeof(s), "%s%s", nm, name ? "no ISO FID" : "No ISO FID / DF name");
 	}
 	uiText(12, y, S_SMALL, txt, "%s", uiFit(s, UI_W - 24, S_SMALL));
 	y += SMALL_H;
@@ -336,6 +354,7 @@ static void appDraw(void)
 #define S_ASCII   0.34f
 
 static const DfFile *df_;
+static int dataIsoFid = -1; // an ISO 7816 EF's contents (df_ a stand-in), -1 = a native file
 static int dtop;
 
 static float byteX(int i)
@@ -349,8 +368,10 @@ static void dataDraw(void)
 	const DfFile *f = df_;
 	const u8 *p = di.pool + f->dataOff;
 	char t[48], h[32];
-	snprintf(t, sizeof(t), "DESFire: %06lX file %02X", a->aid, f->fid);
-	if (f->dataKey == 0xE) snprintf(h, sizeof(h), "%d bytes, free read", f->dataLen);
+	if (dataIsoFid >= 0) snprintf(t, sizeof(t), "DESFire: %06lX EF %04X (ISO 7816)", a->aid, dataIsoFid);
+	else snprintf(t, sizeof(t), "DESFire: %06lX file %02X", a->aid, f->fid);
+	if (dataIsoFid >= 0) snprintf(h, sizeof(h), "%d bytes", f->dataLen);
+	else if (f->dataKey == 0xE) snprintf(h, sizeof(h), "%d bytes, free read", f->dataLen);
 	else snprintf(h, sizeof(h), "%d bytes, key %X", f->dataLen, f->dataKey);
 	uiHeader(t, h);
 	for (int i = 0; i < 16; i++) {
@@ -373,6 +394,9 @@ static void dataDraw(void)
 		s[n] = 0;
 		uiMonoS(ASCII_X, y + 1, S_ASCII, ASCII_W, uiCol[COL_DIM], s);
 	}
+	if (f->set[0] == 5 && f->dataLen == 12 && dataIsoFid < 0)
+		uiText(12, DATA_Y + 2 + 13 + 8, S_BODY, uiCol[COL_TEXT], "TMC %lu   TMV %02X%02X%02X%02X%02X%02X%02X%02X",
+			(u32)(p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24), p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
 	if (f->set[0] == 2 && f->dataLen == 4) {
 		s32 v;
 		memcpy(&v, p, 4);
@@ -397,7 +421,7 @@ static void dataInput(u32 kDown, u32 kRepeat)
 static void showData(const DfFile *f)
 {
 	static const Screen s = { NULL, dataInput, dataDraw };
-	df_ = f, dtop = 0;
+	df_ = f, dtop = 0, dataIsoFid = -1;
 	appScreen(&s);
 }
 
@@ -434,7 +458,7 @@ static struct {
 	u8 c[300];    // the command (len 0: authenticate only)
 	u32 len, hdr;
 	u8 comm;
-	bool commit;
+	u8 flags; // dfOp's
 	bool change, picc; // ChangeKey: key nk becomes nkey (AES: version ver), old = its current one
 	u8 nk, ver;
 	DfKey nkey, old;
@@ -450,14 +474,14 @@ static void runOp(void)
 	op.result = 0;
 	*op.why = 0;
 	if (!cardWait()) return;
-	if (card.uidLen != sc.uidLen || memcmp(card.uid, sc.uid, sc.uidLen)) {
+	if (!dfRandomUid(&sc) && (card.uidLen != sc.uidLen || memcmp(card.uid, sc.uid, sc.uidLen))) {
 		snprintf(op.why, sizeof(op.why), "Not the card that was scanned (another UID).");
 		return;
 	}
 	const DfKey *k = op.k < 0 ? NULL : &op.key;
 	if (op.change) op.result = dfOpChangeKey(&di, op.aid, op.k, k, op.nk, &op.nkey, op.ver, &op.old, op.picc);
 	else if (!op.len) op.result = dfOpAuth(&di, op.aid, op.k, k);
-	else op.result = dfOp(&di, op.aid, op.k, k, op.c, op.len, op.hdr, op.comm, op.commit);
+	else op.result = dfOp(&di, op.aid, op.k, k, op.c, op.len, op.hdr, op.comm, op.flags);
 	snprintf(op.why, sizeof(op.why), "%s", dfWhy());
 	logp("%s: %s\n", op.title, op.result > 0 ? "done" : op.why);
 	if (op.result > 0) {
@@ -478,7 +502,13 @@ static void doneOp(void)
 		return;
 	}
 	entered = NULL;
-	toast("%s: done", op.title);
+	if (dfTmacLen) {
+		u32 tmc = dfTmac[0] | dfTmac[1] << 8 | dfTmac[2] << 16 | dfTmac[3] << 24;
+		toast("%s: done   TMC %lu   TMV %02X%02X%02X%02X%02X%02X%02X%02X", op.title, tmc, dfTmac[4], dfTmac[5], dfTmac[6],
+			dfTmac[7], dfTmac[8], dfTmac[9], dfTmac[10], dfTmac[11]);
+	} else {
+		toast("%s: done", op.title);
+	}
 	// back where it was: the application by its AID, the file by its place
 	int n = di.napps < DF_MAX_APPS ? di.napps : DF_MAX_APPS, found = -1;
 	for (int i = 0; i < n; i++)
@@ -510,10 +540,10 @@ static void opAuth(int k, const DfKey *key)
 	if (key) op.key = *key;
 }
 
-static void opCmd(const u8 *c, u32 len, u32 hdr, u8 comm, bool commit)
+static void opCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 flags)
 {
 	memcpy(op.c, c, len);
-	op.len = len, op.hdr = hdr, op.comm = comm, op.commit = commit;
+	op.len = len, op.hdr = hdr, op.comm = comm, op.flags = flags;
 }
 
 // --- keys the user enters ---
@@ -713,6 +743,8 @@ static struct {
 	u32 aid;
 	int type, nkeys; // type: GetKeySettings bits 6-7
 	u8 ks;
+	u16 isoFid;      // 0 = no ISO IDs
+	u8 dfName[16], dfLen;
 } ca = { 0x112233, 2, 2, 0x0F };
 
 static void caAidV(char *o) { sprintf(o, "%06lX", ca.aid); }
@@ -743,19 +775,63 @@ static void caKsE(void)
 		"keys changed with the master key.", 1, &ca.ks, caKsSet);
 }
 
+static void caFidV(char *o)
+{
+	if (ca.isoFid) sprintf(o, "%04X", ca.isoFid);
+	else strcpy(o, "none");
+}
+static void caFidSet(const u8 *b, u32 len) { ca.isoFid = b[0] << 8 | b[1]; }
+static void caFidE(void)
+{
+	u8 b[2] = { ca.isoFid >> 8, ca.isoFid };
+	entryHex("ISO FID", "The application's ISO 7816 file ID (2 bytes, e.g. E110), for ISO SELECT. 0000 = no ISO IDs "
+		"(and no DF name).", 2, b, caFidSet);
+}
+static void caNameV(char *o)
+{
+	if (!ca.isoFid || !ca.dfLen) {
+		strcpy(o, "none");
+		return;
+	}
+	for (int i = 0; i < ca.dfLen && i < 12; i++) sprintf(o + 2 * i, "%02X", ca.dfName[i]);
+	if (ca.dfLen > 12) strcat(o, "..");
+}
+static void caNameSet(const u8 *b, u32 len) { memcpy(ca.dfName, b, len); }
+static void caNameLen(s64 v)
+{
+	ca.dfLen = v;
+	if (v) entryHex("DF name", "The application's ISO DF name (AID for ISO SELECT by name, e.g. D2760000850101 "
+		"for an NDEF Type 4 application).", v, ca.dfName, caNameSet);
+}
+static void caNameE(void)
+{
+	if (!ca.isoFid) {
+		msgBox("DF name", "Set an ISO FID first: a DF name needs ISO IDs.");
+		return;
+	}
+	entryDec("DF name length", "Bytes in the DF name, 1-16 (0 = none).", 0, 16, ca.dfLen, caNameLen);
+}
+
 static const Field caFields[] = {
 	{ "Application ID", caAidV, caAidE }, { "Key type", caTypeV, caTypeE },
 	{ "Keys", caKeysV, caKeysE }, { "Key settings", caKsV, caKsE },
+	{ "ISO FID", caFidV, caFidE }, { "DF name", caNameV, caNameE },
 };
-static int caCount(void) { return 4; }
+static int caCount(void) { return 6; }
 
 static void caGo(void)
 {
 	opReset("Create application", 0); // on the PICC
 	op.focus = ca.aid;
 	if (!(di.keySet & 4) || di.keySt) opAuth(0, &di.piccKey);
-	u8 c[6] = { 0xCA, ca.aid, ca.aid >> 8, ca.aid >> 16, ca.ks, ca.nkeys | ca.type << 6 };
-	opCmd(c, 6, 0, DF_PLAIN, false);
+	u8 c[26] = { 0xCA, ca.aid, ca.aid >> 8, ca.aid >> 16, ca.ks, ca.nkeys | ca.type << 6 };
+	u32 n = 6;
+	if (ca.isoFid) { // ISO file IDs: bit 5, the FID (LSB first), the DF name
+		c[5] |= 0x20;
+		c[n++] = ca.isoFid, c[n++] = ca.isoFid >> 8;
+		memcpy(c + n, ca.dfName, ca.dfLen), n += ca.dfLen;
+	}
+	opCmd(c, n, 0, DF_PLAIN, false);
 	opRun();
 }
 
@@ -828,9 +904,37 @@ static struct {
 	int fid, type, comm, r, w, rw, ch;
 	s64 size, lower, upper, value, recSize, recMax;
 	bool lc;
-} cf = { 1, 0, 0, 0xE, 0, 0, 0, 32, 0, 1000, 0, 16, 4, false };
+	u16 isoFid; // 0 = none (only for applications with ISO IDs)
+	u8 tmKey[16], tmVer; // transaction MAC: its AES key and version
+} cf = { 1, 0, 0, 0xE, 0, 0, 0, 32, 0, 1000, 0, 16, 4, false, 0 };
 
-static const char *const fileTypes[] = { "standard", "backup", "value", "linear record", "cyclic record" };
+static void cfTmKeyV(char *o)
+{
+	for (int i = 0; i < 6; i++) sprintf(o + 2 * i, "%02X", cf.tmKey[i]);
+	strcat(o, "..");
+}
+static void cfTmKeySet(const u8 *b, u32 len) { memcpy(cf.tmKey, b, 16); }
+static void cfTmKeyE(void)
+{
+	entryHex("Transaction MAC key", "The AES key the card computes the transaction MACs (TMV) with.", 16, cf.tmKey, cfTmKeySet);
+}
+static void cfTmVerV(char *o) { sprintf(o, "%02X", cf.tmVer); }
+static void cfTmVerSet(s64 v) { cf.tmVer = v; }
+static void cfTmVerE(void) { entryDec("Key version", "The transaction MAC key's version.", 0, 255, cf.tmVer, cfTmVerSet); }
+
+static void cfIsoV(char *o)
+{
+	if (cf.isoFid) sprintf(o, "%04X", cf.isoFid);
+	else strcpy(o, "none");
+}
+static void cfIsoSet(const u8 *b, u32 len) { cf.isoFid = b[0] << 8 | b[1]; }
+static void cfIsoE(void)
+{
+	u8 b[2] = { cf.isoFid >> 8, cf.isoFid };
+	entryHex("ISO FID", "The file's ISO 7816 file ID (2 bytes, e.g. E104), for ISO SELECT. 0000 = none.", 2, b, cfIsoSet);
+}
+
+static const char *const fileTypes[] = { "standard", "backup", "value", "linear record", "cyclic record", "transaction MAC" };
 static const char *const commModes[] = { "plain", "MAC", "full (encrypted)" };
 
 static void keyWord(char *o, int k)
@@ -862,11 +966,12 @@ static void cfT1(void) { cf.type = 1; }
 static void cfT2(void) { cf.type = 2; }
 static void cfT3(void) { cf.type = 3; }
 static void cfT4(void) { cf.type = 4; }
+static void cfT5(void) { cf.type = 5, cf.w = 0xF; } // TMAC: write is RFU
 static void cfTypeE(void)
 {
 	static const MenuItem items[] = { { "Standard data", cfT0 }, { "Backup data", cfT1 }, { "Value", cfT2 },
-		{ "Linear record", cfT3 }, { "Cyclic record", cfT4 } };
-	popup("File type", items, 5);
+		{ "Linear record", cfT3 }, { "Cyclic record", cfT4 }, { "Transaction MAC", cfT5 } };
+	popup("File type", items, 6);
 }
 static void cfC0(void) { cf.comm = 0; }
 static void cfC1(void) { cf.comm = 1; }
@@ -923,10 +1028,14 @@ static int cfCount(void)
 		cfShown[n++] = (Field){ "Upper limit", cfUpperV, cfUpperE };
 		cfShown[n++] = (Field){ "Value", cfValueV, cfValueE };
 		cfShown[n++] = (Field){ "Limited credit", cfLcV, cfLcE };
+	} else if (cf.type == 5) {
+		cfShown[n++] = (Field){ "TM key", cfTmKeyV, cfTmKeyE };
+		cfShown[n++] = (Field){ "TM key version", cfTmVerV, cfTmVerE };
 	} else {
 		cfShown[n++] = (Field){ "Record size", cfRecSizeV, cfRecSizeE };
 		cfShown[n++] = (Field){ "Records", cfRecMaxV, cfRecMaxE };
 	}
+	if (curApp()->hasIso && cf.type != 2 && cf.type != 5) cfShown[n++] = (Field){ "ISO FID", cfIsoV, cfIsoE }; // value files have none
 	return n;
 }
 
@@ -945,14 +1054,24 @@ static void cfGo(void)
 	DfApp *a = curApp();
 	opReset("Create file", a->aid);
 	if (!(a->keySet & 4) || a->keySt) opAuth(0, &a->keys[0]);
-	static const u8 cmds[] = { 0xCD, 0xCB, 0xCC, 0xC1, 0xC0 };
-	u8 c[20] = { cmds[cf.type], cf.fid, cf.comm == 2 ? 3 : cf.comm, cf.rw << 4 | cf.ch, cf.r << 4 | cf.w };
-	u32 n = 5;
+	static const u8 cmds[] = { 0xCD, 0xCB, 0xCC, 0xC1, 0xC0, 0xCE };
+	u8 c[32] = { cmds[cf.type], cf.fid };
+	u32 n = 2;
+	if (curApp()->hasIso && cf.type != 2 && cf.type != 5 && cf.isoFid) c[n++] = cf.isoFid, c[n++] = cf.isoFid >> 8;
+	c[n++] = cf.comm == 2 ? 3 : cf.comm, c[n++] = cf.rw << 4 | cf.ch, c[n++] = cf.r << 4 | cf.w;
 	if (cf.type <= 1) {
 		put24(c + n, cf.size), n += 3;
 	} else if (cf.type == 2) {
 		put32le(c + n, cf.lower), put32le(c + n + 4, cf.upper), put32le(c + n + 8, cf.value), n += 12;
 		c[n++] = cf.lc;
+	} else if (cf.type == 5) { // key option 02 (AES), the key and its version go encrypted
+		c[n++] = 0x02;
+		memcpy(c + n, cf.tmKey, 16), n += 16;
+		c[n++] = cf.tmVer;
+		opCmd(c, n, 5, DF_FULL, 0);
+		file_ = a->nfiles;
+		opRun();
+		return;
 	} else {
 		put24(c + n, cf.recSize), put24(c + n + 3, cf.recMax), n += 6;
 	}
@@ -981,7 +1100,8 @@ static void createFile(void)
 		for (int i = 0; i < a->nfiles; i++) used |= a->files[i].fid == cf.fid;
 		if (!used) break;
 	}
-	formOpen("DESFire: create file", "Create", NULL, cfShown, cfCount, cfRun);
+	formOpen("DESFire: create file", "Create", cf.type == 5 ? "Transaction MAC: Read = reading TMC / TMV, Read / write = "
+		"the CommitReaderID key (never: no reader ID), Write unused." : NULL, cfShown, cfCount, cfRun);
 }
 
 // --- delete file ---
@@ -1039,10 +1159,32 @@ static int pickKey(const DfApp *a, const int *cand, int n)
 	return -1;
 }
 
+// The application's transaction MAC file, NULL = none.
+static const DfFile *tmacFile(const DfApp *a)
+{
+	for (int i = 0; i < a->nfiles && !a->fileSt; i++)
+		if (!a->files[i].st && a->files[i].len >= 4 && a->files[i].set[0] == 5) return &a->files[i];
+	return NULL;
+}
+
 static void wrSend(void)
 {
 	DfApp *a = curApp();
 	DfFile *f = curFile();
+	// with a transaction MAC file: the commit returns TMC / TMV, after CommitReaderID if it wants one
+	const DfFile *tm = tmacFile(a);
+	if (tm && (op.flags & DF_COMMIT)) {
+		u8 rid = tm->set[2] >> 4;
+		op.flags |= DF_TMAC;
+		if (rid != 0xF) {
+			if (rid != 0xE && rid != wr.k) {
+				msgBox(op.title, "The transaction MAC file %02X wants CommitReaderID with key %X, but this write "
+					"goes with %s.", tm->fid, rid, wr.k == 0xE ? "free access" : "another key");
+				return;
+			}
+			op.flags |= DF_READER_ID;
+		}
+	}
 	if (wr.k != 0xE) opAuth(wr.k, &a->keys[wr.k]);
 	u8 comm = wr.k == 0xE || (f->set[1] & 3) == 2 ? DF_PLAIN : f->set[1] & 3;
 	op.comm = comm;
@@ -1077,7 +1219,7 @@ static void wrAmount(s64 v)
 	opReset(wr.op == 0x0C ? "Credit" : wr.op == 0xDC ? "Debit" : "Limited credit", a->aid);
 	u8 c[6] = { wr.op, f->fid };
 	put32le(c + 2, v);
-	opCmd(c, 6, 1, DF_PLAIN, true);
+	opCmd(c, 6, 1, DF_PLAIN, DF_COMMIT);
 	wrNeed();
 }
 
@@ -1114,6 +1256,11 @@ static void writeFile(void)
 		msgBox("Write", f ? "This file's settings didn't read." : "No file selected.");
 		return;
 	}
+	if (f->set[0] == 5) {
+		msgBox("Write", "A transaction MAC file isn't written: the card updates it on every committed transaction "
+			"(TMC, TMV).");
+		return;
+	}
 	if (f->set[0] == 2) {
 		static const MenuItem items[] = { { "Credit", wrCredit }, { "Debit", wrDebit }, { "Limited credit", wrLimited } };
 		popup("Value file", items, 3);
@@ -1140,6 +1287,8 @@ static void writeFile(void)
 
 static int keyNo;
 static DfKey newKey;
+static u8 newVer;
+static char verText[24];
 
 static void enterDone(void)
 {
@@ -1178,7 +1327,7 @@ static void ckGo(void)
 	DfApp *a = curApp();
 	bool picc = keyNo < 0;
 	opReset(picc ? "Change PICC master key" : "Change key", picc ? 0 : a->aid);
-	op.change = true, op.nkey = newKey, op.ver = 0;
+	op.change = true, op.nkey = newKey, op.ver = newVer;
 	if (picc) {
 		op.picc = true, op.nk = 0;
 		opAuth(0, &di.piccKey);
@@ -1213,7 +1362,7 @@ static void ckNeedAuth(void)
 	needKey(a->aid, by, &a->keys[by], appType(a), ckNeedOld);
 }
 
-static void ckAsk(void)
+static void ckConfirm(void)
 {
 	char hex[49];
 	dfKeyHex(&newKey, hex);
@@ -1221,7 +1370,27 @@ static void ckAsk(void)
 		confirm("Change PICC master key", ckNeedAuth, "The PICC master key becomes %s %s. It goes into the "
 			"dictionary; without it the card can't be formatted again.", dfKeyName(&newKey), hex);
 	else
-		confirm("Change key", ckNeedAuth, "Key %d of %06lX becomes %s %s.", keyNo, curApp()->aid, dfKeyName(&newKey), hex);
+		confirm("Change key", ckNeedAuth, "Key %d of %06lX becomes %s %s%s.", keyNo, curApp()->aid, dfKeyName(&newKey), hex,
+			newKey.type == DF_AES ? (snprintf(verText, sizeof(verText), ", version %02X", newVer), verText) : "");
+}
+
+static void ckVer(s64 v)
+{
+	newVer = v;
+	ckConfirm();
+}
+
+// AES keys carry a version (DES ones in their bytes' low bits): asked for, the current one + 1 offered.
+static void ckAsk(void)
+{
+	newVer = 0;
+	if (newKey.type != DF_AES) {
+		ckConfirm();
+		return;
+	}
+	const DfApp *a = curApp();
+	int cur = keyNo < 0 ? (di.keyVerSt ? -1 : di.keyVer) : keyNo < a->nKeyVer ? a->keyVer[keyNo] : -1;
+	entryDec("Key version", "The new key's version (0-255), read back with GetKeyVersion.", 0, 255, (cur + 1) & 0xFF, ckVer);
 }
 
 static void changeAppKeyNo(s64 v)
@@ -1262,25 +1431,276 @@ static void changePicc(void)
 	askKey(&newKey, -1, "New PICC master key", "The new PICC master key", ckAsk);
 }
 
+// --- key settings (ChangeKeySettings, encrypted, with the master key) ---
+
+static u8 ksNew;
+static bool ksPicc;
+
+static void ksGo(void)
+{
+	DfApp *a = curApp();
+	opReset(ksPicc ? "PICC key settings" : "Key settings", ksPicc ? 0 : a->aid);
+	opAuth(0, ksPicc ? &di.piccKey : &a->keys[0]);
+	u8 c[2] = { 0x54, ksNew };
+	opCmd(c, 2, 0, DF_FULL, false);
+	opRun();
+}
+
+static void ksNeed(void)
+{
+	DfApp *a = curApp();
+	if (ksPicc) needKey(0, 0, &di.piccKey, piccType(), ksGo);
+	else needKey(a->aid, 0, &a->keys[0], appType(a), ksGo);
+}
+
+static void ksSet(const u8 *b, u32 len)
+{
+	ksNew = b[0];
+	char warn[160] = "";
+	if (!(ksNew & 8)) strcat(warn, "\nBit 3 clear: these settings can never change again.");
+	if (!(ksNew & 1)) strcat(warn, ksPicc ? "\nBit 0 clear: the PICC master key is frozen." : "\nBit 0 clear: the master key is frozen.");
+	if (!ksPicc && (ksNew >> 4) == 0xF) strcat(warn, "\nBits 4-7 F: the other keys are frozen.");
+	confirm(ksPicc ? "PICC key settings" : "Key settings", ksNeed, "Key settings become %02X.%s", ksNew, warn);
+}
+
+static void keySettings(bool picc)
+{
+	DfApp *a = curApp();
+	ksPicc = picc;
+	u8 cur = picc ? di.keySet : a->keySet;
+	if ((picc ? di.keySt : a->keySt) == 0 && !(cur & 8)) {
+		msgBox("Key settings", "These key settings are frozen (bit 3 clear).");
+		return;
+	}
+	entryHex(picc ? "PICC key settings" : "Application key settings", picc
+		? "Bit 0: PICC master key changeable, 1: application list free, 2: create application free, 3: settings "
+		  "changeable. 0F = all open."
+		: "Bit 0: master key changeable, 1: file list free, 2: create / delete free, 3: settings changeable; bits "
+		  "4-7: the key that changes keys (E: the key itself, F: frozen).", 1, &cur, ksSet);
+}
+
+static void appKeySettings(void) { keySettings(false); }
+static void piccKeySettings(void) { keySettings(true); }
+
+// --- ISO 7816: the application's EFs by SELECT and READ BINARY / READ RECORD ---
+
+static DfIsoEf isoEfs[DF_MAX_FILES];
+static int isoN;
+static char isoWhy[80];
+static UiList il;
+
+static void runIso(void)
+{
+	isoN = 0;
+	*isoWhy = 0;
+	if (!cardWait()) return;
+	if (!dfRandomUid(&sc) && (card.uidLen != sc.uidLen || memcmp(card.uid, sc.uid, sc.uidLen))) {
+		snprintf(isoWhy, sizeof(isoWhy), "Not the card that was scanned (another UID).");
+		return;
+	}
+	u32 keep = di.poolUsed; // the EFs' data goes after the scan's, dropped again next time
+	isoN = dfIsoRead(&di, curApp(), isoEfs, DF_MAX_FILES);
+	snprintf(isoWhy, sizeof(isoWhy), "%s", dfWhy());
+	if (isoN <= 0) di.poolUsed = keep;
+	iso14aParity(true);
+}
+
+static const char *swName(u16 sw)
+{
+	switch (sw) {
+	case 0x9000: return "ok";
+	case 0x6700: return "wrong length";
+	case 0x6981: return "not a binary file";
+	case 0x6982: return "security status not satisfied";
+	case 0x6985: return "conditions not satisfied";
+	case 0x6A82: return "file not found";
+	case 0x6A83: return "record not found";
+	case 0x6A86: return "wrong P1 / P2";
+	}
+	return "error";
+}
+
+#define ISO_ROWS 9
+
+static void isoDraw(void)
+{
+	const DfApp *a = curApp();
+	char t[48], s[96];
+	snprintf(t, sizeof(t), "DESFire: %06lX over ISO 7816", a->aid);
+	uiHeader(t, NULL);
+	if (a->nameLen) {
+		strcpy(s, "SELECT by DF name ");
+		hexStr(s + strlen(s), a->name, a->nameLen);
+	} else {
+		snprintf(s, sizeof(s), "SELECT by ISO FID %04X", a->isoFid);
+	}
+	uiText(12, 26, S_SMALL, uiCol[COL_DIM], "%s, then READ BINARY / RECORD", s);
+	float y = 26 + SMALL_H + 4;
+	for (int i = il.top; i < isoN && i < il.top + ISO_ROWS; i++, y += LINE_H) {
+		const DfIsoEf *e = &isoEfs[i];
+		if (i == il.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
+		uiText(14, y, S_BODY, uiCol[COL_ACCENT], "EF %04X", e->fid);
+		if (e->sw == 0x9000 && e->records)
+			snprintf(s, sizeof(s), "records: %d, %d bytes", e->records_n, e->dataLen);
+		else if (e->sw == 0x9000)
+			snprintf(s, sizeof(s), "binary: %d bytes", e->dataLen);
+		else
+			snprintf(s, sizeof(s), "SW %04X %s", e->sw, swName(e->sw));
+		uiText(90, y + 1, S_SMALL, uiCol[e->sw == 0x9000 ? COL_TEXT : COL_WARN], "%s", s);
+	}
+	uiFooter(BTN_UD " EF   " BTN_A " contents   " BTN_B " back");
+}
+
+static DfFile isoFile; // the data viewer's stand-in
+
+static void isoInput(u32 kDown, u32 kRepeat)
+{
+	uiListNav(&il, isoN, ISO_ROWS, kRepeat & (KEY_UP | KEY_DOWN));
+	if ((kDown & KEY_A) && isoN && isoEfs[il.sel].sw == 0x9000) {
+		const DfIsoEf *e = &isoEfs[il.sel];
+		memset(&isoFile, 0, sizeof(isoFile));
+		isoFile.hasData = true, isoFile.dataOff = e->dataOff, isoFile.dataLen = e->dataLen, isoFile.dataKey = 0xE;
+		showData(&isoFile);
+		dataIsoFid = e->fid;
+	}
+	if (kDown & KEY_B) appBack();
+}
+
+static const Screen isoScreen = { NULL, isoInput, isoDraw };
+
+static void doneIso(void)
+{
+	if (isoN < 0) msgBox("ISO 7816", "The chip stopped answering.\nTry again.");
+	else if (!isoN && !mfCancel) msgBox("ISO 7816", "%s", *isoWhy ? isoWhy : "no card");
+	else if (isoN > 0) {
+		il = (UiList){ 0 };
+		appScreen(&isoScreen);
+	}
+}
+
+static void isoRead(void)
+{
+	const DfApp *a = curApp();
+	if (!a->hasIso) {
+		msgBox("ISO 7816", "This application has no ISO IDs (no ISO FID / DF name): only native commands reach it.");
+		return;
+	}
+	jobStart("Reading over ISO 7816", runIso, doneIso, true);
+}
+
+// --- SetConfiguration (5C, encrypted, PICC master key) ---
+
+static u8 cfgData[24], cfgLen;
+static const char *cfgTitle;
+
+static void cfgGo(void)
+{
+	opReset(cfgTitle, 0);
+	opAuth(0, &di.piccKey);
+	u8 c[26] = { 0x5C };
+	memcpy(c + 1, cfgData, cfgLen);
+	opCmd(c, 1 + cfgLen, 1, cfgData[0] == 0x02 ? DF_FULL80 : DF_FULL, 0); // the ATS: 80-padded (pm3)
+	opRun();
+}
+
+static void cfgNeed(void)
+{
+	needKey(0, 0, &di.piccKey, piccType(), cfgGo);
+}
+
+static u8 atsNew[20], atsLen;
+
+static void atsSet(const u8 *b, u32 len)
+{
+	memcpy(atsNew, b, len);
+	atsNew[0] = len; // TL: the ATS's own length
+	cfgData[0] = 0x02, cfgLen = 1 + len, cfgTitle = "Set ATS";
+	memcpy(cfgData + 1, atsNew, len);
+	char hex[48];
+	hexStr(hex, atsNew, len);
+	confirm("Set ATS", cfgNeed, "The card's ATS becomes %s. A broken one can stop ISO14443-4 (and so this app) from "
+		"reaching the card: keep T0 / TA / TB / TC as they are.", hex);
+}
+
+static void atsLenSet(s64 v)
+{
+	atsLen = v;
+	u8 init[20] = { 0 };
+	memcpy(init, di.ats, di.atsLen < v ? di.atsLen : v);
+	entryHex("ATS", "The new ATS (its first byte, the length, is set for you). This card's: T0 75, TA 77, TB 81, TC 02, "
+		"then historical bytes.", v, init, atsSet);
+}
+
+static void cfgAts(void)
+{
+	entryDec("ATS length", "Bytes in the new ATS, its length byte included (6 = no change in size).", 5, 20, di.atsLen, atsLenSet);
+}
+
+static void cfgAtsDefault(void)
+{
+	static const u8 def[6] = { 0x06, 0x75, 0x77, 0x81, 0x02, 0x80 };
+	cfgData[0] = 0x02, cfgLen = 7, cfgTitle = "Set ATS";
+	memcpy(cfgData + 1, def, 6);
+	confirm("Set ATS", cfgNeed, "Back to the DESFire EV2 / EV3 ATS 067577810280?");
+}
+
+static void randomGo2(void)
+{
+	confirm("Random UID", cfgNeed, "Last chance: turn on random ID for good?");
+}
+
+static void cfgRandom(void)
+{
+	if (di.randomUid) {
+		msgBox("Random UID", "Random ID is on already.");
+		return;
+	}
+	cfgData[0] = 0x00, cfgData[1] = 0x02, cfgLen = 2, cfgTitle = "Random UID";
+	confirm("Random UID", randomGo2, "Turn on random ID? The card then shows a new random UID on every activation; the "
+		"real one only comes with a key (GetCardUID). This can NEVER be turned off again.");
+}
+
+static void formatGo2(void)
+{
+	confirm("Disable format", cfgNeed, "Last chance: disable formatting for good?");
+}
+
+static void cfgNoFormat(void)
+{
+	cfgData[0] = 0x00, cfgData[1] = 0x01 | (di.randomUid ? 0x02 : 0), cfgLen = 2, cfgTitle = "Disable format";
+	confirm("Disable format", formatGo2, "Disable FormatPICC? Applications can still be deleted, but their memory "
+		"never comes back. This can NEVER be turned on again.");
+}
+
+static void configuration(void)
+{
+	static const MenuItem items[] = {
+		{ "Custom ATS", cfgAts }, { "Default ATS", cfgAtsDefault }, { "Random UID (permanent)", cfgRandom },
+		{ "Disable format (permanent)", cfgNoFormat },
+	};
+	popup("Configuration", items, 4);
+}
+
 // --- the menus ---
 
 static void cardMenu(void)
 {
 	static const MenuItem items[] = {
 		{ "Save info", save }, { "Create application", createApp }, { "Enter PICC master key", enterPicc },
-		{ "Change PICC master key", changePicc }, { "Format card", format },
+		{ "Change PICC master key", changePicc }, { "PICC key settings", piccKeySettings }, { "Format card", format },
+		{ "Configuration", configuration },
 	};
-	popup("Card", items, 5);
+	popup("Card", items, 7);
 }
 
 static void appMenu(void)
 {
 	static const MenuItem items[] = {
 		{ "Write file", writeFile }, { "Create file", createFile }, { "Delete file", deleteFile },
-		{ "Enter a key", enterAppKey }, { "Change a key", changeAppKey }, { "Delete application", deleteApp },
-		{ "Save info", save },
+		{ "Enter a key", enterAppKey }, { "Change a key", changeAppKey }, { "Key settings", appKeySettings },
+		{ "ISO 7816 read", isoRead }, { "Delete application", deleteApp }, { "Save info", save },
 	};
-	popup("Application", items, 7);
+	popup("Application", items, 9);
 }
 
 // --- menu and family ---

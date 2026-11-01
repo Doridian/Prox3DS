@@ -35,7 +35,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                    -a = ISO-DEP activate first. STEPs (MAY WRITE THE CARD):
                                                      auth:K:TYPE:KEY       TYPE des/2k3des/3k3des/aes (EV1)
                                                      ev2:K:aes:KEY         AuthenticateEV2First
-                                                     cmd:COMM:HDR:HEX      COMM plain/mac/full/enc, HDR = plain
+                                                     ev2n:K:aes:KEY        AuthenticateEV2NonFirst
+                                                     cmd:COMM:HDR:HEX      COMM plain/mac/full/enc/full80, HDR = plain
                                                                            bytes after the command byte
                                                      ck:K:TYPE:KEY[:OTYPE:OKEY][:picc][:vN]  ChangeKey
                                                      info / infokeys       read all (+ key dictionary), print
@@ -59,7 +60,7 @@ UPDATE_CHUNK = 0x7000
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
-DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4}
+DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
 
 
 def df_key(t, k):
@@ -496,8 +497,8 @@ def main():
             print(f"ATS {r.hex().upper()}")
         for step in (a for a in args if a != "-a"):
             f = step.split(":")
-            if f[0] in ("auth", "ev2"):
-                r = nfc.df(0 if f[0] == "auth" else 4, bytes([int(f[1], 0)]) + df_key(f[2], f[3]))
+            if f[0] in ("auth", "ev2", "ev2n"):
+                r = nfc.df({"auth": 0, "ev2": 4, "ev2n": 5}[f[0]], bytes([int(f[1], 0)]) + df_key(f[2], f[3]))
             elif f[0] == "cmd":
                 c = bytes.fromhex(f[3])
                 r = nfc.df(1, bytes([DF_COMM[f[1]], int(f[2], 0)]) + c)

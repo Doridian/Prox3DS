@@ -172,6 +172,12 @@ static void cardDraw(void)
 	y += SMALL_H;
 	if (in->hasSig) {
 		uiText(14, y, S_SMALL, txt, "Signature");
+		uiTextRight(UI_W - 14, y, S_SMALL, uiCol[in->sigKey ? COL_OK : COL_WARN], "%s", in->sigKey ? "verified" : "NOT verified");
+		if (in->sigKey) {
+			char k[48];
+			snprintf(k, sizeof(k), "%s", in->sigKey + (strncmp(in->sigKey, "NXP ", 4) ? 0 : 4));
+			uiTextRight(UI_W - 14, y + SMALL_H, S_SMALL, dim, "%s", uiFit(k, UI_W - 14 - 280, S_SMALL));
+		}
 		for (int h = 0; h < 2; h++, y += SMALL_H) {
 			for (int i = 0; i < 16; i++) sprintf(s + 2 * i, "%02X", in->sig[16 * h + i]);
 			uiMonoS(80, y + 1, 0.36f, 6.0f, txt, s);

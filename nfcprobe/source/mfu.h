@@ -26,6 +26,7 @@ typedef struct {
 	u8 sig[32];
 	u8 cnt[3][4];   // counter (3 bytes, LSB first) + tearing flag (BD = intact), pm3's layout
 	u8 cntOk, tearOk; // bit masks
+	const char *sigKey; // the NXP key the signature verifies with (nxpsig.h), NULL = none / not checked
 } MfuInfo;
 
 #define MFU_MAX_PAGES 256
