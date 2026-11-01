@@ -232,7 +232,7 @@ static float progressDraw(float x, float y, float w)
 	uiText(x, y, S_SMALL, uiCol[COL_TEXT], "%s", prog.op);
 	y += SMALL_H + 2;
 	u32 done = prog.done, total = prog.total;
-	if (!total) return y + 2;
+	if (!total) return y + 14; // its bar's row kept: the view below doesn't jump between ops
 	float frac = done >= total ? 1 : (float)done / total;
 	uiBar(x, y, w - 100, 9, frac, uiCol[COL_ACCENT]);
 	u32 ms = progLeft();

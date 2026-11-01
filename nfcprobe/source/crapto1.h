@@ -5,7 +5,7 @@
 // and NOTES.md for the nested attack. ks = enc_nt ^ nt_T (32 target-cipher keystream bits).
 
 // Progress hook for the long recoveries (all but crapto1_nt_decrypt / crapto1_ks32), may be NULL:
-// called with 0..1000 as the work goes (about a quarter is the table setup); returning nonzero stops
+// called with 0..1000 as the work goes (the table setup is the first quarter); returning nonzero stops
 // the recovery early (no candidates then).
 extern int (*crapto1_tick)(int permille);
 

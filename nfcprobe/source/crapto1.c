@@ -34,9 +34,22 @@ static int bebit(uint32_t x, int n)
 
 int (*crapto1_tick)(int permille);
 
+static int lastTick, stopped; // stopped: the hook said stop, the recovery winds down
+
 static int tick(int permille)
 {
-	return crapto1_tick && crapto1_tick(permille);
+	lastTick = permille;
+	if (crapto1_tick && crapto1_tick(permille)) stopped = 1;
+	return stopped;
+}
+
+// In the long flat loops between the progress steps: the same value again every 64K items of work
+// (counted across calls: many of these loops are short), so the caller gets control now and then.
+static uint32_t work;
+
+static void tickMore(void)
+{
+	if (!(++work & 0xFFFF)) tick(lastTick);
 }
 
 // --- forward cipher (matches crypto1.py), for candidate filtering / verification ---
@@ -129,6 +142,7 @@ static Vec extend_table(Vec in, int bit, uint32_t m1, uint32_t m2, uint32_t inn)
 	inn <<= 24;
 	Vec o = {0};
 	for (size_t i = 0; i < in.n; i++) {
+		tickMore();
 		uint32_t t = in.a[i] << 1;
 		if (filter(t) ^ filter(t | 1)) {
 			t |= filter(t) ^ bit;
@@ -145,6 +159,7 @@ static Vec extend_table_simple(Vec in, int bit)
 {
 	Vec o = {0};
 	for (size_t i = 0; i < in.n; i++) {
+		tickMore();
 		uint32_t t = in.a[i] << 1;
 		if (filter(t) ^ filter(t | 1)) {
 			vpush(&o, t | (filter(t) ^ bit));
@@ -159,6 +174,11 @@ static Vec extend_table_simple(Vec in, int bit)
 // Owns odd/even (frees them); appends final states to out. The top call's buckets report progress.
 static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec *out, uint32_t inn, int top)
 {
+	if (stopped) {
+		free(odd.a);
+		free(even.a);
+		return;
+	}
 	if (rem == -1) {
 		for (size_t ei = 0; ei < even.n; ei++) {
 			uint32_t e = (even.a[ei] << 1) ^ par(even.a[ei] & LF_POLY_EVEN) ^ ((inn & 4) ? 1 : 0);
@@ -171,6 +191,7 @@ static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec
 	}
 	int i = 0;
 	while (i < 4) {
+		if (top) tick(110 + 35 * i); // the top call's extends: the biggest tables
 		int old = rem;
 		rem--;
 		if (old == 0)
@@ -192,16 +213,19 @@ static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec
 		i++;
 	}
 	Vec *ob = calloc(256, sizeof(Vec)), *eb = calloc(256, sizeof(Vec));
-	for (size_t k = 0; k < odd.n; k++)
+	for (size_t k = 0; k < odd.n; k++) {
+		if (top) tickMore();
 		vpush(&ob[odd.a[k] >> 24], odd.a[k]);
-	for (size_t k = 0; k < even.n; k++)
+	}
+	for (size_t k = 0; k < even.n; k++) {
+		if (top) tickMore();
 		vpush(&eb[even.a[k] >> 24], even.a[k]);
+	}
 	free(odd.a);
 	free(even.a);
-	int stop = 0;
 	for (int b = 0; b < 256; b++) {
-		if (top && !stop) stop = tick(250 + 750 * b / 256); // the buckets take about the same time each
-		if (ob[b].n && eb[b].n && !stop) {
+		if (top) tick(250 + 750 * b / 256); // about the same time each, 75% of it all
+		if (ob[b].n && eb[b].n && !stopped) {
 			recover(ob[b], oks, eb[b], eks, rem, out, inn, 0);
 		} else {
 			free(ob[b].a);
@@ -220,18 +244,20 @@ static void lfsr_recovery32(uint32_t ks2, uint32_t inn, SVec *out)
 	for (int i = 30; i >= 0; i -= 2)
 		eks = eks << 1 | bebit(ks2, i);
 	Vec odd = {0}, even = {0};
+	stopped = 0;
 	tick(0);
 	odd.cap = even.cap = 1 << 20; // reserve to avoid realloc churn in the seed loop
 	odd.a = malloc(odd.cap * sizeof(uint32_t));
 	even.a = malloc(even.cap * sizeof(uint32_t));
-	for (uint32_t i = 0; i <= (1u << 20); i++) {
+	for (uint32_t i = 0; i <= (1u << 20) && !stopped; i++) {
+		if (!(i & 0xFFFF)) tick(15 * i >> 20);
 		if (filter(i) == (int)(oks & 1))
 			vpush(&odd, i);
 		if (filter(i) == (int)(eks & 1))
 			vpush(&even, i);
 	}
-	tick(100);
-	for (int r = 0; r < 4; r++) {
+	for (int r = 0; r < 4 && !stopped; r++) {
+		tick(15 + 95 * r / 4);
 		oks >>= 1;
 		eks >>= 1;
 		Vec no = extend_table_simple(odd, oks & 1);
@@ -286,6 +312,7 @@ int crapto1_recover(uint32_t uid, uint32_t nt, uint32_t ks, uint64_t *out, int m
 	lfsr_recovery32(ks, inn, &sv);
 	int cnt = 0;
 	for (size_t i = 0; i < sv.n && cnt < max; i++) {
+		tickMore();
 		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
 		rollback_word(s, inn, 0);
 		out[cnt++] = get_lfsr(s[0], s[1]);
@@ -316,6 +343,7 @@ int crapto1_static(uint32_t uid, uint32_t nt, uint32_t ntEnc, int parEnc, uint64
 	lfsr_recovery32(nt ^ ntEnc, inn, &sv);
 	int want = oddpar8(nt) ^ (parEnc & 1), cnt = 0;
 	for (size_t i = 0; i < sv.n && cnt < max; i++) {
+		tickMore();
 		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
 		rollback_word(s, inn, 0);
 		uint64_t key = get_lfsr(s[0], s[1]);
@@ -338,6 +366,7 @@ uint64_t crapto1_nested(uint32_t uid, uint32_t nt1, uint32_t ks1, uint32_t nt2, 
 	lfsr_recovery32(ks1, in1, &sv);
 	uint64_t found = 0;
 	for (size_t i = 0; i < sv.n; i++) {
+		tickMore();
 		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
 		rollback_word(s, in1, 0);
 		uint64_t key = get_lfsr(s[0], s[1]);

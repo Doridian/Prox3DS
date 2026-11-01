@@ -651,11 +651,15 @@ static int keyAuths(u64 k, u8 block, bool keyB)
 }
 
 // crapto1 progress into the current op's bar; B stops it. Threads of one priority don't time-slice
-// and a 0 sleep doesn't yield: the short sleep lets the UI draw a frame (and take B) during a solve.
+// and a 0 sleep doesn't yield: a short sleep every 30 ms lets the UI draw (and take B) during a solve.
 static int solveTick(int permille)
 {
+	static u64 slept;
 	progStep(permille, 1000);
-	svcSleepThread(1000000);
+	if (osGetTime() - slept >= 30) {
+		svcSleepThread(1000000);
+		slept = osGetTime();
+	}
 	return mfCancel;
 }
 
@@ -1044,10 +1048,14 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 				for (int k = 0; k < *ndict && OPEN(sec, kb); k++)
 					if (mfStaticMatch(&st[sec][kb], dict[k]) && readSectorRetry(d, sec, dict[k], kb) < 0)
 						return -1;
-		for (int sec = 0; sec < sectors && !progress; sec++)
+		for (int sec = 0; sec < sectors && !progress && !mfCancel; sec++)
 			for (int kb = 0; kb < 2 && !progress; kb++) {
 				if (!OPEN(sec, kb) || expanded[sec][kb]) continue;
 				expanded[sec][kb] = true;
+				// Its candidates only matter where they fit another open cell: none left, no solve.
+				int others = 0;
+				for (int c = 0; c < 2 * sectors; c++) others += OPEN(c / 2, c % 2);
+				if (others < 2) continue;
 				MfStatic *s = &st[sec][kb];
 				progOp("Static nonce: sector %d key %c candidates", sec, kb ? 'B' : 'A');
 				mfProg.key[sec][kb] = MF_KEY_TRYING;
@@ -1056,7 +1064,9 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 				if (mfCancel) break;
 				if (!d->keyFound[sec][kb]) mfProg.key[sec][kb] = MF_KEY_OPEN;
 				logp("sector %2d %c: %d candidates\n", sec, kb ? 'B' : 'A', n);
-				for (int i = 0; i < n && !progress; i++)
+				progOp("Static nonce: sector %d key %c, checking for reuse", sec, kb ? 'B' : 'A');
+				for (int i = 0; i < n && !progress && !mfCancel; i++) {
+					if (!(i & 1023)) solveTick(1000LL * i / n); // ~2 s of decrypts: the bar, B, UI frames
 					for (int os = 0; os < sectors && !progress; os++)
 						for (int ok = 0; ok < 2; ok++) {
 							if ((os == sec && ok == kb) || !OPEN(os, ok)) continue;
@@ -1070,6 +1080,7 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 							progress = true; // back to the dictionary step, which applies it everywhere
 							break;
 						}
+				}
 			}
 	}
 	if (mfCancel) return 1; // stopped: nothing is known to be unrecoverable, and no slow backdoor reads
