@@ -1,5 +1,6 @@
 #pragma once
 // Hooks into the UI files' static state (hook_*.c include them), for scenes.c.
+#include "../source/amiibo.h"
 #include "../source/app.h"
 #include "../source/desfire.h"
 #include "../source/mfukeys.h"
@@ -25,6 +26,9 @@ void simMfuMenu(void);
 void simNdef(const MfuDump *d, const Card *c);
 void simNdefActions(void);
 void simNdefUrl(const char *url);
+void simAmiibo(const Amiibo *a, const u8 *tag, const Card *c, const char *name);
+void simAmiiboActions(void);
+void simAmiiboCopy(bool fresh, bool lock);
 void simMfuPick(const Card *c, const MfuDump *d);
 void simMfuReadKey(const MfuDump *d, int result, const char *path, const MfuKey *cand);
 

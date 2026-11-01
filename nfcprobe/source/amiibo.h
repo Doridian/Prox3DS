@@ -20,6 +20,7 @@ typedef struct {
 	u8 hmacBits;        // per set s: bit 2s the tag HMAC checks out, bit 2s+1 the data HMAC
 	u8 plain[AMIIBO_PLAIN];
 	char nickname[44];  // UTF-8
+	char owner[44];     // the owner Mii's name (registered only)
 	u8 charId[8];       // model info: character, variant, figure type, model number, series
 	u16 writes;         // Amiibo write counter
 	u16 setupDate, writeDate; // (year - 2000) << 9 | month << 5 | day
@@ -34,3 +35,9 @@ int amiiboUnpack(const u8 *tag, Amiibo *a);
 // app data zeroed), signed and encrypted with key set `set`: out gets the 540 bytes (pages 0x82-0x86 as
 // in tag). 1 = done, 0 = no keys / no such set.
 int amiiboFresh(const u8 *tag, int set, u8 *out);
+
+// The image for a blank NTAG215 whose pages 0-2 are head: a's figure (its settings and app data kept,
+// or zeroed with fresh: a new, unregistered figure) re-signed for that UID with the key set that
+// verified it, and an Amiibo's lock bytes, CC, config, PWD (from the UID) and PACK 8080. For
+// mfuAmiiboWrite. 1 = done, 0 = a does not verify.
+int amiiboImage(const Amiibo *a, const u8 head[12], bool fresh, u8 *out);

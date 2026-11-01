@@ -97,7 +97,8 @@ enum {
 	                       // read back. Writes through mfuNdefWrite (ndefui.c's path). MAY WRITE THE CARD
 	OP_AMIIBO      = 0x29, // [1, set, (template: version[8] + 540 bytes, else the card on the reader): a fresh
 	                       // signed copy -> version[8] + 540 tag bytes; nothing written] [2, lock, 540 bytes:
-	                       // mfuAmiiboWrite onto the NTAG215, PERMANENT]
+	                       // mfuAmiiboWrite onto the NTAG215, PERMANENT] [3, fresh, source version[8] + 540, target
+	                       // pages 0-2 (12): amiiboImage -> 540 bytes; nothing written]
 	                       // -> the Amiibo on the reader decrypted with the console's keys (amiibo.h): ok u8 (HMACs
 	                       // check), set u8, charId[8], writes u16, setup u16, written u16, appId u32 (BE), flags
 	                       // u8 (1 registered, 2 app data), nickname (UTF-8). On failure payload = reason
@@ -461,6 +462,16 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 			*outLen = strlen(mfuWhy());
 			memcpy(out, mfuWhy(), *outLen);
 			return r < 0 ? -1 : 1;
+		}
+		if (inLen == 2 + 8 + AMIIBO_TAG + 12 && in[0] == 3) { // copy image: source version[8] + 540, target pages 0-2
+			amiiboUnpack(in + 10, &a);
+			if (!amiiboImage(&a, in + 10 + AMIIBO_TAG, in[1], out)) {
+				*outLen = strlen(amiiboWhy());
+				memcpy(out, amiiboWhy(), *outLen);
+				return 1;
+			}
+			*outLen = AMIIBO_TAG;
+			return 0;
 		}
 		if (inLen == 2 + 8 + AMIIBO_TAG && in[0] == 1) { // a template given: version[8] + 540 bytes, no card
 			memcpy(d.info.version, in + 2, 8);

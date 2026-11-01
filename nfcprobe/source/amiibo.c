@@ -239,11 +239,30 @@ int amiiboFresh(const u8 *tag, int set, u8 *out)
 	return 1;
 }
 
-static void utf16be(const u8 *p, int chars, char *out, u32 max)
+int amiiboImage(const Amiibo *a, const u8 head[12], bool fresh, u8 *out)
+{
+	if (!a->ok) FAIL("the source does not verify");
+	u8 plain[AMIIBO_PLAIN];
+	memcpy(plain, a->plain, AMIIBO_PLAIN);
+	if (fresh) memset(plain + 0x02C, 0, 0x188);
+	memcpy(plain + 0x1D4, head, 8); // UID + BCC0 (the tag HMAC covers them)
+	plain[0] = head[8], plain[1] = head[9]; // BCC1, internal
+	static const u8 lockCc[6] = { 0x0F, 0xE0, 0xF1, 0x10, 0xFF, 0xEE };
+	memcpy(plain + 2, lockCc, 6);
+	memset(out, 0, AMIIBO_TAG);
+	packWith(keys[a->set], plain, out);
+	const u8 *u = head; // uid = u0 u1 u2 u4 u5 u6 u7 (u3 is BCC0); pm3 pwdgen B
+	u8 cfg[20] = { 0x01, 0x00, 0x0F, 0xBD, 0x00, 0x00, 0x00, 0x04, 0x5F, 0x00, 0x00, 0x00,
+		u[1] ^ u[4] ^ 0xAA, u[2] ^ u[5] ^ 0x55, u[4] ^ u[6] ^ 0xAA, u[5] ^ u[7] ^ 0x55, 0x80, 0x80, 0x00, 0x00 };
+	memcpy(out + 4 * 0x82, cfg, sizeof(cfg));
+	return 1;
+}
+
+static void utf16(const u8 *p, int chars, bool le, char *out, u32 max)
 {
 	u32 o = 0;
 	for (int i = 0; i < chars; i++) {
-		u32 c = p[2 * i] << 8 | p[2 * i + 1];
+		u32 c = le ? p[2 * i + 1] << 8 | p[2 * i] : p[2 * i] << 8 | p[2 * i + 1];
 		if (!c) break;
 		if (c < 0x80 && o + 1 < max) out[o++] = c;
 		else if (c < 0x800 && o + 2 < max) out[o++] = 0xC0 | c >> 6, out[o++] = 0x80 | (c & 0x3F);
@@ -265,7 +284,7 @@ int amiiboUnpack(const u8 *tag, Amiibo *a)
 	}
 	const u8 *p = a->plain;
 	memcpy(a->charId, p + 0x1DC, 8);
-	utf16be(p + 0x38, 10, a->nickname, sizeof(a->nickname)); // shown when the HMACs fail too: a hint
+	utf16(p + 0x38, 10, false, a->nickname, sizeof(a->nickname)); // shown when the HMACs fail too: a hint
 	if (!a->ok) return 1;
 	a->writes = p[0x29] << 8 | p[0x2A];
 	a->registered = p[0x2C] & 0x10;
@@ -273,6 +292,7 @@ int amiiboUnpack(const u8 *tag, Amiibo *a)
 	a->setupDate = p[0x30] << 8 | p[0x31];
 	a->writeDate = p[0x32] << 8 | p[0x33];
 	a->appId = (u32)p[0xB6] << 24 | p[0xB7] << 16 | p[0xB8] << 8 | p[0xB9];
-	utf16be(p + 0x38, 10, a->nickname, sizeof(a->nickname));
+	utf16(p + 0x38, 10, false, a->nickname, sizeof(a->nickname));
+	if (a->registered) utf16(p + 0x4C + 0x1A, 10, true, a->owner, sizeof(a->owner)); // the owner Mii's name
 	return 1;
 }

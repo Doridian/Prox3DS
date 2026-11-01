@@ -1099,3 +1099,10 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   with a block 0 write, then `magic`.
 - Generated images live in the gitignored dump/amiibo/ (Flipper .nfc + pm3 .bin), the GTU backup in dump/gtu/.
   GTU restored to Classic 1K afterwards: config and all 64 blocks identical to the backup.
+- App UI (amiiboui.c): L on the Ultralight card screen of an NTAG215, or "Amiibo" on a saved 135-page
+  dump: the figure decrypted (model info, nickname, owner Mii name at plain 0x4C+0x1A UTF-16LE, dates,
+  write count, app ID, lock state). X copies it onto a blank NTAG215: amiiboImage re-signs the plain data
+  (kept, or zeroed for a new figure) for the blank's pages 0-2 with the set that verified it, sets the
+  Amiibo lock bytes / CC / config / PWD (pwdgen B) / PACK 8080, then mfuAmiiboWrite, optionally the lock
+  stage, then reads back and verifies. Refused on the source card itself. Checked: amiiboImage of the set-1
+  Flipper image for 04C8E3BA064F80 is byte-identical to the image the 3DS accepted (`nfcnet amiibo image`).

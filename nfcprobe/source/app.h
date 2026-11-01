@@ -85,3 +85,5 @@ void mfuEditorOpen(const MfuDump *d, const char *path);
 void mfuCloneStart(const MfuDump *d);                 // clone onto the Gen4 GTU on the reader
 void mfuCloneAsk(const MfuDump *d, const char *name); // confirm, then mfuCloneStart
 void ndefOpenMfu(void); // read the card on the reader, then its NDEF screen (ndefui.c)
+void amiiboOpenCard(void); // read the NTAG215 on the reader, then the Amiibo screen (amiiboui.c)
+void amiiboOpenDump(const MfuDump *d, const char *name); // the same for a saved dump

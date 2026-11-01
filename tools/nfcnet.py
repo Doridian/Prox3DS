@@ -18,6 +18,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST amiibo                     decrypt the Amiibo on the reader with the console's own keys
        nfcnet.py HOST amiibo fresh SET OUT [DUMP]  a fresh unregistered copy of it (or of DUMP) signed with key set SET
                                             (0 / 1): OUT.bin (pm3 dump, for mfuclone) + OUT.nfc (Flipper)
+       nfcnet.py HOST amiibo image SRC.bin HEAD OUT.bin [fresh]  SRC re-signed for the tag whose pages 0-2
+                                            are HEAD (24 hex digits), as the app's copy writes it; no card
        nfcnet.py HOST amiibo write|lock OUT.bin  onto a real NTAG215: write = CC + data + PWD/PACK (data still
                                             rewritable), lock = lock bytes + config (PERMANENT)
        nfcnet.py HOST mfvalue inc|dec|restore BLOCK DELTA KEY [b] [-t DEST]  value block op + TRANSFER
@@ -491,6 +493,14 @@ def main():
         raw = open(args[1], "rb").read()  # pm3 dump made by "amiibo fresh"
         r = nfc.card_call(OP_AMIIBO, bytes([2, args[0] == "lock"]) + raw[56:56 + 540], 60)
         print("done" if r is not None else f"refused: {nfc.why}")
+    elif what == "amiibo" and args and args[0] == "image":  # SRC.bin HEAD24 OUT.bin [fresh]: test of amiiboImage
+        raw = open(args[1], "rb").read()
+        r = nfc.card_call(OP_AMIIBO, bytes([3, len(args) > 4 and args[4] == "fresh"]) + raw[:8] + raw[56:56 + 540]
+                          + bytes.fromhex(args[2]), 60)
+        if r is None:
+            sys.exit(f"failed: {nfc.why}")
+        open(args[3], "wb").write(raw[:56] + r)
+        print(f"-> {args[3]}")
     elif what == "amiibo" and args and args[0] == "fresh":
         tmpl = b""
         if len(args) > 3:  # a pm3 dump as the template instead of the card on the reader

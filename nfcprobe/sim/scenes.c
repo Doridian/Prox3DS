@@ -358,6 +358,41 @@ static void ndefFixture(MfuDump *d, bool empty)
 }
 static void ndefRecords(void) { MfuDump d; ndefFixture(&d, false); simNdef(&d, &card7); }
 static void ndefEmpty(void) { MfuDump d; ndefFixture(&d, true); simNdef(&d, &card7); }
+static void amiiboFixture(Amiibo *a, u8 *tag, bool ok, bool locked)
+{
+	static const u8 head[16] = { 0x04, 0xC8, 0xE3, 0xA7, 0xBA, 0x06, 0x4F, 0x80, 0x73, 0x48, 0x0F, 0xE0, 0xF1, 0x10, 0xFF, 0xEE };
+	static const u8 id[8] = { 0x06, 0x42, 0x00, 0x00, 0x03, 0x5F, 0x11, 0x02 };
+	memset(a, 0, sizeof(*a));
+	memset(tag, 0, AMIIBO_TAG);
+	memcpy(tag, head, 16);
+	if (!locked) tag[10] = tag[11] = 0;
+	memcpy(a->charId, id, 8);
+	a->ok = ok, a->set = 1;
+	if (!ok) return;
+	strcpy(a->nickname, "Peachy");
+	strcpy(a->owner, "Dori");
+	a->registered = a->hasAppData = true;
+	a->writes = 17;
+	a->setupDate = 26 << 9 | 11 << 5 | 1;
+	a->writeDate = 26 << 9 | 11 << 5 | 1;
+	a->appId = 0x0014F000;
+}
+
+static void amiiboOk(void) { Amiibo a; u8 t[AMIIBO_TAG]; amiiboFixture(&a, t, true, true); simAmiibo(&a, t, &card7, NULL); }
+static void amiiboNew(void)
+{
+	Amiibo a;
+	u8 t[AMIIBO_TAG];
+	amiiboFixture(&a, t, true, false);
+	a.nickname[0] = a.owner[0] = 0;
+	a.registered = a.hasAppData = false;
+	a.setupDate = a.writeDate = a.appId = 0;
+	simAmiibo(&a, t, &card7, "amiibo_super_mario_odyssey_wedding_peach_backup_2.bin");
+}
+static void amiiboBad(void) { Amiibo a; u8 t[AMIIBO_TAG]; amiiboFixture(&a, t, false, true); simAmiibo(&a, t, &card7, NULL); }
+static void amiiboCopyLock(void) { simAmiiboCopy(false, true); }
+static void amiiboCopyFresh(void) { simAmiiboCopy(true, false); }
+
 static void ndefEmptyUrl(void) { simNdefUrl("https://example.com/a/rather/long/path?with=query"); }
 static void pickAmiibo(void)
 {
@@ -492,7 +527,10 @@ static const SimStep script[] = {
 	CALL(reset), CALL(pickEv1Locked), SHOT("mfu_pick_ev1_unknown"), D, D, A, SHOT("mfu_pick_confirm_unknown"), B,
 	U, U, A, SHOT("mfu_pick_entry"), B,
 	CALL(reset), CALL(ndefRecords), SHOT("ndef_records"), D, SHOT("ndef_records_sel"), CALL(simNdefActions), SHOT("ndef_actions"), B,
-	CALL(ndefEmptyUrl), SHOT("ndef_write_confirm"), B, CALL(reset), CALL(ndefEmpty), SHOT("ndef_empty"),
+	CALL(ndefEmptyUrl), SHOT("ndef_write_confirm"), B,
+	CALL(reset), CALL(amiiboOk), SHOT("amiibo_ok"), CALL(simAmiiboActions), SHOT("amiibo_actions"), B,
+	CALL(amiiboCopyLock), SHOT("amiibo_copy_lock"), B, CALL(amiiboCopyFresh), SHOT("amiibo_copy_fresh"), B,
+	CALL(reset), CALL(amiiboNew), SHOT("amiibo_new_file"), CALL(reset), CALL(amiiboBad), SHOT("amiibo_bad"), CALL(reset), CALL(ndefEmpty), SHOT("ndef_empty"),
 	CALL(reset), CALL(pickN215), SHOT("mfu_pick_n215_lim5"), D, A, SHOT("mfu_pick_confirm_lim5"), B,
 	CALL(reset), CALL(pickAmiibo), SHOT("mfu_pick_amiibo"), D, D, D, D, D, D, D, D, D, D, SHOT("mfu_pick_scrolled"),
 	CALL(reset), CALL(pickUlc), SHOT("mfu_pick_ulc"), A, SHOT("mfu_pick_ulc_entry"), B,

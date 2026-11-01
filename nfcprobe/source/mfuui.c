@@ -497,7 +497,10 @@ static void cardDraw(void)
 	} else {
 		uiText(14, y, S_SMALL, dim, "No config pages on this type");
 	}
-	uiFooter(BTN_A " scan again   " BTN_X " read card   " BTN_Y " with key   " BTN_R " NDEF   " BTN_B " back");
+	if (sm.info.type && !strcmp(sm.info.type->name, "NTAG215"))
+		uiFooter(BTN_A " scan   " BTN_X " read   " BTN_Y " key   " BTN_R " NDEF   " BTN_L " Amiibo   " BTN_B " back");
+	else
+		uiFooter(BTN_A " scan again   " BTN_X " read card   " BTN_Y " with key   " BTN_R " NDEF   " BTN_B " back");
 }
 
 static void cardInput(u32 kDown, u32 kRepeat)
@@ -506,6 +509,7 @@ static void cardInput(u32 kDown, u32 kRepeat)
 	if (kDown & KEY_X) startRead();
 	if (kDown & KEY_Y) sm.info.type == &mfuTypeULC ? ulcMenu() : pickOpen();
 	if (kDown & KEY_R) ndefOpenMfu();
+	if ((kDown & KEY_L) && sm.info.type && !strcmp(sm.info.type->name, "NTAG215")) amiiboOpenCard();
 	if (kDown & KEY_B) appBack();
 }
 
@@ -669,6 +673,11 @@ static void fileCloneAsk(void)
 	mfuCloneAsk(&ld, files[fl.sel].name);
 }
 
+static void fileAmiibo(void)
+{
+	amiiboOpenDump(&ld, files[fl.sel].name);
+}
+
 static void filesInput(u32 kDown, u32 kRepeat)
 {
 	uiListNav(&fl, nfiles, 12, kRepeat);
@@ -686,8 +695,8 @@ static void filesInput(u32 kDown, u32 kRepeat)
 			return;
 		}
 		static const MenuItem items[] = { { "Write user pages to card", fileRestoreAsk },
-			{ "Clone onto magic card (GTU)", fileCloneAsk } };
-		popup(files[fl.sel].name, items, 2);
+			{ "Clone onto magic card (GTU)", fileCloneAsk }, { "Amiibo (decrypt, copy)", fileAmiibo } };
+		popup(files[fl.sel].name, items, ld.pages == 135 ? 3 : 2);
 	}
 	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s?", files[fl.sel].name);
 }
