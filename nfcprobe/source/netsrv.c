@@ -84,8 +84,8 @@ enum {
 	OP_LOG         = 0x24, // lines u32 -> the last that many log lines (fewer if OUT_MAX fills), \n each
 	// More card ops:
 	OP_DF          = 0x25, // DESFire (desfire.c), action u8 + args -> status u8 + data; on a lost card /
-	                       // monitor error payload = reason. Actions: 0 auth: keyNo, type (dfcrypto.h),
-	                       // key; 1 command: comm, hdr, command bytes -> status, answer; 2 ChangeKey:
+	                       // monitor error payload = reason. Actions: 0 auth (EV1; 4: EV2): keyNo, type
+	                       // (dfcrypto.h), key; 1 command: comm, hdr, command bytes -> status, answer; 2 ChangeKey:
 	                       // keyNo, picc, ver, type, key, [old type, old key]; 3 info: keys u8 -> the
 	                       // saved info file's text. MAY WRITE THE CARD
 };
@@ -396,11 +396,11 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		u8 st = 0;
 		int r;
 		DfKey k = { true }, old = { true };
-		if (in[0] == 0 && inLen >= 4) {
+		if ((in[0] == 0 || in[0] == 4) && inLen >= 4) {
 			k.type = in[2];
 			if (k.type > DF_AES || inLen != 3 + dfKeyLen(k.type)) return -3;
 			memcpy(k.key, in + 3, dfKeyLen(k.type));
-			r = dfAuth(in[1], &k, &st);
+			r = dfAuth(in[1], &k, in[0] == 4, &st);
 			*outLen = 1;
 		} else if (in[0] == 1 && inLen >= 4) {
 			r = dfCmd(in + 3, inLen - 3, in[2], in[1], out + 1, OUT_MAX - 1, &st);

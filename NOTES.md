@@ -780,15 +780,35 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   (v1), key 2 AES 5EC12E7A5EC12E7A0123456789ABCDEF (v2, NOT in the dictionary); B2B2B2 key 0 3K3DES FF*24,
   key 1 3K3DES 00112233445566778899AABBCCDDEEFF0102030405060708; C3C3C3 key 0 DES 00*8, key 1 2K3DES
   00112233445566778899AABBCCDDEEFF.
-- Scan with keys (DESFire menu, or R on the card screen): built-in dictionary (17 keys, pm3's commonest)
+- Scan with keys (DESFire menu, or R on the card screen): built-in dictionary (16 keys, pm3's commonest)
   + sdmc:/nfcprobe/desfire/keys.txt (8 / 16 / 24-byte hex lines) on the PICC master key and every app key
   (by the key type from GetKeySettings; unknown type: AES, 2K3DES, 3K3DES); AE = wrong key, 40 / 9D stop.
   Key 0 re-reads what was refused (key settings, file list, file settings); every file whose read /
   read-write (value: also write) key is known is read after a fresh select + auth, in its comm mode.
   Whole test card: 3.3 s; finds everything but A1A1A1 key 2, its two files show "no key".
-- Not done: legacy D40 auth (0A, MF3ICD40 only), EV2 auth (71) / EV2 secure messaging, LRP, key entry on
+- Not done: legacy D40 auth (0A, MF3ICD40 only), LRP, key entry on
   the 3DS (keys.txt only; untested from the SD so far), write / format / create from the UI (net op only).
 - File contents (A on a read file): its own screen now, a monospace hex + ASCII grid on the Classic dump
   editor's layout (16 per row, 13 rows, scrolls), the whole file instead of a message box's first 96 bytes.
 - Sim: the UI simulator didn't build at 3978172 (C2D_DrawLine / C2D_DrawTriangle, prog* missing from
   the fakes); fixed, and it now rebuilds when a ../source/*.c changes (hook_*.c include them).
+
+## EV2 authentication + secure messaging -- 2026-11-01
+- AuthenticateEV2First 71 keyNo 00 (AES only): AF + E(K, RndB) (IV 0); AF + E(K, RndA || rol(RndB)) (IV 0
+  again, not chained as in EV1); 00 + E(K, TI || rol(RndA) || PDcap2 || PCDcap2) (IV 0). Session keys
+  CMAC(K, A55A / 5AA5 || 0001 0080 || RndA[0..1] || RndA[2..7]^RndB[0..5] || RndB[6..15] || RndA[8..15]).
+- Every command afterwards: MACt = odd bytes (1, 3 .. 15) of CMAC(SesMAC, cmd || CmdCtr LE16 || TI ||
+  hdr || data); answers MACt(SesMAC, status || CmdCtr+1 || TI || data); the counter steps on every good
+  answer, plain ones too. Full mode: data || 80 00.. (no CRC), CBC with IV = E(SesENC, A55A || TI || ctr
+  || 0..) (answers 5AA5, counter after the step), then the MAC over the ciphertext. Management commands
+  (45 64 6F F5 6A 6E CA CD C1 CC CB C7 ...) must be MAC'd once authenticated; data commands follow the
+  file's comm mode (plain: no MAC either way). ChangeKey: no CRC over the command, only CRC32(new key)
+  for another key; encrypted like full mode.
+- dfAuth(k, key, ev2): EV2 for AES keys; Scan with keys uses it on EV2 / EV2 XL / EV3 (GetVersion major
+  >= 12, not Light). Net op OP_DF action 4, `nfcnet.py df ev2:K:aes:KEY`.
+- Verified on the EV3: EV2 reads of A1A1A1 (plain / MAC / full std, value, record, 64-byte full), GetCardUID
+  full. New app D4D4D4 (2 AES keys) built over EV2: files (std full 64, std MAC 32, linear record full,
+  value full), ChangeKey of key 1 (v7) and of key 0 itself (v9, 404142..4F), full write 64 bytes
+  (chained), MAC write, record write, Credit 1000 + Commit; read back over EV2 and over EV1 alike (value
+  100 + 1000 = 0x44C). Keyed scan of the whole card 4.8 s. Key 1 of D4D4D4 (0F1E2D3C4B5A69788796A5B4C3D2E1F0)
+  is not in the dictionary.

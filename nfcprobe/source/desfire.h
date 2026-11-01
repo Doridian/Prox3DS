@@ -5,7 +5,7 @@
 #include "mfc.h"
 
 // MIFARE DESFire, the C version of pm3's hf mfdes info + lsapp (+ chk): native commands over ISO-DEP
-// (isodep.h), EV1 secure messaging (ISO / AES authentication, plain / MAC / full) once a key is known.
+// (isodep.h), EV1 or EV2 secure messaging (plain / MAC / full) once a key is known.
 
 #define DF_MAX_APPS  32
 #define DF_MAX_FILES 32
@@ -56,6 +56,7 @@ typedef struct {
 	u8 keySt, keySet, maxKeys, keyVerSt, keyVer; // PICC master key
 	DfKey piccKey;
 	bool keyed; // read with the dictionary
+	bool ev2;   // AES keys used EV2 authentication / secure messaging
 	int dictKeys;
 	bool hasSig;
 	u8 sig[56];
@@ -79,9 +80,10 @@ int dfReadInfo(DfInfo *d, bool keys);
 // in full mode). The answer's data into out, the last status in *st. Data length, -1 = no answer
 // (dfWhy), -2 = monitor error.
 int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st);
-// EV1 authentication (1A, AES: AA) of key k of the selected application (or the PICC). 1 = ok, 0 =
-// refused (*st), -1 = no answer / monitor error (dfWhy).
-int dfAuth(u8 k, const DfKey *key, u8 *st);
+// Authentication of key k of the selected application (or the PICC): EV1 (1A, AES: AA), or with ev2 an
+// AES key AuthenticateEV2First (71) and EV2 secure messaging. 1 = ok, 0 = refused (*st), -1 = no answer /
+// monitor error (dfWhy).
+int dfAuth(u8 k, const DfKey *key, bool ev2, u8 *st);
 // ChangeKey (C4) of key k, authenticated: with the key being changed (old unused) or with the change key
 // (old = k's current key). piccType: on the PICC, the new master key's type goes into the key number.
 // AES keys get version ver. 1 = ok, 0 = refused (*st), -1 = no answer / monitor error.

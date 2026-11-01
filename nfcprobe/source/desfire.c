@@ -44,10 +44,13 @@ const char *dfStatusName(u8 st)
 // --- EV1 secure messaging ---
 
 static struct {
-	bool on;
+	bool on, ev2;
 	u8 keyNo;
-	DfCipher c;
-	u8 iv[16];
+	DfCipher c;   // EV1: the session key; EV2: SesAuthENCKey
+	u8 iv[16];    // EV1 only
+	DfCipher mac; // EV2: SesAuthMACKey
+	u8 ti[4];     // EV2: transaction identifier, command counter
+	u16 ctr;
 } ses;
 
 static u32 rng;
@@ -90,6 +93,34 @@ static int crcPos(const u8 *p, u32 n, u8 bs)
 	return -1;
 }
 
+// EV2 (AES only, no running IV): MACt = the odd bytes of CMAC(SesAuthMACKey, code || CmdCtr || TI || data)
+static void ev2Mac(u8 code, const u8 *p, u32 len, u8 *mac)
+{
+	u8 m[340], iv[16] = { 0 }, full[16];
+	m[0] = code, m[1] = ses.ctr, m[2] = ses.ctr >> 8;
+	memcpy(m + 3, ses.ti, 4);
+	memcpy(m + 7, p, len);
+	dfCmac(&ses.mac, iv, m, 7 + len, full);
+	for (int i = 0; i < 8; i++) mac[i] = full[2 * i + 1];
+}
+
+// The IV for full mode: E(SesAuthENCKey, A55A (command) / 5AA5 (answer) || TI || CmdCtr || 0..)
+static void ev2Iv(bool cmd, u8 *iv)
+{
+	memset(iv, 0, 16);
+	iv[0] = cmd ? 0xA5 : 0x5A, iv[1] = cmd ? 0x5A : 0xA5;
+	memcpy(iv + 2, ses.ti, 4);
+	iv[6] = ses.ctr, iv[7] = ses.ctr >> 8;
+	dfBlock(&ses.c, iv, true);
+}
+
+// EV2 wants a MAC on every command but the data ones (file comm mode) once authenticated.
+static bool dataCmd(u8 c)
+{
+	return c == 0xBD || c == 0xBB || c == 0x6C || c == 0x3D || c == 0x3B || c == 0xDB || c == 0x0C || c == 0xDC ||
+		c == 0x1C || c == 0x51 || c == 0xC4;
+}
+
 #define DF_FRAME 54 // command bytes per native frame (pm3 DESFIRE_TX_FRAME_MAX_LEN)
 
 int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st)
@@ -101,7 +132,21 @@ int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st)
 	ses.on = false;
 	memcpy(tx, c, len);
 	u32 n = len;
-	if (on) {
+	if (on && ses.ev2) {
+		if (comm == DF_PLAIN && !dataCmd(c[0])) comm = DF_MACED;
+		if (comm == DF_ENC || (comm == DF_FULL && len > 1 + hdr)) { // data + 80 00.., encrypted
+			u32 d = len - 1 - hdr, p = (d + 16) / 16 * 16;
+			tx[len] = 0x80;
+			memset(tx + len + 1, 0, p - d - 1);
+			u8 iv[16];
+			ev2Iv(true, iv);
+			dfCbc(&ses.c, iv, tx + 1 + hdr, p, true);
+			n = 1 + hdr + p;
+		} else {
+			encRx = comm == DF_FULL;
+		}
+		if (comm != DF_PLAIN) ev2Mac(c[0], tx + 1, n - 1, tx + n), n += 8;
+	} else if (on) {
 		if (comm == DF_ENC || (comm == DF_FULL && len > 1 + hdr)) {
 			u32 d = len - 1 - hdr;
 			if (comm == DF_FULL) put32(tx + len, dfCrc32(c, len)), d += 4;
@@ -137,7 +182,26 @@ int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st)
 		k = isoDepTx(af, 1, a, sizeof(a));
 	}
 	// ChangeKey of the session's own key ends it without a MAC
-	if (on && !*st && !(c[0] == 0xC4 && (c[1] & 0x3F) == ses.keyNo)) {
+	if (on && !*st && !(c[0] == 0xC4 && (c[1] & 0x3F) == ses.keyNo) && ses.ev2) {
+		ses.ctr++;
+		if (comm != DF_PLAIN) {
+			u8 rm[8];
+			if (got < 8) goto bad;
+			got -= 8;
+			ev2Mac(*st, rx, got, rm);
+			if (memcmp(rm, rx + got, 8)) goto bad;
+		}
+		if (encRx && got) {
+			u8 iv[16];
+			if (got % 16) goto bad;
+			ev2Iv(false, iv);
+			dfCbc(&ses.c, iv, rx, got, false);
+			while (got && !rx[got - 1]) got--;
+			if (!got || rx[got - 1] != 0x80) goto bad;
+			got--;
+		}
+		ses.on = true;
+	} else if (on && !*st && !(c[0] == 0xC4 && (c[1] & 0x3F) == ses.keyNo)) {
 		if (encRx) {
 			int l = got >= bs && !(got % bs) ? (dfCbc(&ses.c, ses.iv, rx, got, false), crcPos(rx, got, bs)) : -1;
 			if (l < 0) goto bad;
@@ -175,9 +239,59 @@ static bool halvesEqual(const u8 *k)
 	return true;
 }
 
-int dfAuth(u8 k, const DfKey *key, u8 *st)
+// AuthenticateEV2First (71): RndB and RndA||rol(RndB) both with IV 0, the answer TI || rol(RndA) ||
+// PDcap2 || PCDcap2; session keys CMAC(K, A55A / 5AA5 0001 0080 || RndA/RndB mix), pm3 DesfireGenSessionKeyEV2.
+static int authEv2(u8 k, const DfKey *key, u8 *st)
 {
-	ses.on = false;
+	DfCipher c;
+	dfCipherInit(&c, DF_AES, key->key);
+	u8 cmd[3] = { 0x71, k, 0x00 }, a[64], iv[16] = { 0 }, ra[16], rb[16], buf[33];
+	int n = isoDepTx(cmd, 3, a, sizeof(a));
+	if (n < 0) FAIL(-1, "monitor");
+	if (!n) FAIL(-1, "lost the card: %s", isoDepWhy());
+	*st = a[0];
+	if (a[0] != 0xAF || n != 17) return 0;
+	memcpy(rb, a + 1, 16);
+	dfCbc(&c, iv, rb, 16, false);
+	rnd(ra, 16);
+	buf[0] = 0xAF;
+	memcpy(buf + 1, ra, 16);
+	memcpy(buf + 17, rb + 1, 15);
+	buf[32] = rb[0];
+	memset(iv, 0, 16);
+	dfCbc(&c, iv, buf + 1, 32, true);
+	n = isoDepTx(buf, 33, a, sizeof(a));
+	if (n < 0) FAIL(-1, "monitor");
+	if (!n) FAIL(-1, "lost the card: %s", isoDepWhy());
+	*st = a[0];
+	if (a[0] || n != 33) return 0;
+	memset(iv, 0, 16);
+	dfCbc(&c, iv, a + 1, 32, false);
+	if (memcmp(a + 5, ra + 1, 15) || a[20] != ra[0]) {
+		*st = DF_ST_MAC;
+		return 0;
+	}
+	u8 sv[32] = { 0xA5, 0x5A, 0x00, 0x01, 0x00, 0x80 }, ke[16], km[16];
+	memcpy(sv + 6, ra, 8);
+	for (int i = 0; i < 6; i++) sv[8 + i] ^= rb[i];
+	memcpy(sv + 14, rb + 6, 10);
+	memcpy(sv + 24, ra + 8, 8);
+	memset(iv, 0, 16);
+	dfCmac(&c, iv, sv, 32, ke);
+	sv[0] = 0x5A, sv[1] = 0xA5;
+	memset(iv, 0, 16);
+	dfCmac(&c, iv, sv, 32, km);
+	dfCipherInit(&ses.c, DF_AES, ke);
+	dfCipherInit(&ses.mac, DF_AES, km);
+	memcpy(ses.ti, a + 1, 4);
+	ses.ctr = 0, ses.keyNo = k, ses.ev2 = ses.on = true;
+	return 1;
+}
+
+int dfAuth(u8 k, const DfKey *key, bool ev2, u8 *st)
+{
+	ses.on = ses.ev2 = false;
+	if (ev2 && key->type == DF_AES) return authEv2(k, key, st);
 	DfCipher c;
 	dfCipherInit(&c, key->type, key->key);
 	u8 rl = key->type == DF_2K3DES ? 8 : 16, cmd[2] = { key->type == DF_AES ? 0xAA : 0x1A, k };
@@ -234,7 +348,7 @@ int dfChangeKey(u8 k, const DfKey *key, u8 ver, const DfKey *old, bool picc, u8 
 	if (other)
 		for (u32 i = 0; i < kl; i++) cd[i] ^= old->key[i];
 	if (key->type == DF_AES) cd[n++] = ver;
-	put32(cd + n, dfCrc32(c, 2 + n)), n += 4;
+	if (!ses.ev2) put32(cd + n, dfCrc32(c, 2 + n)), n += 4;
 	if (other) put32(cd + n, dfCrc32(key->key, kl)), n += 4;
 	u8 out[8];
 	int r = dfCmd(c, 2 + n, 1, DF_ENC, out, sizeof(out), st);
@@ -263,6 +377,7 @@ typedef struct {
 
 static DictKey dict[128];
 static int ndict;
+static bool useEv2; // dfReadInfo: AES keys authenticate with EV2 (EV2 and later cards)
 
 static const char *const defaultKeys[] = {
 	"00000000000000000000000000000000", "000000000000000000000000000000000000000000000000",
@@ -322,7 +437,7 @@ static int findKey(u8 k, int kt, DfKey *out)
 			DfKey c = { true, type };
 			memcpy(c.key, dict[i].key, dict[i].len);
 			u8 st;
-			int r = dfAuth(k, &c, &st);
+			int r = dfAuth(k, &c, useEv2, &st);
 			if (r < 0) return -1;
 			if (r) {
 				*out = c;
@@ -451,13 +566,13 @@ static int readApp(DfInfo *d, DfApp *a, bool keys)
 		// a fresh select: free files without a session, keyed ones with their key's
 		if ((r = selectApp(a->aid, &st)) <= 0) return r;
 		if (k != 0xE) {
-			if ((r = dfAuth(k, &a->keys[k], &st)) < 0) return r;
+			if ((r = dfAuth(k, &a->keys[k], useEv2, &st)) < 0) return r;
 			if (!r) {
 				f->hasData = true, f->dataSt = st, f->dataKey = k;
 				continue;
 			}
 		}
-		if ((r = readFile(d, f, k == 0xE ? DF_PLAIN : f->set[1] & 3)) <= 0) return r;
+		if ((r = readFile(d, f, k == 0xE || (f->set[1] & 3) == 2 ? DF_PLAIN : f->set[1] & 3)) <= 0) return r;
 		f->dataKey = k;
 	}
 	return 1;
@@ -478,6 +593,8 @@ int dfReadInfo(DfInfo *d, bool keys)
 	if (keys) {
 		loadDict();
 		d->keyed = true, d->dictKeys = ndict;
+		// EV2 or later DESFire (not Light): EV2 secure messaging for AES keys
+		d->ev2 = useEv2 = d->ver[1] == 0x01 && d->ver[3] >= 0x12 && d->ver[3] != 0x30;
 	}
 
 	c[0] = 0x6E;
@@ -655,7 +772,8 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 	FILE *fp = fopen(path, "w");
 	if (!fp) return false;
 	const u8 *v = d->ver;
-	if (d->keyed) fprintf(fp, "# nfcprobe DESFire info (key dictionary: %d keys)\nUID %s\n", d->dictKeys, uid);
+	if (d->keyed) fprintf(fp, "# nfcprobe DESFire info (key dictionary: %d keys, %s secure messaging for AES)\nUID %s\n",
+		d->dictKeys, d->ev2 ? "EV2" : "EV1", uid);
 	else fprintf(fp, "# nfcprobe DESFire info (no keys)\nUID %s\n", uid);
 	hexLine(fp, "ATS ", d->ats, d->atsLen);
 	fprintf(fp, "%s\n", dfVersionName(d));

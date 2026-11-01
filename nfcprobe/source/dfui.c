@@ -420,8 +420,8 @@ static const MenuEntry dfEntries[] = {
 	               "signature, PICC and application key settings, applications and their files. Any other "
 	               "ISO14443-4 card shows its ATS.", startScan },
 	{ "Scan with keys", "The same, then the key dictionary (built in + " DF_KEYS ") on the PICC master key and "
-	                    "every application key (DES, 2K3DES, 3K3DES, AES). Found keys open protected lists and "
-	                    "files, in plain, MAC and full (encrypted) mode.", startKeyScan },
+	                    "every application key (DES, 2K3DES, 3K3DES, AES; AES over EV2 on EV2 / EV3 cards). Found "
+	                    "keys open protected lists and files, in plain, MAC and full (encrypted) mode.", startKeyScan },
 };
 
 static void dfExtra(float y)

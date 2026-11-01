@@ -33,7 +33,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                    first (shows the ATS); each HEX one command, its answer
        nfcnet.py HOST df [-a] STEP [STEP...]      DESFire through nfcprobe desfire.c (EV1 secure messaging),
                                                    -a = ISO-DEP activate first. STEPs (MAY WRITE THE CARD):
-                                                     auth:K:TYPE:KEY       TYPE des/2k3des/3k3des/aes
+                                                     auth:K:TYPE:KEY       TYPE des/2k3des/3k3des/aes (EV1)
+                                                     ev2:K:aes:KEY         AuthenticateEV2First
                                                      cmd:COMM:HDR:HEX      COMM plain/mac/full/enc, HDR = plain
                                                                            bytes after the command byte
                                                      ck:K:TYPE:KEY[:OTYPE:OKEY][:picc][:vN]  ChangeKey
@@ -495,8 +496,8 @@ def main():
             print(f"ATS {r.hex().upper()}")
         for step in (a for a in args if a != "-a"):
             f = step.split(":")
-            if f[0] == "auth":
-                r = nfc.df(0, bytes([int(f[1], 0)]) + df_key(f[2], f[3]))
+            if f[0] in ("auth", "ev2"):
+                r = nfc.df(0 if f[0] == "auth" else 4, bytes([int(f[1], 0)]) + df_key(f[2], f[3]))
             elif f[0] == "cmd":
                 c = bytes.fromhex(f[3])
                 r = nfc.df(1, bytes([DF_COMM[f[1]], int(f[2], 0)]) + c)
