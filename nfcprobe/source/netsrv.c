@@ -154,6 +154,14 @@ static u32 readPacket(u8 *out, u32 max, u32 timeoutMs)
 	return nciRecv(out, max, tries, false);
 }
 
+// The card from the last op may have been swapped since: SELECT it again (the cached UID), and on
+// silence activate whatever is there now. Not for ISO-DEP / DESFire, whose session a SELECT would end.
+static bool cardReady(void)
+{
+	if (card.active && iso14aParity(true) && iso14aSelect() >= 0) return true;
+	return iso14aStart();
+}
+
 static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 {
 	switch (op) {
@@ -194,7 +202,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_MF_VALUE: {
 		if (inLen != 14) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		s32 delta = in[2] | in[3] << 8 | in[4] << 16 | (u32)in[5] << 24;
 		int r = mfValue(in[0], in[1], delta, in[6], in + 8, in[7], out);
 		iso14aParity(true);
@@ -231,8 +239,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		static MfDump d;
 		static u8 keys[MF_MAX_KEYS][6];
 		if (inLen < 1) return -3;
-		if (!card.active && !iso14aStart()) return 1;
-		if (!in[0] && iso14aSelect() < 0 && !iso14aStart()) return 1; // current SAK
+		if (!cardReady()) return 1; // also the current SAK
 		int sectors = in[0] ? in[0] : mfSectorsFromSak(card.sak);
 		if (sectors > 40) return -3;
 		int nkeys = mfKeyList(keys, MF_MAX_KEYS, (const u8 (*)[6])(in + 1), (inLen - 1) / 6);
@@ -260,7 +267,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_GEN1A_WRITE: {
 		if (inLen < 17) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		int r = mfGen1aWrite(in[0], in + 1);
 		iso14aParity(true);
 		if (r == 1) return 0; // verified
@@ -270,7 +277,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_MF_WRITE: {
 		if (inLen < 24) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		int r = mfWrite(in[0], in + 2, in[1], in + 8);
 		iso14aParity(true);
 		if (r == 1) return 0; // verified
@@ -280,7 +287,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_MF_MAGIC: {
 		if (inLen < 1) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		MfMagic m;
 		int r = mfMagicDetect(inLen >= 5 ? in + 1 : mfGen4DefaultPwd, in[0], &m);
 		iso14aParity(true);
@@ -294,7 +301,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_GEN4_READ: {
 		if (inLen < 6 || in[5] > 64) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		for (int i = 0; i < in[5]; i++) {
 			u8 *p = out + 17 * i;
 			int r = mfGen4Read(in, in[4] + i, p + 1);
@@ -307,7 +314,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_GEN4_WRITE: {
 		if (inLen < 21) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		int r = mfGen4Write(in, in[4], in + 5);
 		if (r == 1) return 0; // verified
 		*outLen = strlen(mfWhy());
@@ -316,7 +323,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_GEN4_CONFIG: {
 		if (inLen != 4 && inLen != 4 + MF_GEN4_CFG) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		int r = inLen == 4 ? mfGen4Config(in, out, 32) : mfGen4SetConfig(in, in + 4);
 		if (inLen == 4 && r > 0) {
 			*outLen = r;
@@ -329,7 +336,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_USC_CONFIG: {
 		if (inLen != 0 && inLen != MF_USC_CFG) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		int r = inLen ? mfUscuidSetConfig(in) : mfUscuidConfig(out);
 		iso14aParity(true);
 		if (r == 1) {
@@ -349,7 +356,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 			valid[b] = in[1 + 17 * b];
 			memcpy(data[b], in + 2 + 17 * b, 16);
 		}
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		int r = mfCloneToMagic((const u8 (*)[16])data, valid, nb, in[0]);
 		iso14aParity(true);
 		if (r == 1) return 0;
@@ -362,8 +369,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		u8 key[16] = { 0 };
 		if (inLen != 0 && inLen != 4 && inLen != 16) return -3;
 		memcpy(key, in, inLen);
-		if (!card.active && !iso14aStart()) return 1;
-		if (iso14aSelect() < 0 && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		int r = mfuDumpCard(&d, inLen ? key : NULL);
 		if (r <= 0) {
 			*outLen = strlen(mfuWhy());
@@ -391,9 +397,9 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_MFU_WRITE: {
 		if (inLen != 5) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		MfuInfo info;
-		int r = iso14aSelect() < 0 ? 0 : mfuIdentify(&info);
+		int r = mfuIdentify(&info);
 		if (r > 0) r = mfuWritePage(info.type, in[0], in + 1);
 		if (r == 1) return 0;
 		*outLen = strlen(mfuWhy());
@@ -404,10 +410,10 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		static MfuDump d;
 		static u8 msg[1024], tlv[1100], mem[1024];
 		if (inLen < 1 || in[0] > 3 || inLen - 1 >= 900) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		MfuInfo info;
 		u8 cc[16];
-		int r = iso14aSelect() < 0 ? 0 : mfuIdentify(&info);
+		int r = mfuIdentify(&info);
 		if (r > 0 && in[0]) {
 			char str[900];
 			memcpy(str, in + 1, inLen - 1);
@@ -447,8 +453,8 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 			return 1;
 		}
 		if (inLen == 2 + AMIIBO_TAG && in[0] == 2) { // write the image onto the NTAG215: in[1] 0 data, 1 lock
-			if (!card.active && !iso14aStart()) return 1;
-			int r = iso14aSelect() < 0 ? 0 : mfuAmiiboWrite(in + 2, in[1]);
+			if (!cardReady()) return 1;
+			int r = mfuAmiiboWrite(in + 2, in[1]);
 			iso14aParity(true);
 			logp("amiibo write (%s): %s\n", in[1] ? "lock" : "data", r > 0 ? "ok" : mfuWhy());
 			if (r > 0) return 0;
@@ -460,8 +466,8 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 			memcpy(d.info.version, in + 2, 8);
 			memcpy(tag, in + 10, AMIIBO_TAG);
 		} else {
-			if (!card.active && !iso14aStart()) return 1;
-			int r = iso14aSelect() < 0 ? 0 : mfuDumpCard(&d, NULL);
+			if (!cardReady()) return 1;
+			int r = mfuDumpCard(&d, NULL);
 			iso14aParity(true);
 			if (r <= 0) {
 				*outLen = strlen(mfuWhy());
@@ -496,8 +502,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	case OP_MFU_CLONE: {
 		static MfuDump d;
 		if (!mfuParseDump(&d, in, inLen)) return -3;
-		if (!card.active && !iso14aStart()) return 1;
-		if (iso14aSelect() < 0 && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		int r = mfuCloneToGtu(&d);
 		iso14aParity(true);
 		if (r == 1) return 0;
@@ -579,7 +584,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	}
 	case OP_MF_NESTED: {
 		if (inLen < 10) return -3;
-		if (!card.active && !iso14aStart()) return 1;
+		if (!cardReady()) return 1;
 		u8 key[6];
 		int r = mfNestedRecover(in[0], in + 2, in[1], in[8], in[9], key);
 		iso14aParity(true);

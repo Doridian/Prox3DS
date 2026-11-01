@@ -1092,8 +1092,10 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   OUT.nfc (Flipper v4 text format). The GTU in NTAG215 mode with a fresh copy got no reaction at all from
   System Settings (not even an error). Likely why: this GTU answers PWD_AUTH A11D72B0 with PACK 4883 (page
   0x13's bytes, the 06A0 quirk), not the 8080 a real Amiibo gives.
-- GTU detection after an Ultralight op: `clone` / `magic` right after mfudump said "not a magic card" twice;
-  straight after a fresh OP_14A_START the same CF C6 answers (with or without PWD_AUTH first) and the
-  clone works. Something in the card state an MFU op leaves; not fixed yet.
+- GTU detection after an Ultralight op: `clone` / `magic` said "not a magic card" twice. Not the MFU op:
+  the card had been swapped (NTAG215 out, GTU in) and netsrv still had the old card active, so its SELECT
+  of the cached UID got silence and so did CF C6. Fixed: card ops (not ISO-DEP / DESFire, whose session
+  a SELECT ends) SELECT first and reactivate on silence (cardReady). Checked by changing the GTU's UID
+  with a block 0 write, then `magic`.
 - Generated images live in the gitignored dump/amiibo/ (Flipper .nfc + pm3 .bin), the GTU backup in dump/gtu/.
   GTU restored to Classic 1K afterwards: config and all 64 blocks identical to the backup.
