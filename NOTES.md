@@ -752,3 +752,5 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   ACK test skipped; reselect + mfread fine afterwards. Config restored to ...0200 0978..., read back.
 - Net op 0x24 OP_LOG (lines u32 -> last log lines, no hwLock); `nfcnet.py HOST log [N]` (net client
   lines cut). Remote keys don't scroll the on-screen log, so use this for remote tests.
+- Gen1a card C1C1C1C1 (SAK 88, keys FF): no ATS, block 0 WRITE NAK 4 with key A and B -> "Gen1a"
+  only on the card screen (no false Gen2); `magic` 0.6 s; block 0 intact.
