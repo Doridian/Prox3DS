@@ -13,8 +13,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST gen1awrite BLOCK HEX32       Gen1a backdoor write of 16 bytes (WRITES THE CARD)
        nfcnet.py HOST mfwrite BLOCK KEY HEX32 [b]  Mifare Classic encrypted write + read-back (WRITES THE CARD)
        nfcnet.py HOST nested KBLK KKEY TBLK [kb][tb]  recover TBLK's key from a known key (nested attack)
-       nfcnet.py HOST magic [gen2] [PWD]           detect Gen1a / Gen4 GTU (+ config); gen2 = also test
-                                                   Gen2 by rewriting block 0 with its own data (WRITES)
+       nfcnet.py HOST magic [nogen2] [PWD]         detect Gen1a / Gen2 / Gen4 GTU / USCUID (+ config); Gen2 the
+                                                   pm3 way (ATS, block 0 WRITE ACK, aborted: nothing written)
        nfcnet.py HOST g4read BLOCK [N] [PWD]       Gen4 GTU read without keys (PWD default 00000000)
        nfcnet.py HOST g4write BLOCK HEX32 [PWD]    Gen4 GTU write + read-back (WRITES THE CARD)
        nfcnet.py HOST clone FILE [force]           write a dump (.bin) onto a magic card (GTU, Gen1a/USCUID,
@@ -157,8 +157,8 @@ class Nfc:
         return self.card_call(OP_MF_NESTED, arg, 60)
 
     def mf_magic(self, gen2=False, pwd=GEN4_PWD):
-        """-> ({'gen1a', 'gen2', 'gen4', 'uscuid'}, gen4 config, uscuid config) or None (no card). gen2=True rewrites
-        block 0 with its own data to test it (WRITES THE CARD)."""
+        """-> ({'gen1a', 'gen2', 'gen4', 'uscuid'}, gen4 config, uscuid config) or None (no card). gen2=True also tests
+        Gen2 (known ATS, or block 0 WRITE ACKed and aborted before the data: nothing written)."""
         p = self.card_call(OP_MF_MAGIC, bytes([gen2]) + bytes(pwd), 60)
         if p is None:
             return None
@@ -399,7 +399,7 @@ def main():
         ok = nfc.mf_write(blk, key, data, len(args) > 3 and args[3] == "b")
         print("VERIFIED" if ok else f"write failed: {nfc.why}")
     elif what == "magic":
-        gen2 = "gen2" in args
+        gen2 = "nogen2" not in args
         pwd = next((bytes.fromhex(a) for a in args if len(a) == 8), GEN4_PWD)
         r = nfc.mf_magic(gen2, pwd)
         if r is None:

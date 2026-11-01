@@ -758,6 +758,21 @@ static int ack4(Crypto1 *c, const MonFrame *f, int n, u32 off)
 	return v;
 }
 
+// The encrypted WRITE command alone. 1 = ACKed: the card now waits for the 16 data bytes.
+static int writeCmd(Crypto1 *c, u8 block)
+{
+	MonFrame f[2];
+	u8 cmd[4] = { 0xA0, block }, cenc[4], cpar[4];
+	crcA(cmd, 2, cmd + 2);
+	c1Encrypt(c, cmd, 4, cenc, cpar);
+	u32 off;
+	int n = ptx(cenc, 4, cpar, f, &off);
+	if (n < 0) FAIL(-1, "A0 tx");
+	int a = ack4(c, f, n, off);
+	if (a != 0xA) FAIL(0, a < 0 ? "A0: no answer" : "A0 nak %X", a);
+	return 1;
+}
+
 int mfWriteBlock(Crypto1 *c, u8 block, const u8 data[16])
 {
 	MonFrame f[2];
@@ -775,12 +790,8 @@ int mfWriteBlock(Crypto1 *c, u8 block, const u8 data[16])
 		if (pairOk(enc, par, wrPairs[i])) pair = i;
 	if (pair < 0) FAIL(2, "no parity pair");
 
-	c1Encrypt(c, cmd, 4, cenc, cpar);
-	u32 off;
-	int n = ptx(cenc, 4, cpar, f, &off);
-	if (n < 0) FAIL(-1, "A0 tx");
-	int a = ack4(c, f, n, off);
-	if (a != 0xA) FAIL(0, a < 0 ? "A0: no answer" : "A0 nak %X", a);
+	int r = writeCmd(c, block);
+	if (r <= 0) return r;
 
 	c1Encrypt(c, plain, WR_BYTES, enc, par);
 	u8 fifo[20];
@@ -788,10 +799,10 @@ int mfWriteBlock(Crypto1 *c, u8 block, const u8 data[16])
 	u32 ns = mixedFrame(enc, par, wrPairs[pair], fifo, st);
 	monFrames(f, 2);
 	if (!monTxsched(fifo, sizeof(fifo), 0x70, st, ns)) FAIL(-1, "data tx");
-	n = waitFrames(f, 2);
+	int n = waitFrames(f, 2);
 	if (n < 0) FAIL(-1, "data frames");
 	if (wrPairs[pair][1] == WR_BYTES - 1 && !iso14aParity(false)) FAIL(-1, "parity off"); // left on
-	a = ack4(c, f, n, 0); // whole-byte frame: the answer starts at bit 0
+	int a = ack4(c, f, n, 0); // whole-byte frame: the answer starts at bit 0
 	if (a != 0xA) FAIL(0, a < 0 ? "data: no answer" : "data nak %X", a);
 	return 1;
 }
@@ -824,22 +835,68 @@ const u8 mfDefaultKeys[][6] = {
 };
 const int mfNumDefaultKeys = sizeof(mfDefaultKeys) / 6;
 
-// Gen2 (CUID): block 0 takes a normal WRITE. Rewrites it with what it holds, so nothing changes.
-static int gen2Test(void)
+// Gen2 detection as pm3 MifareCIdent does it, nothing written. First the ATS: these chips answer
+// RATS whatever their SAK says, and pm3 knows a few of their ATS (compared with the CRC, as the
+// frame comes; the 85.. ones are Ultralight clones). S(DESELECT) after, so a reselect works.
+static const struct {
+	u8 len, ats[18];
+} gen2Ats[] = {
+	{ 9, { 0x09, 0x78, 0x00, 0x91, 0x02, 0xDA, 0xBC, 0x19, 0x10 } },
+	{ 15, { 0x0D, 0x78, 0x00, 0x71, 0x02, 0x88, 0x49, 0xA1, 0x30, 0x20, 0x15, 0x06, 0x08, 0x56, 0x3D } },
+	{ 12, { 0x0A, 0x78, 0x00, 0x81, 0x02, 0xDB, 0xA0, 0xC1, 0x19, 0x40, 0x2A, 0xB5 } },
+	{ 18, { 0x85, 0x00, 0x00, 0xA0, 0x00, 0x00, 0x0A, 0xC3, 0x00, 0x04, 0x03, 0x01, 0x01, 0x00, 0x0B, 0x03, 0x41, 0xDF } },
+	{ 18, { 0x85, 0x00, 0x00, 0xA0, 0x0A, 0x00, 0x0A, 0xC3, 0x00, 0x04, 0x03, 0x01, 0x01, 0x00, 0x0B, 0x03, 0x16, 0xD7 } },
+	{ 18, { 0x85, 0x00, 0x00, 0xA0, 0x0A, 0x00, 0x0A, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x4D } },
+	{ 18, { 0x85, 0x00, 0x00, 0xA0, 0x00, 0x00, 0x0A, 0xA5, 0x00, 0x04, 0x04, 0x02, 0x01, 0x00, 0x0F, 0x03, 0x79, 0x0C } },
+};
+
+static int gen2AtsTest(void)
 {
-	for (int k = 0; k < mfNumDefaultKeys; k++)
-		for (int kb = 0; kb < 2; kb++) {
+	MonFrame f[2];
+	u8 rats[2] = { 0xE0, 0x20 }, desel = 0xC2;
+	if (!iso14aParity(true)) FAIL(-1, "parity on");
+	int sak = iso14aSelect();
+	if (sak == -2) FAIL(-1, "select: monitor");
+	if (sak < 0) return 0;
+	int n = iso14aDataTx(rats, 2, f, 2, 10);
+	if (n < 0) FAIL(-1, "RATS: monitor");
+	if (!n || f[n - 1].len < 3) {
+		logp("gen2 ats: no ATS\n");
+		return 0;
+	}
+	u8 ats[36], len = f[n - 1].len;
+	memcpy(ats, f[n - 1].data, len);
+	if (iso14aDataTx(&desel, 1, f, 2, 10) < 0) FAIL(-1, "deselect: monitor");
+	char hex[2 * sizeof(ats) + 1];
+	for (int i = 0; i < len; i++) sprintf(hex + 2 * i, "%02X", ats[i]);
+	for (u32 i = 0; i < sizeof(gen2Ats) / sizeof(gen2Ats[0]); i++)
+		if (len >= gen2Ats[i].len && !memcmp(ats, gen2Ats[i].ats, gen2Ats[i].len)) {
+			logp("gen2 ats: %s (known Gen2)\n", hex);
+			return 1;
+		}
+	logp("gen2 ats: %s (not a known Gen2 one)\n", hex);
+	return 0;
+}
+
+// Then the block 0 WRITE: a real card NAKs the command, a Gen2 ACKs it and waits for the data. That
+// never comes: the next frame (iso14aSelect's 4-byte HLTA, not 16 bytes + CRC) ends the write. pm3
+// cuts the field instead, which we can't without reloading the monitor. Key A and B, each with the
+// first default key that authenticates (B may be the only one the access bits let write).
+static int gen2AckTest(void)
+{
+	for (int kb = 0; kb < 2; kb++)
+		for (int k = 0; k < mfNumDefaultKeys; k++) {
 			Crypto1 c;
-			u8 b0[16];
 			int r = mfAuth(0, mfDefaultKeys[k], kb, &c);
 			if (r < 0) return -1;
 			if (!r) continue;
-			if ((r = mfReadBlock(&c, 0, b0)) <= 0) return r;
-			if ((r = mfWrite(0, mfDefaultKeys[k], kb, b0)) < 0) return -1;
-			logp("gen2 test (block 0 rewrite, key %c): %s\n", kb ? 'B' : 'A', r ? "ok" : mfWhy());
-			return r;
+			r = writeCmd(&c, 0);
+			int sak = iso14aParity(true) ? iso14aSelect() : -2;
+			if (r < 0 || sak == -2) FAIL(-1, "gen2 ack: monitor");
+			logp("gen2 ack (block 0 WRITE, key %c): %s\n", kb ? 'B' : 'A', r ? "ACK" : mfWhy());
+			if (r) return 1;
+			break;
 		}
-	logp("gen2 test: no default key for sector 0\n");
 	return 0;
 }
 
@@ -858,7 +915,8 @@ int mfMagicDetect(const u8 pwd[4], bool testGen2, MfMagic *m)
 		if (r) m->flags |= MF_MAGIC_USCUID;
 	}
 	if (testGen2) {
-		if ((r = gen2Test()) < 0) return -1;
+		if ((r = gen2AtsTest()) < 0) return -1;
+		if (!r && (r = gen2AckTest()) < 0) return -1;
 		if (r) m->flags |= MF_MAGIC_GEN2;
 	}
 	return m->flags;
@@ -1333,7 +1391,8 @@ int mfCloneToMagic(const u8 (*data)[16], const bool *valid, int nblocks, bool fo
 		FAIL(0, "block 0: bad BCC");
 	static MfDump tgt;
 	if (type == CLONE_GEN2) {
-		int r = gen2Test();
+		int r = gen2AtsTest();
+		if (!r) r = gen2AckTest();
 		if (r < 0) return -1;
 		if (!r) FAIL(0, "not a magic card");
 		for (int sec = 0; sec < sectors && !force; sec++) {

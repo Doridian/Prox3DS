@@ -29,7 +29,7 @@ static const Screen cardScreen;
 static int mfcProbe(void)
 {
 	sc = card;
-	int r = mfMagicDetect(mfGen4DefaultPwd, false, &sm) < 0 ? -1 : 1;
+	int r = mfMagicDetect(mfGen4DefaultPwd, true, &sm) < 0 ? -1 : 1;
 	iso14aParity(true);
 	return r;
 }
@@ -122,11 +122,12 @@ static void cardDraw(void)
 	if (sm.flags & MF_MAGIC_GEN4) strcat(magic, "Gen4 GTU, ");
 	if (sm.flags & MF_MAGIC_USCUID) strcat(magic, "USCUID (Gen4 GDM), ");
 	else if (sm.flags & MF_MAGIC_GEN1A) strcat(magic, "Gen1a, ");
+	if (sm.flags & MF_MAGIC_GEN2) strcat(magic, "Gen2 / CUID, ");
 	if (*magic) magic[strlen(magic) - 2] = 0;
 	uiText(12, y, S_BODY, uiCol[COL_TEXT], "Magic:");
 	uiText(62, y, S_BODY, uiCol[*magic ? COL_OK : COL_DIM], "%s", *magic ? magic : "none found");
 	y += LINE_H;
-	if (!*magic) uiText(62, y, S_SMALL, uiCol[COL_DIM], "(a Gen2 / CUID card only shows when written to)");
+	if (!*magic) uiText(62, y, S_SMALL, uiCol[COL_DIM], "(Gen2 / CUID needs a default key for sector 0 or a known ATS)");
 
 	if (sm.flags & MF_MAGIC_GEN4) {
 		const u8 *c = sm.cfg;

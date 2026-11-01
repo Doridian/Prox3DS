@@ -53,8 +53,9 @@ int mfGen4Config(const u8 pwd[4], u8 *out, u32 max);
 int mfGen4SetConfig(const u8 pwd[4], const u8 cfg[MF_GEN4_CFG]);
 int mfGen4Version(const u8 pwd[4], u8 *out, u32 max); // CC: 2 bytes (6666) or 5 (000000 06A0), 0 = none
 
-// Magic card detection. Gen2 (CUID) is only tested when asked: it rewrites block 0 with its own
-// contents through a normal authenticated WRITE (a default key A for sector 0 must work).
+// Magic card detection. Gen2 (CUID) only when asked (it takes longer), the pm3 way with nothing
+// written: a known Gen2 ATS, else an ACK to an authenticated WRITE of block 0 (a default key for
+// sector 0 must work), aborted before the data.
 enum { MF_MAGIC_GEN1A = 1, MF_MAGIC_GEN2 = 2, MF_MAGIC_GEN4 = 4, MF_MAGIC_USCUID = 8 };
 typedef struct {
 	u8 flags;

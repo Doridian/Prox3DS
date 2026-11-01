@@ -52,7 +52,7 @@ enum {
 	                      // payload = reason. Encrypted WRITE (NOTES.md). WRITES THE CARD
 	OP_MF_NESTED  = 0x17, // knownBlock u8, knownKeyB u8, knownKey[6], tgtBlock u8, tgtKeyB u8
 	                      // -> recovered key[6]; on failure payload = reason (nested attack, NOTES.md)
-	OP_MF_MAGIC   = 0x18, // gen2 u8 (1 = also test Gen2: rewrites block 0 with its own data), [pwd[4]]
+	OP_MF_MAGIC   = 0x18, // gen2 u8 (1 = also test Gen2: ATS, block 0 WRITE ACK, nothing written), [pwd[4]]
 	                      // -> flags u8 (1 = Gen1a, 2 = Gen2, 4 = Gen4 GTU, 8 = USCUID), Gen4 config
 	                      //    len u8, Gen4 config, USCUID config[16] (zeros without the flag)
 	OP_GEN4_READ  = 0x19, // pwd[4], block u8, count u8 -> per block: ok u8, data[16]

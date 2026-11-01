@@ -735,3 +735,14 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   200-byte echo (7 pieces out, 7 blocks back), 4.4 s command (~110 S(WTX) F2 01 echoed) all exact.
   The WTX cap was 50 at first: legitimate WTX every FWT (39 ms) exceeds that in 2 s; now 2000.
 - Net op 0x23 OP_ISODEP (activate u8, APDU) -> [ATS] + answer; nfcnet.py HOST apdu [-a] HEX...
+
+## Gen2 (CUID) detection on every scan, pm3 style -- 2026-10-31
+- Replaces the block 0 rewrite test; nothing is written. As pm3 MifareCIdent: (1) RATS whatever the
+  SAK says, ATS compared with pm3's known Gen2 ones (incl. the GTU's 0978009102DABC1910), then
+  S(DESELECT); (2) else auth sector 0 with a default key (first that works for A, then for B) and
+  send the encrypted WRITE 0: ACK = Gen2. The data never follows: iso14aSelect's 4-byte HLTA ends the
+  write (pm3 drops the field instead; we can't without reloading the monitor).
+- mfcProbe (Scan card, MIFARE Classic scan) runs it; card screen shows "Gen2 / CUID". Clone's Gen2
+  check uses the same two tests. `nfcnet.py magic` now tests Gen2 by default (`nogen2` skips).
+- Verified: CUID card 9BB2092B (SAK 08, key A not a default, key B FF): no ATS; key B WRITE 0 ACK ->
+  Gen2 / CUID; `magic` 1.3 s. Block 0 afterwards intact (9BB2092B 0B 08 0400 ..., BCC ok).
