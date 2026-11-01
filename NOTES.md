@@ -854,7 +854,11 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   Gen1a / Gen2 tests find nothing): the card screen now says so (MfMagic.mute). Right password -> GTU +
   Gen2 again. Entered key FFFFFFFFFFFF -> "already in the dictionary", read 64/64 blocks.
 - Ultralight / NTAG: menu "Read with password" (PWD_AUTH, remembers the last one; the result says
-  accepted / refused). Sim only (no EV1 / NTAG on the reader). UL-C 3DES auth isn't implemented, so no
+  accepted / refused). Verified on the NTAG215 (04C8E3BA064F80, AUTHLIM 0) with PWD 12345678 / PACK ABCD
+  and AUTH0 80 + PROT set raw: FFFFFFFF -> "Password refused", 128/135; 12345678 typed on the entry
+  screen -> "Password accepted", 135/135. Restored afterwards (AUTH0 FF first while authenticated, ACCESS
+  00, PWD FFFFFFFF -> PACK 0000; every page reads). The EV1 04A0A0A0A0A001 was NOT used: its password and
+  AUTHLIM are unknown. UL-C 3DES auth isn't implemented, so no
   key entry for it.
 - Sim: shots carry both screens (S 0 / S 1 in the draw list; PNGs are top over bottom), TOUCH(x, y)
   steps (one frame held; put KEYS(0) between taps), D-pad glyphs E079-E07C drawn as arrows.
