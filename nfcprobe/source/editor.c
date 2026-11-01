@@ -11,6 +11,7 @@
 
 #include "app.h"
 #include "entry.h"
+#include "mfcinfo.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -395,6 +396,11 @@ static void addKeys(void)
 		added, added == 1 ? "" : "s");
 }
 
+static void cardInfo(void)
+{
+	mfcInfoOpen(&d);
+}
+
 static void back(void)
 {
 	appBack();
@@ -404,10 +410,11 @@ static void actions(void)
 {
 	static char wlabel[32];
 	snprintf(wlabel, sizeof(wlabel), "Write block %d to card", blk());
-	MenuItem items[13];
+	MenuItem items[14];
 	int n = 0;
 	int b = blk();
 	bool data = b && b != trailerOf(sec);
+	items[n++] = (MenuItem){ "Card info (MAD, Saflok, signature)", cardInfo };
 	items[n++] = (MenuItem){ "Save", save };
 	items[n++] = (MenuItem){ "Save as a copy", saveCopy };
 	items[n++] = (MenuItem){ wlabel, writeBlock };

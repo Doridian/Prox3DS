@@ -10,6 +10,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "mfcinfo.h"
 #include "entry.h"
 #include "probe.h"
 #include "ui.h"
@@ -91,8 +92,9 @@ static void doneRead(void)
 	int keys = 0;
 	for (int s = 0; s < rd.sectors; s++) keys += rd.keyFound[s][0] + rd.keyFound[s][1];
 	editorOpen(&rd, rdPath);
-	char kdf[48] = "";
-	if (rd.kdf) snprintf(kdf, sizeof(kdf), "Keys from the UID: %s.\n", rd.kdf);
+	char kdf[256] = "";
+	int n = rd.kdf ? snprintf(kdf, sizeof(kdf), "Keys from the UID: %s.\n", rd.kdf) : 0;
+	mfcInfoSummary(&rd, kdf + n, sizeof(kdf) - n);
 	msgBox(mfCancel ? "Read card (stopped)" : "Read card", "%d/%d blocks read, %d/%d keys found.\n%s%s",
 		rdGot, mfFirstBlock(rd.sectors), keys, 2 * rd.sectors, kdf,
 		rdPath[0] ? rdPath : "Could not save the dump to the SD card!");

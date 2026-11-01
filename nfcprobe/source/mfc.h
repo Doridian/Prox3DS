@@ -121,6 +121,10 @@ bool mfValueParse(const u8 b[16], s32 *v, u8 *addr); // false = not a value bloc
 // the card's transfer buffer, TRANSFER that to dest (same sector), read dest back into out. 1 = done,
 // 0 = refused (mfWhy: access bits, not a value block...), -1 = monitor error. WRITES THE CARD.
 enum { MF_VAL_DEC = 0xC0, MF_VAL_INC = 0xC1, MF_VAL_RESTORE = 0xC2 };
+// The MFC EV1 originality signature, blocks 69-70 of the hidden sector 17, with the signature sector's
+// key B (NXP, QL88), as pm3 does. 1 = read, 0 = none, -1 = monitor error. (FM11RF08S has no ECDSA
+// signature: block 0 bytes 9-14 are a check only Fudan's online service verifies.)
+int mfReadSignature(u8 sig[32]);
 int mfValue(u8 op, u8 block, s32 delta, u8 dest, const u8 key[6], bool keyB, u8 out[16]);
 
 #define MF_MAX_BLOCKS 256
@@ -131,6 +135,8 @@ typedef struct {
 	u8 keys[40][2][6];
 	bool keyFound[40][2];
 	const char *kdf; // the UID key generator (mfckeys.h) that opened the most sectors, NULL = none
+	u8 sigUidLen;    // originality signature (MFC EV1 blocks 69-70) read: the UID's length
+	u8 sig[32];      // (block 0 holds the UID), 0 = none
 } MfDump;
 
 // What the running mfDumpCard knows so far, for the UI (the worker writes it; display only).

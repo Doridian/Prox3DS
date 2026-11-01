@@ -575,6 +575,7 @@ const u8 mfBackdoorKeys[][6] = {
 	{ 0xA3, 0x96, 0xEF, 0xA4, 0xE2, 0x4F }, // FM11RF08S
 	{ 0xA3, 0x16, 0x67, 0xA8, 0xCE, 0xC1 }, // FM11RF08 (and some *98)
 	{ 0x51, 0x8B, 0x33, 0x54, 0xE7, 0x60 }, // FM11RF32N
+	{ 0x73, 0xB9, 0x83, 0x6C, 0xF1, 0x68 }, // FM11RF32N (other batch, pm3 hf mf info)
 };
 const int mfNumBackdoorKeys = sizeof(mfBackdoorKeys) / sizeof(mfBackdoorKeys[0]);
 
@@ -895,6 +896,21 @@ int mfWrite(u8 block, const u8 key[6], bool keyB, const u8 data[16])
 		return 1;
 	}
 	FAIL(0, "no parity pair in 16 auths");
+}
+
+int mfReadSignature(u8 sig[32])
+{
+	static const u8 sigKeys[2][6] = { { 0x4B, 0x79, 0x1B, 0xEA, 0x7B, 0xCC }, { 0x70, 0x7B, 0x11, 0xFC, 0x14, 0x81 } };
+	for (int k = 0; k < 2; k++) {
+		Crypto1 c;
+		int r = mfAuth(69, sigKeys[k], true, &c);
+		if (r < 0) return -1;
+		if (!r) continue;
+		if ((r = mfReadBlock(&c, 69, sig)) < 0) return -1;
+		if (r && (r = mfReadBlock(&c, 70, sig + 16)) < 0) return -1;
+		if (r) return 1;
+	}
+	return 0;
 }
 
 void mfValueBlock(s32 v, u8 addr, u8 out[16])
@@ -1505,6 +1521,15 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 			}
 	}
 	if (mfCancel) logp("cancelled\n");
+	if (sectors == 16 && !mfCancel) { // MFC EV1's signature sector 17 (a 4K's block 69 is user memory)
+		progOp("Originality signature");
+		int r = mfReadSignature(d->sig);
+		if (r < 0) return -1;
+		if (r) {
+			d->sigUidLen = card.uidLen;
+			logp("signature read\n");
+		}
+	}
 	for (int sec = 0; sec < sectors && !mfCancel; sec++)
 		for (int kb = 0; kb < 2; kb++)
 			if (!d->keyFound[sec][kb]) mfProg.key[sec][kb] = MF_KEY_FAILED;
@@ -1597,6 +1622,11 @@ bool mfWriteDump(const MfDump *d, const char *path)
 	for (int b = 0; b < nb; b++)
 		if (!d->valid[b]) fprintf(f, "%s %d", any ? "" : "# unread:", b), any = true;
 	if (any) fprintf(f, "\n");
+	if (d->sigUidLen) {
+		fprintf(f, "# signature %d ", d->sigUidLen);
+		for (int i = 0; i < 32; i++) fprintf(f, "%02X", d->sig[i]);
+		fprintf(f, "\n");
+	}
 	return !fclose(f);
 }
 
@@ -1626,6 +1656,16 @@ bool mfLoadDump(MfDump *d, const char *path)
 		if (!strncmp(line, "# unread:", 9)) {
 			for (char *p = line + 9; sscanf(p, "%d%n", &s, &pos) == 1; p += pos)
 				if (s >= 0 && s < n) d->valid[s] = false;
+			continue;
+		}
+		char hex[80];
+		if (sscanf(line, "# signature %d %79s", &s, hex) == 2 && (s == 4 || s == 7) && strlen(hex) == 64) {
+			for (int i = 0; i < 64; i++) {
+				int v = hexNibble(hex[i]);
+				if (v < 0) break;
+				d->sig[i / 2] = (i & 1) ? (d->sig[i / 2] | v) : v << 4;
+				if (i == 63) d->sigUidLen = s;
+			}
 			continue;
 		}
 		char kA[16], kB[16];

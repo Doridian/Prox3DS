@@ -1023,3 +1023,25 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   118, key B -1000 = -882; INC on a non-value block -> NAK 4; INC 0xFFFFFFFD (overflow) -> refused, value
   unchanged. GTU restored, all 64 blocks + config identical to the backup.
 - The extra backdoor keys (A31667A8CEC1 FM11RF08, 518B3354E760 FM11RF32N) were already in mfBackdoorKeys.
+
+## Classic: card info (Saflok, MAD, signature, Fudan ID) -- 2026-11-01
+- nfcprobe/source/mfcinfo.c, editor action "Card info (MAD, Saflok, signature)" + a summary in the read
+  result. Offline checks:
+  - Saflok (pm3 client/src/cmdhfsaflok.c): 17 bytes = block 1 + block 2 byte 0, byte table + bit rotation
+    (safDecrypt), bit fields, creation date + interval = expiry. All 3 pm3 self-test vectors match field
+    for field. Expiry: months are carried before days here; pm3 carries days first, which lands an
+    interval whose months run past December a month late (no test vector covers it). Detected by sector 1
+    key A 2A2C13CC242A or the Saflok KDF.
+  - MAD (pm3 mifare/mad.c, AN10787): GPB DA bit + version, CRC8 poly 1D init C7 over info + AIDs, MAD2 in
+    sector 16 on 4K. Names: tools/gen_madnames.py -> madnames.c from pm3's mad.json (1958 AIDs). A synthetic
+    dump decodes the same as `hf mf mad -f`.
+  - Signature: blocks 69-70 with key B 4B791BEA7BCC (NXP) / 707B11FC1481 (QL88), as pm3
+    read_mfc_ev1_signature; secp128r1 keys added to nxpsig.c (SIG_MFC). pm3 recover_pk.py samples verify
+    (3 NXP incl. a 7-byte UID, 1 QL88; a changed UID fails). Kept in the dump's keys file
+    ("# signature <uidlen> <hex>"). No card here has one: untested on hardware.
+  - Fudan ID (pm3 fm11rf08s_full.py): block 0 bytes 8/15 (0390 = FM11RF08S), bytes 9-14 a "Fudan Sig"
+    only Fudan's online service checks. RF08S has no ECDSA signature (a backdoor read of 69 fails).
+- 4th backdoor key 73B9836CF168 (FM11RF32N, pm3 hf mf info) added.
+- 5A5A0002 on the 3DS (UI read + card info screen): Saflok Guest Key, card ID 12, lock 1234, property 100,
+  opening key 2, deadbolt override, made 2020-01-01 10:00, expires 2020-01-05 01:00, checksum ok:
+  identical to `hf saflok decode`. GPB 69: no MAD. Fudan FM11RF08S 0390.
