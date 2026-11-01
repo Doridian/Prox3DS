@@ -812,3 +812,15 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   (chained), MAC write, record write, Credit 1000 + Commit; read back over EV2 and over EV1 alike (value
   100 + 1000 = 0x44C). Keyed scan of the whole card 4.8 s. Key 1 of D4D4D4 (0F1E2D3C4B5A69788796A5B4C3D2E1F0)
   is not in the dictionary.
+
+## LRP: not on the EV3 -- 2026-11-01
+- NXP MF3D(H)x3 (EV3) datasheet: secure messaging D40 native, EV1, EV2; logins Authenticate (0A),
+  AuthenticateISO (1A), AuthenticateAES (AA), AuthenticateEV2First / NonFirst (71 / 77). No LRP.
+  AN12752 (EV3 vs EV1/EV2): SetConfiguration option 05 on the EV3 = VCTID override, PDCap1.2, PDCap2.2
+  (transaction timer), PDCap2.5, PDCap2.6; no PDCap2.1 (the DESFire Light's LRP switch). So pm3's Light
+  recipe (setconfig --param 05 --data 0000000001/02...) must NOT be sent to an EV3: it would land in
+  another capability field.
+- Probe on a spare EV3 (044D426A9F2390): AuthenticateEV2First with PCDcap2.1 = 02 (71 00 01 02, also LenCap
+  6) answers a normal EV2 challenge (AF + 16 bytes; LRP would be AF 01 + 16 plain bytes). Probe app deleted,
+  PICC formatted (FC with the DES PICC key): blank again, 5120 bytes free.
+- LRP needs a DESFire Light (MF2DL(H)x0) or an NTAG 424 DNA (or newer NXP parts with LRP).
