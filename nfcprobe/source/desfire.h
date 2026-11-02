@@ -12,6 +12,7 @@
 #define DF_MAX_DATA  256
 #define DF_DIR       MF_DIR "/desfire"
 #define DF_KEYS      DF_DIR "/keys.txt" // one hex key per line (8 / 16 / 24 bytes), '#' comments
+#define DF_PM3_KEYS  DF_DIR "/mfdes_default_keys.dic" // pm3's dictionary, downloaded (pm3dict.h)
 #define DF_ST_MAC    0xFE               // our status: the answer's MAC / CRC did not check
 
 // File comm modes (file settings byte 1), and DF_ENC: encrypted without our CRC (ChangeKey builds its own);

@@ -8,6 +8,7 @@
 #include "app.h"
 #include "desfire.h"
 #include "entry.h"
+#include "pm3dict.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -1604,13 +1605,21 @@ static void appMenu(void)
 
 // --- menu and family ---
 
+static void startDownload(void)
+{
+	pm3DictDownload("Downloading pm3's DESFire keys", "mfdes_default_keys.dic", DF_PM3_KEYS,
+		1ull << 16 | 1ull << 32 | 1ull << 48, NULL);
+}
+
 static const MenuEntry dfEntries[] = {
 	{ "Scan card", "Everything a DESFire tells without a key: version, storage, free memory, originality "
 	               "signature, PICC and application key settings, applications and their files. Any other "
 	               "ISO14443-4 card shows its ATS.", startScan },
-	{ "Scan with keys", "The same, then the key dictionary (built in + " DF_KEYS ") on the PICC master key and "
+	{ "Scan with keys", "The same, then the key dictionary (built in, " DF_KEYS ", pm3's if downloaded) on the PICC master key and "
 	                    "every application key (DES, 2K3DES, 3K3DES, AES; AES over EV2 on EV2 / EV3 cards). Found "
 	                    "keys open protected lists and files, in plain, MAC and full (encrypted) mode.", startKeyScan },
+	{ "Download keys", "Fetch pm3's mfdes_default_keys.dic (~60 keys, over Wi-Fi) to " DF_DIR ": Scan with keys "
+	                   "tries them after the built-in ones and keys.txt.", startDownload },
 };
 
 static void dfExtra(float x, float y, float w)

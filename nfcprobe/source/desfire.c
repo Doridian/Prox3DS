@@ -393,7 +393,7 @@ typedef struct {
 	u8 len, key[24];
 } DictKey;
 
-static DictKey dict[128];
+static DictKey dict[256];
 static int ndict;
 static bool useEv2; // dfReadInfo: AES keys authenticate with EV2 (EV2 and later cards)
 
@@ -434,11 +434,14 @@ static void loadDict(void)
 {
 	ndict = 0;
 	for (u32 i = 0; i < sizeof(defaultKeys) / sizeof(defaultKeys[0]); i++) addDict(defaultKeys[i]);
-	FILE *f = fopen(DF_KEYS, "r");
-	if (!f) return;
-	char line[96];
-	while (fgets(line, sizeof(line), f)) addDict(line);
-	fclose(f);
+	static const char *const files[] = { DF_KEYS, DF_PM3_KEYS };
+	for (int i = 0; i < 2; i++) {
+		FILE *f = fopen(files[i], "r");
+		if (!f) continue;
+		char line[160];
+		while (fgets(line, sizeof(line), f)) addDict(line);
+		fclose(f);
+	}
 }
 
 // The dictionary on key k of the selected application (PICC), of type kt (GetKeySettings bits 6-7,

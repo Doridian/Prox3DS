@@ -13,6 +13,7 @@
 #include "entry.h"
 #include "mfu.h"
 #include "mfukeys.h"
+#include "pm3dict.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -741,6 +742,11 @@ static void openFiles(void)
 	appScreen(&filesScreen);
 }
 
+static void startDownload(void)
+{
+	pm3DictDownload("Downloading pm3's Ultralight C keys", "mfulc_default_keys.dic", MFU_PM3_KEYS, 1ull << 32, NULL);
+}
+
 static const MenuEntry mfuEntries[] = {
 	{ "Scan card", "Type (GET_VERSION), originality signature, counters and tearing flags, lock bits, OTP / "
 	               "capability container and the password config.", startScan },
@@ -750,6 +756,8 @@ static const MenuEntry mfuEntries[] = {
 	                        "protected pages read too. Offers the one that worked before, " MFU_KEYS ", passwords "
 	                        "derived from the UID (pm3 pwdgen) and the defaults, and shows the AUTHLIM.", startPwdRead },
 	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card, or clone them onto a Gen4 GTU.", openFiles },
+	{ "Download keys", "Fetch pm3's mfulc_default_keys.dic (Ultralight C 3DES keys, over Wi-Fi) to " MFU_PM3_KEYS
+	                   ": Read with password offers its keys after the built-in ones.", startDownload },
 };
 
 static void mfuExtra(float x, float y, float w)

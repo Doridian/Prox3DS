@@ -1,6 +1,8 @@
 #pragma once
 #include <3ds.h>
 
+#include "pm3dict.h"
+
 // HID iClass / PicoPass: the card side's math (iclass.c, no hardware) and the reader (iclassrw.c) over
 // the chip monitor. The BCM sends ISO15693 1-of-4 frames from a stalled V poll (I93_DATARATE 2, framer
 // 0x5C558 = 5) and receives the card's answers with the V analog setup; see NOTES.md "NFC-V / iClass".
@@ -13,7 +15,7 @@
 #define ICLASS_TRANSPORT ICLASS_DIR "/iclass_decryptionkey.bin" // pm3's 16-byte credential (block 7-9) key
 #define ICLASS_DICT_DEFAULT ICLASS_DIR "/iclass_default_keys.dic" // pm3's dictionaries, downloaded (iclassdict.c)
 #define ICLASS_DICT_ELITE   ICLASS_DIR "/iclass_elite_keys.dic"
-#define ICLASS_DICT_URL     "https://cdn.jsdelivr.net/gh/RfidResearchGroup/proxmark3@master/client/" // + dictionaries/, resources/
+#define ICLASS_DICT_URL     PM3_CLIENT_URL
 
 #define ICLASS_BLOCKS 256 // 2k cards use 32, 16k / 32k up to 256 per book / page
 

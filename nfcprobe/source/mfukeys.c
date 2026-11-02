@@ -335,6 +335,20 @@ int mfuKeyList(const u8 *uid, u32 uidLen, const MfuDump *d, u8 len, MfuKey *out,
 			parseHex(ulc[i][0], key, 16, NULL);
 			n = add(out, n, max, 16, key, ulc[i][1]);
 		}
+		// pm3's current list, downloaded: what it has added since. Labels after "(<key as text>)".
+		if ((f = fopen(MFU_PM3_KEYS, "r"))) {
+			while (fgets(line, sizeof(line), f)) {
+				if (parseHex(line, key, 16, &end) != 16 || (*end && !strchr(" \t#\r\n", *end))) continue;
+				end += strspn(end, " \t#");
+				const char *t = *end == '(' ? strchr(end, ')') : NULL;
+				if (t) end = t + 1 + strspn(t + 1, " \t");
+				end = *end && *end != '\r' && *end != '\n' ? end : "pm3";
+				char label[40];
+				snprintf(label, sizeof(label), "%.*s", (int)strcspn(end, "\r\n"), end);
+				n = add(out, n, max, 16, key, label);
+			}
+			fclose(f);
+		}
 	}
 	return n;
 }

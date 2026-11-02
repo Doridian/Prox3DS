@@ -168,6 +168,11 @@ extern const int mfNumDefaultKeys;
 int mfSectorsFromSak(u8 sak);
 // extra keys, then MF_KEYS, then the defaults, without duplicates
 int mfKeyList(u8 (*out)[6], int max, const u8 (*extra)[6], int nextra);
+// pm3's mfc_default_keys.dic, downloaded (pm3dict.h): too big to try on every cell up front (~17 s
+// each), so the dump uses it offline on static nonces, for a first key when the dictionary and
+// darkside found none, and on the cells the attacks leave open.
+#define MF_PM3_KEYS MF_DIR "/mfc_default_keys.dic"
+#define MF_PM3_MAX  4096
 #define MF_DUMPS    MF_DIR "/dumps"
 // Dump files: <name>.bin (raw blocks, unread = zeros) and <name>.keys.txt (per sector "NN A <key> B <key>",
 // "--" = not found, then "# unread: <block>..."). mfSaveDump picks MF_DUMPS/<UID>.bin, or <UID>-2.bin and

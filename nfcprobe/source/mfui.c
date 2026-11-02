@@ -11,6 +11,7 @@
 
 #include "app.h"
 #include "mfcinfo.h"
+#include "pm3dict.h"
 #include "entry.h"
 #include "probe.h"
 #include "ui.h"
@@ -510,7 +511,7 @@ static const Screen filesScreen = { filesScan, filesInput, filesDraw }; // resca
 
 // --- menu and family ---
 
-static int dictKeys;
+static int dictKeys, pm3Keys;
 
 static void openFiles(void)
 {
@@ -568,6 +569,14 @@ static void gtuPwd(void)
 		"default 00000000). Until the app restarts.", 4, mfGen4Pwd, gtuPwdSet);
 }
 
+static void mfcMenuShow(void);
+
+static void startDownload(void)
+{
+	pm3DictDownload("Downloading pm3's MIFARE Classic keys", "mfc_default_keys.dic", MF_PM3_KEYS, 1ull << 12,
+		mfcMenuShow);
+}
+
 static const MenuEntry mfcEntries[] = {
 	{ "Scan card", "Read the card's UID, ATQA/SAK and magic generation (Gen1a, Gen2 / CUID, Gen4 GTU, USCUID) and the GTU / "
 	               "USCUID config.", startScan },
@@ -576,11 +585,15 @@ static const MenuEntry mfcEntries[] = {
 	{ "Saved dumps", "View and edit dumps, write them onto magic cards.", openFiles },
 	{ "Enter a key", "Type a sector key into the dictionary (" MF_KEYS "), then read the card with it.", enterKey },
 	{ "GTU password", "Set the Gen4 GTU password the magic card operations use (default 00000000).", gtuPwd },
+	{ "Download keys", "Fetch pm3's mfc_default_keys.dic (~2500 keys, over Wi-Fi). Read card checks them "
+	                   "against static nonces, and tries them (~17 s a key slot) only where the attacks fail.",
+	                   startDownload },
 };
 
 static void mfcExtra(float x, float y, float w)
 {
 	uiText(x, y, S_SMALL, uiCol[COL_DIM], "Dictionary: %d keys (defaults + " MF_KEYS ")", dictKeys);
+	if (pm3Keys > 0) uiText(x, y += SMALL_H, S_SMALL, uiCol[COL_DIM], "pm3's dictionary: %d keys", pm3Keys);
 	if (sc.uidLen) menuLastCard(x, y += SMALL_H, w, &sc, cardTypeName(&sc));
 	if (memcmp(mfGen4Pwd, mfGen4DefaultPwd, 4)) uiText(x, y + SMALL_H, S_SMALL, uiCol[COL_WARN], "GTU password %02X%02X%02X%02X",
 		mfGen4Pwd[0], mfGen4Pwd[1], mfGen4Pwd[2], mfGen4Pwd[3]);
@@ -592,6 +605,7 @@ static void mfcMenuShow(void)
 {
 	static u8 keys[MF_MAX_KEYS][6];
 	dictKeys = mfKeyList(keys, MF_MAX_KEYS, NULL, 0);
+	pm3Keys = pm3DictCount(MF_PM3_KEYS, 1ull << 12);
 }
 
 static void mfcMenuInput(u32 kDown, u32 kRepeat)

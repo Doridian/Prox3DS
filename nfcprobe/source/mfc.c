@@ -1578,6 +1578,9 @@ static int cellCands(u32 uid, const MfStatic *s, int sec, int kb, const u64 **ou
 	return candN[sec][kb];
 }
 
+static u8 pm3Keys[MF_PM3_MAX][6]; // MF_PM3_KEYS without the running dictionary's keys (mfDumpCard)
+static int npm3;
+
 // FM11RF08S family (NOTES.md): with a backdoor key, collect every sector's static nonce and solve
 // keys offline -- dictionary keys and reuse are checked against the nonces with no RF traffic, and
 // only matches cost an auth. A candidate of one cell that fits another cell is a reused key. Keys used
@@ -1597,7 +1600,7 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	static u64 cand[1 << 18];
 	const u64 *cl;
 	candFree();
-	bool done[40][2] = { 0 }, expanded[40][2] = { 0 };
+	bool done[40][2] = { 0 }, expanded[40][2] = { 0 }, pm3Seen[40][2] = { 0 };
 	u32 uid = cardUid();
 	progOp("Static nonces (backdoor)");
 	for (int sec = 0; sec < sectors && !mfCancel; sec++)
@@ -1614,10 +1617,18 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 		progress = false;
 		progOp("Static nonce: reading with the keys that fit");
 		for (int sec = 0; sec < sectors && !mfCancel; sec++, progStep(sec, sectors))
-			for (int kb = 0; kb < 2; kb++)
+			for (int kb = 0; kb < 2; kb++) {
 				for (int k = 0; k < *ndict && OPEN(sec, kb); k++)
 					if (mfStaticMatch(&st[sec][kb], dict[k]) && readSectorRetry(d, sec, dict[k], kb) < 0)
 						return -1;
+				// pm3's big dictionary costs nothing here: offline, once per cell
+				for (int k = 0; k < npm3 && OPEN(sec, kb) && !pm3Seen[sec][kb]; k++)
+					if (mfStaticMatch(&st[sec][kb], pm3Keys[k])) {
+						*ndict = addKey(dict, *ndict, MF_MAX_KEYS, pm3Keys[k]);
+						if (readSectorRetry(d, sec, pm3Keys[k], kb) < 0) return -1;
+					}
+				pm3Seen[sec][kb] = true;
+			}
 		for (int sec = 0; sec < sectors && !progress && !mfCancel; sec++)
 			for (int kb = 0; kb < 2 && !progress; kb++) {
 				if (!OPEN(sec, kb) || expanded[sec][kb]) continue;
@@ -1881,6 +1892,49 @@ static int dictPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict, DictState
 	return 0;
 }
 
+// pm3's big dictionary on the open cells: all of them, or until the first hit (first). Each key found
+// joins the running dictionary. -> keys found, -1 = monitor error.
+static int pm3Pass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict, DictState *ds, bool first)
+{
+	int found = 0;
+	for (int sec = 0; sec < sectors && !mfCancel && !(first && found); sec++)
+		for (int kb = 0; kb < 2 && !(first && found); kb++) {
+			if (d->keyFound[sec][kb]) continue;
+			if (dictCell(d, sectors, sec, kb, (const u8 (*)[6])pm3Keys, npm3, ds) < 0) return -1;
+			if (!d->keyFound[sec][kb]) {
+				mfProg.key[sec][kb] = MF_KEY_OPEN;
+				continue;
+			}
+			*ndict = addKey(dict, *ndict, MF_MAX_KEYS, d->keys[sec][kb]);
+			found++;
+		}
+	return found;
+}
+
+static int hexNibble(char c);
+
+// MF_PM3_KEYS into pm3Keys, minus the n keys of dict.
+static int loadPm3(const u8 (*dict)[6], int n)
+{
+	npm3 = 0;
+	FILE *f = fopen(MF_PM3_KEYS, "r");
+	if (!f) return 0;
+	char line[160];
+	while (npm3 < MF_PM3_MAX && fgets(line, sizeof(line), f)) {
+		u8 *key = pm3Keys[npm3];
+		int d = 0;
+		for (; d < 12 && hexNibble(line[d]) >= 0; d++)
+			key[d / 2] = (d & 1) ? (key[d / 2] | hexNibble(line[d])) : hexNibble(line[d]) << 4;
+		if (d < 12 || hexNibble(line[12]) >= 0) continue;
+		bool dup = false;
+		for (int i = 0; i < n && !dup; i++) dup = !memcmp(dict[i], key, 6);
+		if (!dup) npm3++;
+	}
+	fclose(f);
+	logp("%s: %d more keys\n", MF_PM3_KEYS, npm3);
+	return npm3;
+}
+
 int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 {
 	memset(d, 0, sizeof(*d));
@@ -1896,6 +1950,9 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 	if (magicPass(d, sectors, dict, &ndict) < 0) return -1;
 	if (kdfPass(d, sectors, dict, &ndict) < 0) return -1;
 	for (int k = 0; k < nkeys; k++) ndict = addKey(dict, ndict, MF_MAX_KEYS, keys[k]);
+	loadPm3((const u8 (*)[6])dict, ndict);
+	static DictState pds; // pm3's dictionary
+	memset(&pds, 0, sizeof(pds));
 	bool nestedTried[40][2] = { 0 };
 
 	// The dictionary first, whatever the card; then the FM11RF08S family's backdoor solves what it can.
@@ -1926,10 +1983,17 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 		}
 	}
 
+	// Still none: pm3's big dictionary until a cell opens, as the pivot.
+	if (pivotSec < 0 && npm3 && !mfCancel) {
+		if (pm3Pass(d, sectors, dict, &ndict, &pds, true) < 0) return -1;
+		for (int c = 0; c < 2 * sectors && pivotSec < 0; c++)
+			if (d->keyFound[c / 2][c % 2]) pivotSec = c / 2, pivotB = c % 2, mfProg.pivot = true;
+	}
+
 	// Sweep until a full pass turns up nothing new: recover EVERY missing A/B key, folding each
 	// one back into the dictionary so later sectors can reuse it before falling back to nested.
-	bool progress = true;
-	while (progress && !mfCancel) {
+	// Then pm3's big dictionary on what the attacks left open, and if it found any, sweep again.
+	for (bool progress = true; progress && !mfCancel;) {
 		progress = false;
 		for (int sec = 0; sec < sectors && !mfCancel; sec++)
 			for (int kb = 0; kb < 2; kb++) {
@@ -1966,6 +2030,11 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 					progress = true;
 				}
 			}
+		if (!progress && npm3 && !mfCancel) {
+			int r = pm3Pass(d, sectors, dict, &ndict, &pds, false);
+			if (r < 0) return -1;
+			progress = r > 0;
+		}
 	}
 	if (mfCancel) logp("cancelled\n");
 	if (sectors == 16 && !mfCancel) { // MFC EV1's signature sector 17 (a 4K's block 69 is user memory)

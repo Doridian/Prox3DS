@@ -10,6 +10,7 @@
 
 #define MFU_KEYS  MF_DIR "/mfu_keys.txt"
 #define MFU_KNOWN MFU_DIR "/known.txt" // "<UID hex> <key hex>" per line, written by mfuRememberKey
+#define MFU_PM3_KEYS MFU_DIR "/mfulc_default_keys.dic" // pm3's UL-C keys, downloaded (pm3dict.h)
 
 typedef struct {
 	char label[40];

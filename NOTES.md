@@ -1417,3 +1417,22 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   register sampling). AON RAM above 0x68410 is not free (lmon's ring there hung the chip): its buffers live in
   the SRAM image. chipmon.Mon.load(image) loads another chip image. While RF_DISCOVER polls with no card, the
   chip stops answering monitor requests (memrw too).
+
+## pm3 dictionaries for MFC / DESFire / UL-C (nfcprobe pm3dict.c) -- 2026-11-02
+
+- Besides iClass, pm3's client/dictionaries has lists for families the app reads: mfc_default_keys.dic
+  (2511 keys), mfdes_default_keys.dic (58), mfulc_default_keys.dic (7, same as the built-in UL-C list).
+  Not taken: mfp_* (no MIFARE Plus support), t55xx / ht2 (LF), mfulc_hw* / mfulaes_* / *_segment_* (key
+  recovery tables, not dictionaries), extras/ (word and password lists, iclass_other = 0..N counters).
+- pm3dict.c: one download job (jsDelivr, as iClass; through path.new, kept only if it has keys of the
+  family's lengths) behind a "Download keys" entry in the MIFARE Classic, DESFire and Ultralight menus.
+  Files: nfcprobe/mfc_default_keys.dic, desfire/mfdes_default_keys.dic, mfu/mfulc_default_keys.dic.
+- DESFire: loadDict reads it after the built-ins and keys.txt (dict 128 -> 256 entries).
+- UL-C: mfuKeyList offers its keys after the built-in ones (built-in labels win), label = the text after
+  pm3's "(<key as text>)".
+- MFC: 2511 keys at ~150 keys/s is ~17 s per open cell, so not part of the up-front dictionary pass.
+  mfDumpCard loads it (minus the running dictionary) and uses it (a) offline in staticPass, once per cell
+  with a static nonce (mfStaticMatch), (b) as a pivot search when dictionary, static and darkside found
+  nothing (cells in order until one opens), (c) on the cells left open after the nested sweep, sweeping
+  again if it found any. Built and the parsers checked on the host against pm3's files (key counts,
+  UL-C labels); not run on the 3DS yet (console offline).
