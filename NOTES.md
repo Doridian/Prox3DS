@@ -1306,6 +1306,13 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   32-byte keygen salt random (ps:ps), then amiiboImage(fresh) for the blank's UID with the set that verified
   the last figure read, else set 1. Download + list checked on the 3DS (180938 bytes, 932 figures); writing a
   new figure onto a blank and System Settings accepting it NOT yet tried.
+- GTU as the blank (UL mode, NTAG215 image 04A1B2C3D4E5F6 via mfuclone; Classic 1K backup again in
+  dump/gtu/*_20261102.txt, same as gtu_classic1k_backup): the app's New (normal WRITEs) gave tag HMAC ok,
+  data HMAC bad. A second image over it (normal WRITEs) failed both. Cause: GTU quirk, not the image. After
+  normal WRITEs the backdoor (CF CE) shows every page as written, but normal READ keeps returning the FIRST
+  normal-written value on 13 pages (06 0D 1B 22 29 3E 45 53 61 6F 76 7D 81), across reads and field resets.
+  The same image cloned through the backdoor (mfuclone) reads back identical and verifies (set 1, T+D). So:
+  don't judge GTU Amiibo writes by normal WRITE; the earlier "no reaction" GTU test was a backdoor clone.
 
 ## Smart card family, GlobalPlatform, YubiKey OATH (nfcprobe) -- 2026-11-01
 - Generic scan: DESFire's probe returns FAMILY_PASS when GetVersion fails, the next matching family (scFamily,
