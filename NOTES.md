@@ -1479,3 +1479,44 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   (test applet 255 / 256-byte answers, 200-byte chained echo, 8.8 s WTX command, all x3; UI scan + GP list
   with the default keys, 18 entries); Fudan Classic 4ACF2F0C (scan x3, two dumps identical, 64 blocks, UI
   scan). All its keys are FF now, sector 5 included (the A0B1C2D3E4F5 / B1C2D3E4F5A6 test keys are gone).
+
+## Tear-off (issue #18; nfcprobe mfu.c mfuTorn, mfutear.c; tools/exp/tear/) -- 2026-11-02
+- Reader field switch: 0x5C360 (RF block, 6 while a card is active, 0 = field off). It acts at once, even
+  in the middle of a TX -> RX transaction: 10 us at 0 resets a card. Found by zeroing every nonzero
+  register of 0x5C000-0x5C7FF for 5 ms with a card active (tools/exp/tear/zero.py): only 0x5C054 (4),
+  0x5C360 (6) and 0x5C374 (1F) power-cycle the card (READ silent, WUPA -> 4400). 0x5C55C = 0 wedges the
+  framer.
+  - 0x5C054 (TX driver?) is latched by the framer per transaction: a 0 written during TX / RX (even
+    after TX end, while it waits for the answer) does nothing until the transaction is over, so a cut
+    there lands after the card's ACK, i.e. after the EEPROM write. 0x5C56C = 1 / 3 stop the RX but not
+    that latch. 0x5C374 = 0 mid-transaction did nothing either.
+  - 0x5C55C is a write-only RF command register (reads 22): the ROM writes 41 (2 ms or 100 us), then
+    81 to bring the field up (PRBS test 2F 0C, 0x7254, 0x1E412), 88 before TX. 40 / 80 / 81 / 41 with a
+    card active change nothing visible.
+  - Android's Broadcom stack (nfc_brcm_defs.h) lists RF_TEST 2F 2B and SET/GET_CLF_REGISTERS 2F 03 / 2F 2A:
+    none is implemented in this ROM (vendor table 0x1F3EC / handlers 0x1F3FC: 0x1898D = unknown).
+    PRBS_SET 2F 0C (0x1A2F6) and ANTENNA_SELF_TEST 2F 10 (0x1A374) exist.
+- Timed cut: memrw TXSCHED (no chip change), data-mode TX (HW CRC) with stores (D, 0x5C360, 0),
+  (D + 2000, 0x5C360, 6); D counts from the last FIFO write, the 6-byte command (+ CRC) is on air until
+  697 ticks. Then 5 ms, WUPA + anticollision (the card powered up IDLE).
+- UL EV1 test card 04A0A0A0A0A001, WRITE page 10 AAAAAAAA -> 55555555, us after the frame end:
+  < 413 old; 413-463 erasing (2AAAAAAA, 228AAAAA, 00080000), 00000000 up to ~2743; 2743-2783 partial
+  writes (00010000, 00110000, 00510011, 00554011, 50555015); new from ~2793. Steps of 10 us are clean
+  and repeatable: pm3 otptear's erase / write phases.
+- INCR_CNT(+0) torn on counter 0: tearing flag 00 before ~2745 us, then 01, 05, 25, 2D, BD at 2765
+  (pm3's countertear calibration result, cf. its --DelayBD 2720 example). A good INCR repairs the flag.
+- Write tear scan in the app (mfutear.c, `nfcnet.py HOST tearscan PAGE FROM TO STEP OLD NEW`), on the
+  3DS itself: page 10 erasing 410-450 us, 00000000 from 460, writing 2750-2790, new from 2800 -- the
+  Python measurements within 10 us.
+- Counter reset (pm3 countertear port, Python and in the app): NOT working, and it damaged the card.
+  - Python (over the network, slow): counter 0 set 0 -> 1 for the attack (it refuses 0), PREPARE took
+    it to 00FFFF, RESET / DECREMENT steps then only ever counted up (00FFFF -> 010B00 in 26 steps, BD
+    tuned 2764-2771 us), never down.
+  - App (calibrated BD 2775 us): after 54 steps (25 s) counter 0 answers every READ_CNT,
+    CHECK_TEARING_EVENT and INCR_CNT with NAK 6 (not in the datasheet), across power cycles. pm3's repair
+    (INCR 0 x2, torn INCR +1 at 2950 us) doesn't help. Counters 1 and 2 (0, BD), memory and UID are
+    fine. So counter 0 of the test EV1 04A0A0A0A0A001 is dead for good.
+  - The tool stays in the app marked EXPERIMENTAL with that warning. Open: why the steps never lower
+    the counter (timing reference vs pm3's tear hook? the 00 delay?), what NAK 6 means.
+- Not tried yet: tearing the OTP page / lock bytes (pm3 otptear's real target) and UL-C / UL-AES key
+  block tears (BREAKMEIFYOUCAN tables), which need those cards.

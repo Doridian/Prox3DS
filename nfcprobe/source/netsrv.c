@@ -114,6 +114,7 @@ enum {
 	                       // fc u32, cn u32, parityOk u8, encrypted u8, format (len u8 + text). 1 = no card
 	OP_EMV         = 0x2C, // -> EMV payment card read (emv.c, read only; GPO counts the ATC up), saved to SD:
 	                       // the saved file's text (full card number). On failure payload = reason
+	OP_MFU_TEAR    = 0x2D, // sub u8, args (mfuTearNet: 0 write scan, 1 EV1 counter reset) -> text. WRITES THE CARD
 	OP_MF_VALUE    = 0x27, // op u8 (C0 dec, C1 inc, C2 restore), block u8, delta s32 LE, dest u8, keyB u8,
 	                       // key[6] -> dest block read back[16]; on failure payload = reason. WRITES THE CARD
 };
@@ -406,6 +407,14 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		memcpy(p + 1, cr->format, *p);
 		*outLen = p + 1 + *p - out;
 		icStop();
+		return 0;
+	}
+	case OP_MFU_TEAR: {
+		if (!cardReady()) return 1;
+		int r = mfuTearNet(in, inLen, (char *)out, OUT_MAX);
+		iso14aParity(true);
+		if (r < 0) return -1;
+		*outLen = r;
 		return 0;
 	}
 	case OP_EMV: {

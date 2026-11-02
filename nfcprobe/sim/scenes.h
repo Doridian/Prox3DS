@@ -13,6 +13,7 @@ void simReset(void); // root menu, no dialog / toast / job
 void simTag(const Card *c);
 void simBusy(const char *title, bool cancellable, bool stopping);
 void simBusyEnd(void);
+void simBusyView(float (*view)(float x, float y, float w));
 
 void simMfcCard(const Card *c, const MfMagic *m);
 void simMfcGen4(void);
@@ -51,3 +52,6 @@ void simOathAdd(void);
 void simEmv(const EmvCard *e, bool full);
 void simIclass(const IcCard *c);
 void simIclassMenu(void);
+
+void simTearScan(void);    // write scan results, the EV1 test card's measured curve
+void simTearCounter(void); // the counter reset busy box

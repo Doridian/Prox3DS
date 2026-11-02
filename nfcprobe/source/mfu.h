@@ -67,6 +67,27 @@ int mfuUlcSetKey(const u8 cur[16], const u8 key[16]);
 // Writes one user memory page (4 .. userEnd-1; anything else is refused unsent: lock bits and OTP
 // are one-way, config pages can lock the card) and reads it back. 1 = verified. WRITES THE CARD.
 int mfuWritePage(const MfuType *t, u8 page, const u8 data[4]);
+// Tear-off (pm3 hw tearoff): command c in data mode (HW parity + CRC) with the reader field cut `us`
+// microseconds after the frame ends, kept off MFU_TEAR_HOLD us, then the card reselected (it lost
+// power, so any auth is gone). An EEPROM write cut short leaves the old data, the erased cells (00) or
+// part of the new bits, by the time it was cut. 1 = reselected, 0 = no card after (mfuWhy), -1 = monitor
+// error. MAY CORRUPT WHATEVER c WRITES.
+#define MFU_TEAR_MAX  25000
+#define MFU_TEAR_HOLD 2000
+int mfuTorn(const u8 *c, u32 len, u32 us);
+// One step of a write tear scan (pm3 hf mfu otptear, on user memory): writes old (verified), then data
+// torn at us, and reads the page back into got. 1 = done, 0 = refused / lost (mfuWhy), -1 = monitor.
+// WRITES THE CARD.
+int mfuTearWrite(const MfuType *t, u8 page, const u8 old[4], const u8 data[4], u32 us, u8 got[4]);
+// EV1 counters: READ_CNT + CHECK_TEARING_EVENT (BD = intact); INCR_CNT (adds v, ACK), and torn.
+// 1 = ok, 0 = refused / no answer (the card reselected), -1 = monitor error. INCR_CNT can't be undone
+// (short of mfuCounterTear's attack).
+int mfuCounter(u8 i, u32 *val, u8 *tear);
+int mfuIncr(u8 i, u32 v);
+int mfuIncrTorn(u8 i, u32 v, u32 us);
+// The tear-off tools (mfutear.c) for the net op: a = 0 page from16 to16 step16 old[4] new[4] (write scan)
+// or 1 counter bd16 (counter reset, bd 0 = calibrate). In a job, card active. -> text length, -1 monitor.
+int mfuTearNet(const u8 *a, u32 n, char *out, u32 max);
 // Writes Type 2 NDEF bytes (ndefTlv: 03 len message FE) from page 4 on: an empty message into page 4
 // first, then the rest, page 4 last, so a write cut short leaves an empty tag. Refused unsent without
 // an NDEF CC (page 3: E1, write access 0) or when the bytes don't fit the CC's size. 1 = every page

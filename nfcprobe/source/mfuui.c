@@ -756,6 +756,8 @@ static const MenuEntry mfuEntries[] = {
 	                        "protected pages read too. Offers the one that worked before, " MFU_KEYS ", passwords "
 	                        "derived from the UID (pm3 pwdgen) and the defaults, and shows the AUTHLIM.", startPwdRead },
 	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card, or clone them onto a Gen4 GTU.", openFiles },
+	{ "Tear-off", "Cut the field N microseconds into a write (pm3 hw tearoff): scan a user page through the "
+	              "EEPROM's erase and write phases, or try an EV1 counter reset (pm3 hf mfu countertear, experimental).", mfuTearMenu },
 	{ "Download keys", "Fetch pm3's mfulc_default_keys.dic (Ultralight C 3DES keys, over Wi-Fi) to " MFU_PM3_KEYS
 	                   ": Read with password offers its keys after the built-in ones.", startDownload },
 };

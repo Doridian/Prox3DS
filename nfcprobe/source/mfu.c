@@ -268,6 +268,81 @@ int mfuWritePage(const MfuType *t, u8 page, const u8 data[4])
 	return 1;
 }
 
+// --- tear-off ---
+
+// RF block register that switches the reader field: 6 = on (as the ROM leaves it), 0 = off. It acts at
+// once, even in the middle of a TX / RX transaction; 0x5C054 (TX driver) also cuts the field, but the
+// framer latches it per transaction, so a cut there waits for the card's answer (NOTES.md).
+#define FIELD_REG 0x5C360
+#define FIELD_ON  6
+// Data-mode TX: the frame (+ HW CRC) is on air until this many timer ticks (1 us) after the last FIFO
+// write: 84.4 per byte + ~22 (697 for a 6-byte command, measured).
+#define TX_END(len) (22 + ((len) + 2) * 844 / 10)
+
+int mfuTorn(const u8 *c, u32 len, u32 us)
+{
+	u32 d = TX_END(len) + us;
+	if (us > MFU_TEAR_MAX) FAIL(0, "tear delay %lu us: at most %d", us, MFU_TEAR_MAX);
+	if (!iso14aParity(true)) FAIL(-1, "parity on");
+	MonStore st[2] = { { d, FIELD_REG, 0 }, { d + MFU_TEAR_HOLD, FIELD_REG, FIELD_ON } };
+	MonFrame f[2];
+	if (monFrames(f, 2) < 0 || !monTxschedRegs(c, len, 0, 0, 0, 0x88, st, 2)) FAIL(-1, "torn command: monitor");
+	svcSleepThread(5000000); // 5 ms: the card powers up again
+	if (monFrames(f, 2) < 0) FAIL(-1, "torn command: frames");
+	for (int t = 0; t < 3; t++) {
+		int r = reselect();
+		if (r) return r;
+	}
+	FAIL(0, "no card after the tear");
+}
+
+int mfuTearWrite(const MfuType *t, u8 page, const u8 old[4], const u8 data[4], u32 us, u8 got[4])
+{
+	if (page < 4 || page >= t->userEnd) FAIL(0, "page %d is not user memory", page);
+	int r = mfuWritePage(t, page, old);
+	if (r <= 0) return r;
+	u8 c[6] = { 0xA2, page }, back[16];
+	memcpy(c + 2, data, 4);
+	if ((r = mfuTorn(c, 6, us)) <= 0) return r;
+	if ((r = mfuRead(page, back)) <= 0) return r;
+	memcpy(got, back, 4);
+	return 1;
+}
+
+int mfuCounter(u8 i, u32 *val, u8 *tear)
+{
+	u8 c[2] = { 0x39, i }, b[3];
+	int r = expect(c, 2, b, 3, "counter");
+	if (r <= 0) return r;
+	*val = b[0] | b[1] << 8 | b[2] << 16;
+	c[0] = 0x3E;
+	return expect(c, 2, tear, 1, "tearing");
+}
+
+// INCR_CNT counter, value (3 bytes LSB first) + a pad byte.
+static void incrCmd(u8 c[6], u8 i, u32 v)
+{
+	c[0] = 0xA5, c[1] = i, c[2] = v, c[3] = v >> 8, c[4] = v >> 16, c[5] = 0;
+}
+
+int mfuIncr(u8 i, u32 v)
+{
+	u8 c[6], b[4];
+	incrCmd(c, i, v);
+	int r = cmd(c, 6, b, sizeof(b), 10);
+	if (r < 0) FAIL(-1, "incr: monitor");
+	if (r == ACK4(0xA)) return 1;
+	snprintf(why, sizeof(why), "incr counter %d: %s", i, r >= ACK4(0) ? "NAK" : "no ACK");
+	return reselect() < 0 ? -1 : 0;
+}
+
+int mfuIncrTorn(u8 i, u32 v, u32 us)
+{
+	u8 c[6];
+	incrCmd(c, i, v);
+	return mfuTorn(c, 6, us);
+}
+
 static int writeRaw1(u8 page, const u8 data[4], bool noVerify);
 
 // A raw page write (no range check) + read-back unless noVerify, three tries (an ACK gets lost now and

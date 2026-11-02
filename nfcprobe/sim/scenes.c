@@ -632,6 +632,9 @@ static void emvFill(void)
 static void scnEmv(void) { emvFill(); simEmv(&emvCard, false); }
 static void scnEmvFull(void) { simEmv(&emvCard, true); }
 
+static void scnTear(void) { simTearScan(); }
+static void scnTearCnt(void) { simTearCounter(); }
+
 static IcCard icc;
 static void icFill(bool found, bool decrypted)
 {
@@ -846,6 +849,10 @@ static const SimStep script[] = {
 	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
 	CALL(reset), CALL(scnEmv), SHOT("emv_card"), D, D, D, SHOT("emv_card_log_end"), CALL(scnEmvFull), SHOT("emv_card_full"),
 	KEYS(KEY_R), SHOT("emv_app2"),
+
+	// tear-off
+	CALL(reset), CALL(scnTear), SHOT("tear_scan"), D, D, D, D, D, D, D, D, D, D, SHOT("tear_scan_end"),
+	CALL(reset), CALL(scnTearCnt), SHOT("tear_counter"), CALL(simBusyEnd),
 
 	// iClass
 	CALL(reset), CALL(scnIclassMenu), SHOT("iclass_menu"), CALL(scnIclass), SHOT("iclass_card"), D, D, D, D, D, D, D, D,

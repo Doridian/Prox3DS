@@ -27,8 +27,14 @@ void simBusy(const char *title, bool cancellable, bool stopping)
 	jobFinished = false;
 }
 
+void simBusyView(float (*view)(float x, float y, float w))
+{
+	jobView = view;
+}
+
 void simBusyEnd(void)
 {
 	jobBusy = false;
+	jobView = NULL;
 	mfCancel = false;
 }
