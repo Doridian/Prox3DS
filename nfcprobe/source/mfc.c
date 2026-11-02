@@ -874,26 +874,64 @@ static bool dsDist(u32 a, u32 b, int *d)
 static u32 dsUid, dsSync;
 static double dsTps;
 
+// Lists set aside: the common-prefix recovery misses the key now and then (~1 run in 10, pm3's too),
+// so when a run has nothing in common with the list so far, either may be the miss. The list so far
+// is kept (up to DS_OLD of them, DS_OLD_MAX keys in all) and later runs are matched against those too.
+#define DS_OLD     2
+#define DS_OLD_MAX (1 << 20)
+
+typedef struct {
+	u64 *k;
+	int n;
+} DsList;
+
 // One run's candidates, in a thread of its own while the chip collects the next run: only the keys
-// also in the earlier runs' list. The common-prefix recovery misses the key now and then (~1 run in
-// 10, pm3's too): with nothing in common, this run's whole list, as pm3 does. out NULL: out of memory
-// (~1 run in 20 has over a million candidates) or stopped.
+// also in the list so far (in). With nothing in common, this run's whole list (full), as pm3 does,
+// unless it meets a list set aside (met = its index; out = what the two share). out NULL: out of
+// memory (~1 run in 20 has over a million candidates) or stopped.
 typedef struct {
 	u32 uid;
 	DsRun r;
-	const u64 *in;
-	int nin, n;
+	DsList in, old[DS_OLD];
+	int nold, n, met;
+	bool full;
 	u64 *out;
 	u32 collectMs, ms;
 } DsSolve;
+
+// The keys in both ascending lists.
+static int dsMeet(const DsList *a, const u64 *b, int nb, u64 *out)
+{
+	int i = 0, j = 0, n = 0;
+	while (i < a->n && j < nb)
+		if (a->k[i] < b[j]) i++;
+		else if (a->k[i] > b[j]) j++;
+		else out[n++] = b[j++], i++;
+	return n;
+}
 
 static void dsSolve(void *arg)
 {
 	DsSolve *s = arg;
 	u64 t = osGetTime();
-	s->n = 0;
-	s->out = s->in ? crapto1_darkside(s->uid, s->r.nt, DS_NR, s->r.ks, s->in, s->nin, &s->n) : NULL;
-	if (!s->n && !mfCancel) free(s->out), s->out = crapto1_darkside(s->uid, s->r.nt, DS_NR, s->r.ks, NULL, 0, &s->n);
+	s->n = 0, s->met = -1, s->full = false;
+	s->out = s->in.k ? crapto1_darkside(s->uid, s->r.nt, DS_NR, s->r.ks, s->in.k, s->in.n, &s->n) : NULL;
+	if (!s->n && !mfCancel) {
+		free(s->out);
+		s->out = crapto1_darkside(s->uid, s->r.nt, DS_NR, s->r.ks, NULL, 0, &s->n);
+		s->full = s->in.k != NULL;
+		for (int j = 0; j < s->nold && s->out && s->n; j++) {
+			u64 *m = malloc((s->old[j].n < s->n ? s->old[j].n : s->n) * sizeof(u64) + 1);
+			int n = m ? dsMeet(&s->old[j], s->out, s->n, m) : 0;
+			if (!n) {
+				free(m);
+				continue;
+			}
+			free(s->out);
+			s->out = m, s->n = n, s->met = j;
+			break;
+		}
+	}
 	s->ms = osGetTime() - t;
 }
 
@@ -902,30 +940,52 @@ static int dsStopTick(int permille)
 	return mfCancel;
 }
 
-// A solved run: its list replaces the earlier one (common); few enough are tried on the card. 1 = key
-// found, -1 = monitor error, 0 = go on.
-static int dsUse(DsSolve *s, u64 **common, int *nc, int *runs, u8 block, bool keyB, u8 keyOut[6], u64 t0)
+// A solved run: its list replaces the list so far (s->in, freed), which is set aside when the two
+// had nothing in common; few enough are tried on the card. 1 = key found, -1 = monitor error, 0 = go
+// on. The next solve gets common and the lists set aside.
+static int dsUse(DsSolve *s, DsList *common, DsList *old, int *nold, int *runs, u8 block, bool keyB, u8 keyOut[6],
+	u64 t0)
 {
-	free(*common);
-	*common = s->out, *nc = s->n;
 	if (!s->out) {
 		if (!mfCancel) logp("  darkside: out of memory, another run\n");
-		return 0;
+		return 0; // the list so far stays
 	}
-	logp("  darkside: run %d nt %08lX ks %02X%02X%02X%02X%02X%02X%02X%02X (%lu ms), %d candidates (%lu ms) at %llu ms\n",
+	const char *how = "";
+	if (s->met >= 0) { // this run and an older list meet: the list so far was the miss
+		free(common->k);
+		free(old[s->met].k);
+		old[s->met] = old[--*nold];
+		how = ", met an earlier list";
+	} else if (s->full) { // nothing in common: one of them is the miss, keep both
+		int total = common->n;
+		for (int j = 0; j < *nold; j++) total += old[j].n;
+		while (*nold && (*nold == DS_OLD || total > DS_OLD_MAX)) { // drop the oldest
+			total -= old[0].n;
+			free(old[0].k);
+			memmove(old, old + 1, --*nold * sizeof(DsList));
+		}
+		if (total <= DS_OLD_MAX) old[(*nold)++] = *common;
+		else free(common->k);
+		how = ", nothing in common";
+	} else {
+		free(common->k);
+	}
+	common->k = s->out, common->n = s->n;
+	logp("  darkside: run %d nt %08lX ks %02X%02X%02X%02X%02X%02X%02X%02X (%lu ms), %d candidates%s (%lu ms) at %llu ms\n",
 		++*runs, s->r.nt, s->r.ks[0], s->r.ks[1], s->r.ks[2], s->r.ks[3], s->r.ks[4], s->r.ks[5], s->r.ks[6],
-		s->r.ks[7], s->collectMs, s->n, s->ms, osGetTime() - t0);
-	if (*nc > DS_CHECK) return 0;
+		s->r.ks[7], s->collectMs, s->n, how, s->ms, osGetTime() - t0);
+	if (common->n > DS_CHECK) return 0;
 	u8 keys[DS_CHECK][6];
-	for (int i = 0; i < *nc; i++) keyBytes((*common)[i], keys[i]);
-	int h = mfChkKeys(block, keyB, (const u8 (*)[6])keys, *nc);
+	for (int i = 0; i < common->n; i++) keyBytes(common->k[i], keys[i]);
+	int h = mfChkKeys(block, keyB, (const u8 (*)[6])keys, common->n);
 	if (h == -3) return -1;
 	if (h >= 0) {
 		memcpy(keyOut, keys[h], 6);
 		logp("  darkside: key in %llu ms\n", osGetTime() - t0);
 		return 1;
 	}
-	free(*common), *common = NULL, *nc = 0; // none auths (a miss on both sides of a match?): start over
+	free(common->k); // none auths (a miss on both sides of a match?): start over
+	common->k = NULL, common->n = 0;
 	return 0;
 }
 
@@ -985,8 +1045,8 @@ int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 	// Run t's candidates are worked out while the chip collects run t + 1, a step below this thread
 	// (which waits on the chip most of the time) and the UI; the solve spreads over the other cores.
 	crapto1_tick = dsStopTick;
-	u64 *common = NULL;
-	int nc = 0, runs = 0, res = 0;
+	DsList common = {0}, old[DS_OLD];
+	int nold = 0, runs = 0, res = 0;
 	DsSolve s;
 	Thread th = NULL;
 	bool pending = false;
@@ -1006,18 +1066,20 @@ int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 		if (pending) {
 			dsJoin(&th);
 			pending = false;
-			if ((res = dsUse(&s, &common, &nc, &runs, block, keyB, keyOut, t0))) break;
+			if ((res = dsUse(&s, &common, old, &nold, &runs, block, keyB, keyOut, t0))) break;
 		}
-		s = (DsSolve){ uid, r, common, nc, 0, NULL, tc };
+		s = (DsSolve){ .uid = uid, .r = r, .in = common, .nold = nold, .collectMs = tc };
+		memcpy(s.old, old, nold * sizeof(DsList));
 		pending = true;
 		if (!(th = threadCreate(dsSolve, &s, 0x8000, 0x31, -2, false))) dsSolve(&s);
 	}
 	if (pending) {
 		dsJoin(&th);
-		if (!res && !mfCancel) res = dsUse(&s, &common, &nc, &runs, block, keyB, keyOut, t0);
-		else if (s.out != common) free(s.out);
+		if (!res && !mfCancel) res = dsUse(&s, &common, old, &nold, &runs, block, keyB, keyOut, t0);
+		else free(s.out);
 	}
-	free(common);
+	free(common.k);
+	while (nold) free(old[--nold].k);
 	if (res) return res;
 	if (mfCancel) FAIL(0, "stopped");
 	FAIL(0, runs ? "darkside: no key from %d runs" : "darkside: no complete run (no NACK bug?)", runs);

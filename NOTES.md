@@ -1157,6 +1157,11 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Darkside now: collection is the bottleneck, ~1.4-2.7 s per run (8 on-target fires out of ~25, one
   PRNG period = 79 ms apart). All 15 logged runs' keystreams matched the known key; 2/15 lists missed
   the key (the algorithm's ~10%), each costing an extra run. 6-12 s with the calibration kept.
+- Lists set aside: when a run has nothing in common with the list so far, either may be the miss, so
+  the list so far is kept (up to 2 lists, 1M keys in all) and a later run's full list is matched
+  against those too (in the solve thread). pm3 only keeps the newest. 10/10 on 7991086F; one attempt
+  went run 2 / run 3 "nothing in common", run 4 "met an earlier list" -> 1 candidate (the newest-only
+  rule would have needed another run).
 - Keyless dump of 7991086F (darkside -> nested -> dictionary): 63 s -> 40 s, 40/40 sectors.
 
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
