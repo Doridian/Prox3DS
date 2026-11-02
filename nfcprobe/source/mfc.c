@@ -1222,7 +1222,8 @@ static int staticPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	for (int sec = 0; sec < sectors && !mfCancel; sec++)
 		for (int kb = 0; kb < 2; kb++) {
 			progStep(2 * sec + kb, 2 * sectors);
-			if (d->keyFound[sec][kb]) continue;
+			// a found key's nonce still seeds the other key of its sector (the seed filter below)
+			if (d->keyFound[sec][kb] && d->keyFound[sec][!kb]) continue;
 			if ((r = mfStaticNonce(mfFirstBlock(sec), kb, bd, &st[sec][kb])) < 0) return -1;
 			done[sec][kb] = r == 1;
 		}

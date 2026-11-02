@@ -1059,7 +1059,14 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   nested pivot is now seeded from any key already found (before, only from keys the sweep itself found,
   so keys from magic / KDF / static passes never enabled nested). RF32N: 27 s -> 14 s, same dump.
   Worst case on an RF08S with no dictionary hits: 256 keys x cells / ~150 keys/s extra (~55 s 1K)
-  before the static attack. RF08S and the nested pivot change not yet re-run on hardware.
+  before the static attack.
+- Regression found on 5A5A0002: with the dictionary first, key B of a sector is already known, so
+  staticPass skipped its nonce and the "key from the other key" seed filter had nothing to seed from.
+  Now a found key's nonce is still captured when the other key of its sector is open. Test: sector 2
+  key A set to 5A1B2C3D4E5F (not in the dictionary), dump -> "81056 candidates, 1 fit key B's seed:
+  found", 37 s total; key put back to FFFFFFFFFFFF after. Untouched 5A5A0002: 6 s (was 7.5 s).
+- The pivot change ran there too: before the fix, sector 2 A fell through to nested from a known key
+  (as expected it fails on a static card: "no key at distance 160").
 
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
