@@ -187,7 +187,8 @@ static int selectAnticoll(void)
 		n = iso14aTx(ac, 2, 0, f, 4);
 		if (n < 0) return -2;
 		if (!(a = answer(f, n, 5))) return -1;
-		const u8 *d = a->data;
+		u8 d[5]; // a copy: the SELECT below reuses f
+		memcpy(d, a->data, 5);
 		if ((d[0] ^ d[1] ^ d[2] ^ d[3]) != d[4]) return -1;
 		memcpy(sel + 2, d, 5);
 		n = l ? dataTx(sel, 7, f, 4) : iso14aTx(sel, 7, 0, f, 4);

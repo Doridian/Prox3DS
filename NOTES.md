@@ -1520,3 +1520,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
     the counter (timing reference vs pm3's tear hook? the 00 delay?), what NAK 6 means.
 - Not tried yet: tearing the OTP page / lock bytes (pm3 otptear's real target) and UL-C / UL-AES key
   block tears (BREAKMEIFYOUCAN tables), which need those cards.
+- Fix (UL-C 04A0A0A0A0A002 scanned as UID 04A0A0A0A0A00280 + "lost the card"): selectAnticoll kept a
+  pointer into the frame buffer for the anticollision answer; the SELECT reused the buffer, so the
+  cascade tag 88 was replaced by the SAK frame (04 DA17) and every level copied 4 junk bytes. Since
+  51b0e1c (Mastercard select changes). Only reached when selectKnown fails: on this UL-C the first WUPA
+  after the ROM's activation gets no answer (the anticollision WUPA right after does).
