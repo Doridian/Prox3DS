@@ -11,6 +11,9 @@
 #define ICLASS_KEYS      ICLASS_DIR "/keys.txt"   // "<16 hex> [s|e|d] [label]": standard / elite master key, diversified
 #define ICLASS_KNOWN     ICLASS_DIR "/known.txt"  // "<CSN> <Kd div> <Kc div>" (0 = unknown), written after a dump
 #define ICLASS_TRANSPORT ICLASS_DIR "/iclass_decryptionkey.bin" // pm3's 16-byte credential (block 7-9) key
+#define ICLASS_DICT_DEFAULT ICLASS_DIR "/iclass_default_keys.dic" // pm3's dictionaries, downloaded (iclassdict.c)
+#define ICLASS_DICT_ELITE   ICLASS_DIR "/iclass_elite_keys.dic"
+#define ICLASS_DICT_URL     "https://cdn.jsdelivr.net/gh/RfidResearchGroup/proxmark3@master/client/dictionaries/"
 
 #define ICLASS_BLOCKS 256 // 2k cards use 32, 16k / 32k up to 256 per book / page
 
@@ -67,6 +70,22 @@ extern const IcDictKey icDefaultKeys[];
 extern const int icNumDefaultKeys;
 extern const u8 icEliteKeys[][8];
 extern const int icNumEliteKeys;
+
+// The dictionaries the key search walks (iclassdict.c): each downloaded one that has keys, else the
+// built-in copy.
+typedef struct {
+	const IcDictKey *def;
+	int ndef;
+	const u8 (*elite)[8];
+	int nelite;
+	bool dlDef, dlElite; // downloaded
+} IcDicts;
+const IcDicts *icDicts(void); // loaded on first use
+void icDictReload(void);      // after a download
+// Fetches both of pm3's dictionaries from ICLASS_DICT_URL; a file is replaced only if the new one has
+// keys. Over Wi-Fi, not in a card job. 1 = done, 0 = failed (icDictWhy).
+int icDictDownload(void);
+const char *icDictWhy(void);
 
 // --- reader (iclassrw.c), in a card job (hwLock held) ---
 

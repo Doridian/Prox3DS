@@ -8,6 +8,7 @@
 #include "amiibo.h"
 #include "amiibodb.h"
 #include "dfcrypto.h"
+#include "http.h"
 #include "mfckeys.h"
 #include "probe.h"
 
@@ -282,63 +283,12 @@ int amiiboNew(const u8 id[8], Amiibo *a)
 
 int amiiboDbDownload(const char *path)
 {
-	Result r = httpcInit(0);
-	if (R_FAILED(r)) FAIL("httpc: %08lX", r);
-	httpcContext c;
-	u32 status = 0, len = 0, cap = 256 << 10, got;
-	u8 *buf = NULL;
-	if (R_FAILED(r = httpcOpenContext(&c, HTTPC_METHOD_GET, AMIIBO_DB_URL, 1))) {
-		httpcExit();
-		FAIL("httpc open: %08lX", r);
-	}
-	// The SSL module's root CAs may be too old (and the clock may be off): no verification.
-	// The worst a forged list does is name figures wrong.
-	httpcSetSSLOpt(&c, SSLCOPT_DisableVerify);
-	httpcAddRequestHeaderField(&c, "User-Agent", "nfcprobe");
-	if (R_FAILED(r = httpcBeginRequest(&c)) || R_FAILED(r = httpcGetResponseStatusCode(&c, &status))) {
-		snprintf(why, sizeof(why), "request: %08lX", r);
-		goto out;
-	}
-	if (status != 200) {
-		snprintf(why, sizeof(why), "HTTP %lu", (unsigned long)status);
-		goto out;
-	}
-	buf = malloc(cap);
-	do {
-		if (len == cap) {
-			u8 *b = len < (8 << 20) ? realloc(buf, cap *= 2) : NULL;
-			if (!b) {
-				snprintf(why, sizeof(why), "too big (over %lu bytes)", (unsigned long)len);
-				goto out;
-			}
-			buf = b;
-		}
-		got = 0;
-		r = httpcDownloadData(&c, buf + len, cap - len, &got);
-		len += got;
-	} while (r == (Result)HTTPC_RESULTCODE_DOWNLOADPENDING);
-	if (R_FAILED(r)) {
-		snprintf(why, sizeof(why), "download: %08lX after %lu bytes", r, (unsigned long)len);
-		goto out;
-	}
 	mkdir(MF_DIR, 0777);
-	FILE *f = fopen(path, "wb");
-	if (!f || fwrite(buf, 1, len, f) != len) {
-		snprintf(why, sizeof(why), "can't write %s", path);
-		if (f) fclose(f);
-		goto out;
-	}
-	fclose(f);
-	logp("amiibo: figure list, %lu bytes\n", (unsigned long)len);
-	free(buf);
-	httpcCloseContext(&c);
-	httpcExit();
+	// The worst a forged list does is name figures wrong (http.h: no certificate checks).
+	if (!httpGetFile(AMIIBO_DB_URL, path, 8 << 20, why, sizeof(why))) return 0;
+	struct stat st;
+	logp("amiibo: figure list, %ld bytes\n", stat(path, &st) ? 0L : (long)st.st_size);
 	return 1;
-out:
-	free(buf);
-	httpcCloseContext(&c);
-	httpcExit();
-	return 0;
 }
 
 static void utf16(const u8 *p, int chars, bool le, char *out, u32 max)

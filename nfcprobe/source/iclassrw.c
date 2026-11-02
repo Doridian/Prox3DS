@@ -202,7 +202,8 @@ static int findKey(IcCard *card, bool kc, const u8 *key, int kind)
 	int n = 0;
 	if (key) n = addCand(cand, n, 96, key, kind, "given");
 	else n = fileCands(card->csn, kc, cand, 0, 96);
-	int total = n + (key ? 0 : 2 * icNumDefaultKeys + icNumEliteKeys);
+	const IcDicts *d = icDicts();
+	int total = n + (key ? 0 : 2 * d->ndef + d->nelite);
 	progOp("Trying %s keys", kc ? "Kc (credit)" : "Kd (debit)");
 	for (int i = 0; i < total && !mfCancel; i++) {
 		u8 master[8], div[8];
@@ -211,12 +212,12 @@ static int findKey(IcCard *card, bool kc, const u8 *key, int kind)
 		if (i < n) {
 			memcpy(master, cand[i].key, 8), k = cand[i].kind;
 			snprintf(label, sizeof(label), "%s", cand[i].label);
-		} else if (i < n + 2 * icNumDefaultKeys) {
-			int j = (i - n) / 2;
-			memcpy(master, icDefaultKeys[j].key, 8), k = (i - n) & 1 ? IC_KEY_ELITE : IC_KEY_STD;
-			snprintf(label, sizeof(label), "default%s%s", icDefaultKeys[j].label[0] ? ": " : "", icDefaultKeys[j].label);
+		} else if (i < n + 2 * d->ndef) {
+			const IcDictKey *e = &d->def[(i - n) / 2];
+			memcpy(master, e->key, 8), k = (i - n) & 1 ? IC_KEY_ELITE : IC_KEY_STD;
+			snprintf(label, sizeof(label), "default%s%s", e->label[0] ? ": " : "", e->label);
 		} else {
-			memcpy(master, icEliteKeys[i - n - 2 * icNumDefaultKeys], 8), k = IC_KEY_ELITE;
+			memcpy(master, d->elite[i - n - 2 * d->ndef], 8), k = IC_KEY_ELITE;
 			snprintf(label, sizeof(label), "elite dictionary");
 		}
 		if (i % 8 == 0) progStep(i, total);

@@ -722,6 +722,10 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
     credential (if iclass/iclass_decryptionkey.bin is on the SD) and blocks. First-page dump in pm3 .bin
     format (blocks 3/4 = diversified keys) to iclass/. Full search on this card: 404 tries, 17.7 s;
     with remembered keys 2.8 s (net op, 256 blocks 5.5 s). 4/4 reads identical to the pm3 dump.
+  - "Download dictionaries" (iclassdict.c, http.c shared with the Amiibo figure list) fetches pm3's
+    current iclass_default_keys.dic / iclass_elite_keys.dic via jsDelivr (gh/RfidResearchGroup/proxmark3
+    @master) to iclass/; the key search uses each one that has keys in place of the built-in copy. Parser
+    checked on the host against pm3's files (29 / 729, same as iclasskeys.c); not yet tried on the 3DS.
   - Not done yet: writes (UPDATE 87 + MAC), other books / pages of 16k/32k cards, iClass in the generic
     scan, SE / SR (non-legacy) credentials.
 
