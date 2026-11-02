@@ -1313,6 +1313,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   normal-written value on 13 pages (06 0D 1B 22 29 3E 45 53 61 6F 76 7D 81), across reads and field resets.
   The same image cloned through the backdoor (mfuclone) reads back identical and verifies (set 1, T+D). So:
   don't judge GTU Amiibo writes by normal WRITE; the earlier "no reaction" GTU test was a backdoor clone.
+  System Settings still doesn't see the GTU even with that verified backdoor image: the data is not why;
+  likely PACK 4883 (or another check the GTU fails). A pm3 sniff of 3DS <-> GTU would show where it stops.
 
 ## Smart card family, GlobalPlatform, YubiKey OATH (nfcprobe) -- 2026-11-01
 - Generic scan: DESFire's probe returns FAMILY_PASS when GetVersion fails, the next matching family (scFamily,
