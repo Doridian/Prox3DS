@@ -476,6 +476,7 @@ int main(int argc, char *argv[])
 {
 	if (argc > 0 && argv[0] && !strncmp(argv[0], "sdmc:/", 6))
 		snprintf(appPath, sizeof(appPath), "%s", argv[0]);
+	osSetSpeedupEnable(true); // New 3DS: 804 MHz + L2, for the key recoveries
 	gfxInitDefault();
 	uiInit();
 	logFile = fopen(LOG_PATH, "a");

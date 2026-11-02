@@ -34,5 +34,7 @@ uint32_t crapto1_ks32(uint64_t key, uint32_t in);
 // fixed tag nonce nt and the fixed on-wire reader nonce nrWire (last 3 bits cleared), ks3x[c] is the
 // 4-bit NACK keystream observed with nt_diff = c (top 3 bits of nrWire's last byte = c). Returns a
 // malloc'd, ascending, de-duplicated array of candidate 48-bit keys (caller frees) with the count in
-// *n, or NULL on OOM. The key is the one common to several runs with different nt (intersect the lists).
-uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uint8_t ks3x[8], int *n);
+// *n, or NULL on OOM. The key is the one common to several runs with different nt: with in (an
+// ascending list of nin keys, an earlier run's), only the candidates also in it are returned.
+uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uint8_t ks3x[8], const uint64_t *in,
+	int nin, int *n);

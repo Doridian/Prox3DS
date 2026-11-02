@@ -145,15 +145,14 @@ class Mon:
             return None
         return struct.unpack("<I", p)[0]
 
-    def darkside(self, steps, acode, aframe, nrar_frames, sync, sfracq=0, maxiter=4000, atw=5000,
-                 nrar_tx=0):
-        """One darkside run (memrw OP_DARKSIDE): fire AUTHs on an absolute grid averaging
-        sync + sfracq/256 ticks (the fractional part cancels the systematic per-fire nonce drift).
+    def darkside(self, steps, acode, aframe, nrar_frames, sync, tq=0, maxiter=40, atw=5000, nrar_tx=0):
+        """One darkside run (memrw OP_DARKSIDE): fire AUTHs about one PRNG period (sync ticks) apart,
+        steering onto the first nonce (tq = ticks per PRNG step * 256; 0 = no steering, for calibration).
         steps: list of (r574, code, rx, bytes) re-select frames (parity on); acode/aframe: the AUTH
         frame (parity off, packed); nrar_frames: 8 packed 9-byte {nr}{ar} frames (parity off, nt_diff
-        0..7). Returns (nt0, nt1, ks[8], mask): nt0/nt1 are the first two nonce samples (for period
-        calibration), mask has a bit per filled nt_diff (0xFF = a complete candidate was found)."""
-        arg = struct.pack("<IhHHB", sync, sfracq, maxiter, atw, len(steps))
+        0..7). Returns (nt, nt1, ks[8], mask, hits): nt = the locked (first) nonce, nt1 the second (for
+        period calibration), mask a bit per filled nt_diff (0xFF = complete)."""
+        arg = struct.pack("<IhHHHB", sync, 0, maxiter, atw, tq, len(steps))
         for r574, code, rx, data in steps:
             arg += bytes([r574, code, rx, len(data)]) + bytes(data)
         arg += bytes([acode, len(aframe)]) + bytes(aframe)
@@ -165,10 +164,8 @@ class Mon:
             p = self._do(OP_DARKSIDE, nrar_tx, arg, timeout_ms=45000, grace_ms=45000)
         finally:
             self.nfc.sock.settimeout(10)
-        nt0 = struct.unpack_from("<I", p)[0]
-        nt1 = struct.unpack_from("<I", p, 13)[0]
-        ks = list(p[4:12])
-        return nt0, nt1, ks, p[12]
+        nt, nt1 = struct.unpack_from("<I", p)[0], struct.unpack_from("<I", p, 13)[0]
+        return nt, nt1, list(p[4:12]), p[12], p[17]
 
     def irqs(self):
         """Framer interrupt log: [(timer, group, status)], oldest first (group 0 = 0x5C5C4,

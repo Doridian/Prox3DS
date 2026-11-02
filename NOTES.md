@@ -1096,31 +1096,41 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Always-leak path: nonce2key with par_info=0 returns a large list (~74k-185k candidates per run); the
   key is the one common to every run. Two synthetic runs (different nt) intersected to exactly the one
   correct key. So per run the collector must deliver: uid, the locked nt, the on-wire nr, ks[8].
-- On-chip collector WORKS (OP_DARKSIDE in chip/memrw.c, driven by tools/darkside_hw.py): recovered
-  FFFFFFFFFFFF on the 3DS RF32N 7991086F, ~80 s for two runs (reproducible). pm3 does it in 4 s; ours
-  is slower but functional on the 1 MHz timer. The card does NOT reseed its PRNG on HLTA/wake -- it
-  free-runs (consecutive select+auth nonces are all within dist_nt's +-32768, measured host-side), so
-  the nonce is a function of the absolute AUTH time. Mechanism:
+- On-chip collector (OP_DARKSIDE in chip/memrw.c). The card does NOT reseed its PRNG on HLTA/wake: it
+  free-runs, so the nonce is set by WHEN the AUTH arrives. Mechanism:
   - Fire each AUTH on an ABSOLUTE timer grid `sync` ticks apart (NOW() = -TIMER counts up; busy-wait to
-    the grid point after the re-select, skipping a grid point if the re-select overran). The nonce then
-    depends on timing only, not on how long HLTA+WUPA+SELECT took. (HLTA is needed -- without it the
-    card doesn't answer AUTH; the first iteration starts from the ROM-selected, non-halted card.)
-  - Host calibrates: a short-spacing call returns two nonces (nt0, nt1); dist_nt(nt0,nt1) over the known
-    spacing gives ticks-per-step, then a closed-loop refine (sync -= advance*tps) drives the per-fire
-    nonce advance to ~0 so sync == one PRNG period (65535 steps, ~78800 ticks here).
-  - Integer sync leaves a small systematic drift (a few steps/fire). The host measures the mean advance
-    and passes a signed fractional per-fire correction (sfracq/256 ticks); the op keeps a fractional
-    accumulator so the grid AVERAGES the true (non-integer) period and the drift cancels.
-  - Even so, tick quantization (~0.6 steps/tick) + TX jitter means an EXACT 32-bit nonce rarely repeats,
-    but the nonce now hovers over only a few values. The op keeps a small table (DS_NCAND=8) and fills
-    each hovered nonce's 8 nt_diff slots independently; the first to complete all 8 wins. No on-chip
-    dist_nt needed.
-  - Per run: op returns the winning nt + ks[8]; host runs nonce2key (crapto1_darkside) and intersects
-    across runs. 1-2 completed runs -> the key.
-- Chip SRAM for the patch is full (~3344/3364 bytes). To fit OP_DARKSIDE: removed the debug IRQ logging
+    the grid point after the re-select, skipping a grid point if the re-select overran). HLTA is needed
+    in the re-select (without it the card doesn't answer AUTH).
+  - BUT the nonce is not a pure function of absolute time: the card's clock stops during the reader's
+    modulation pauses, so every frame the reader sends costs PRNG steps (~180 for one {nr}{ar}). The per-
+    fire advance only stays constant if every iteration sends the same frames: {nr}{ar} goes out after
+    EVERY nonce, on target or not (a version that skipped it off-target saw the advance jump from ~4 to
+    ~178 steps per fire and never re-locked).
+  - Host calibrates (mfDarkside in mfc.c; prototype tools/darkside_hw.py): a short-spacing call returns
+    two nonces -> ticks per step (1.573 here), then a closed loop drives the per-fire advance to within
+    8 steps, so sync == one PRNG period (65535 steps, ~78830 ticks). ~2.3 s.
+  - On-chip steering, like pm3: lock onto the first nonce; a nonce within DS_WIN (48) steps of it moves
+    the next fire by that many steps (tq = ticks/step * 256) and a quarter of it goes into the per-fire
+    fractional correction (sfr/256 ticks, learns the drift the integer grid leaves). Off by more for 4
+    fires: re-lock where the nonce is. On target, record the NACK for the next missing nt_diff. A run
+    completes all 8 in ~10-12 fires (~1 s); every run completes, all ks verified against the known key.
+  - Recovery (crapto1_darkside): the common-prefix list misses the key ~1 run in 10 (synthetic: 4/40; pm3's
+    algorithm, same behaviour), so like pm3, an empty intersection restarts from the new run's list. Runs
+    after the first only keep candidates in the previous list (binary search, no big buffer, no sort);
+    linear rollback stretches (3 bits + {ar}, and uid^nt + get_lfsr) are byte lookup tables, filter() is a
+    128 KB bitmap in the hot loops (1.67x on the PC, bit-identical lists). The app now also enables the
+    New3DS speedup (804 MHz + L2; osSetSpeedupEnable), which helps every crapto1 recovery.
+  - Result: 16/16 recoveries on the 3DS card 7991086F, 8.5-20 s (typically 11-13 s, 2 runs) vs pm3's ~4 s;
+    the rest is ARM11 crapto1 time. A run with a huge list (>1M candidates) that runs out of memory is
+    skipped like an incomplete one.
+- App: mfDumpCard runs darkside on sector 0 key A when the dictionary and the static nonce pass found no
+  key at all; the key becomes the nested pivot. Net op 0x2A OP_MF_DARKSIDE, `nfcnet.py HOST darkside
+  BLOCK [b]`. Verified: 7991086F (4K) with every trailer changed to non-dictionary keys (sector 0 A/B
+  3D5B1FA9E4C7, sectors 1-39 A/B 7E2C94D1B8A3, access bits still FF078069): keyless dump in 63 s --
+  darkside 8 s -> nested (sector 1) -> dictionary for the rest, 40/40 sectors. THE CARD KEEPS THESE KEYS.
+- Chip SRAM for the patch is full (3356/3364 bytes). To fit OP_DARKSIDE: removed the debug IRQ logging
   (log_irq, rf_filter/tmr_filter -> a single identity pass_filter) and OP_SNAP (the one-time NFC-V
-  framer snapshot, used only by rfpoll.py/chipmon.py, re-addable from git). Darkside not yet wired into
-  the app dump (mfDumpCard) -- prototype lives in tools/ (chipmon.darkside + darkside_hw.py).
+  framer snapshot, used only by rfpoll.py/chipmon.py, re-addable from git).
 
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record

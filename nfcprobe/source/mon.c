@@ -64,6 +64,11 @@ bool monLoad(void)
 
 int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax)
 {
+	return monDoWait(op, addr, data, len, out, outMax, 4000);
+}
+
+int monDoWait(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax, u32 waitMs)
+{
 	u8 pkt[4 + 0x100];
 	if (len > 0xFF - 5) return MON_STATUS(0xFF);
 	pkt[0] = NCI_HCIT;
@@ -74,12 +79,12 @@ int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax)
 	put32(pkt + 5, addr);
 	memcpy(pkt + 9, data, len);
 	if (R_FAILED(i2cNfcWrite(pkt, 9 + len))) return MON_NO_ANSWER;
-	// While the chip is busy with RF the answer can come late: 1 s, then up to 4 s more.
+	// While the chip is busy with RF the answer can come late: 1 s, then up to waitMs more.
 	// Other packets (RF notifications) are skipped.
 	u32 rlen = 0;
 	for (int n = 0; n < 16; n++) {
 		rlen = nciRecv(pkt, sizeof(pkt), 1000 / 20, false);
-		if (!rlen && !n) rlen = nciRecv(pkt, sizeof(pkt), 4000 / 20, false);
+		if (!rlen && !n) rlen = nciRecv(pkt, sizeof(pkt), waitMs / 20, false);
 		if (!rlen || (rlen >= 5 && pkt[1] == 0x4F && pkt[2] == 0x2C)) break;
 	}
 	if (rlen < 5 || pkt[1] != 0x4F || pkt[2] != 0x2C) return MON_NO_ANSWER;
@@ -214,4 +219,11 @@ int monNested(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 co
 int monChkKeys(const u8 *arg, u32 len, u32 nrarTx, u8 out[3])
 {
 	return monDo(MON_CHKKEYS, nrarTx, arg, len, out, 3) == 3 ? 0 : -1;
+}
+
+int monDarkside(const u8 *arg, u32 len, u32 nrarTx, u8 out[MON_DARKSIDE_OUT])
+{
+	// a run is up to maxiter AUTHs a PRNG period (~79 ms) apart
+	int r = monDoWait(MON_DARKSIDE, nrarTx, arg, len, out, MON_DARKSIDE_OUT, 30000);
+	return r == MON_DARKSIDE_OUT ? 0 : -1;
 }

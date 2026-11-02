@@ -25,6 +25,7 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST mfvalue inc|dec|restore BLOCK DELTA KEY [b] [-t DEST]  value block op + TRANSFER
                                             (to DEST, default BLOCK), read back (WRITES THE CARD)
        nfcnet.py HOST nested KBLK KKEY TBLK [kb][tb]  recover TBLK's key from a known key (nested attack)
+       nfcnet.py HOST darkside BLOCK [b]           recover BLOCK's key with none known (NACK-bug cards)
        nfcnet.py HOST magic [nogen2] [PWD]         detect Gen1a / Gen2 / Gen4 GTU / USCUID (+ config); Gen2 the
                                                    pm3 way (ATS, block 0 WRITE ACK, aborted: nothing written)
        nfcnet.py HOST g4read BLOCK [N] [PWD]       Gen4 GTU read without keys (PWD default 00000000)
@@ -71,7 +72,7 @@ UPDATE_CHUNK = 0x7000
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF, OP_MF_CHK = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26
-OP_MF_VALUE, OP_MFU_NDEF, OP_AMIIBO = 0x27, 0x28, 0x29
+OP_MF_VALUE, OP_MFU_NDEF, OP_AMIIBO, OP_MF_DARKSIDE = 0x27, 0x28, 0x29, 0x2A
 MF_VAL_OPS = {"dec": 0xC0, "inc": 0xC1, "restore": 0xC2}
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
 DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
@@ -186,6 +187,11 @@ class Nfc:
         arg = (bytes([known_block, 1 if known_b else 0]) + bytes(known_key)
                + bytes([target_block, 1 if target_b else 0]))
         return self.card_call(OP_MF_NESTED, arg, 600)
+
+    def mf_darkside(self, block, key_b=False):
+        """Darkside attack (cards with the NACK bug): recover block's key with none known. Returns the
+        6-byte key, or None (reason in self.why)."""
+        return self.card_call(OP_MF_DARKSIDE, bytes([block, 1 if key_b else 0]), 600)
 
     def mf_magic(self, gen2=False, pwd=GEN4_PWD):
         """-> ({'gen1a', 'gen2', 'gen4', 'uscuid'}, gen4 config, uscuid config) or None (no card). gen2=True also tests
@@ -433,6 +439,10 @@ def main():
         flags = args[3:]
         key = nfc.mf_nested(kblk, kkey, tblk, "kb" in flags, "tb" in flags)
         print(f"recovered key for block {tblk}: {key.hex()}" if key else f"failed: {nfc.why}")
+    elif what == "darkside":
+        blk = int(args[0])
+        key = nfc.mf_darkside(blk, args[1:2] == ["b"])
+        print(f"recovered key for block {blk}: {key.hex()}" if key else f"failed: {nfc.why}")
     elif what == "gen1awrite":
         blk, data = int(args[0]), bytes.fromhex(args[1])
         ok = nfc.gen1a_write(blk, data)

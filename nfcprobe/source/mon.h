@@ -4,7 +4,7 @@
 // Chip-side debug monitor (chip/memrw.c, vendor command 2F 2C), see tools/chipmon.py.
 
 enum { MON_READ8, MON_WRITE8, MON_CALL, MON_READ32, MON_WRITE32, MON_CAPTURE, MON_TXRAW, MON_AUTH, MON_TXSCHED, MON_NESTED,
-	MON_SNAP, MON_CHKKEYS };
+	MON_SNAP, MON_CHKKEYS, MON_DARKSIDE };
 
 #define MON_CHUNK      0xF0
 #define MON_NO_ANSWER  (-1)
@@ -20,6 +20,8 @@ typedef struct {
 bool monLoad(void); // power cycle, download memrw, CORE_RESET / GET_PATCH_VERSION / CORE_INIT
 // One request; returns the answer payload length or MON_NO_ANSWER / MON_STATUS(s).
 int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax);
+// The same for an op that keeps the chip busy longer: waits up to waitMs for its answer.
+int monDoWait(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax, u32 waitMs);
 bool monRead(u32 addr, void *buf, u32 len);
 bool monWrite32(u32 addr, u32 value);
 bool monCapture(bool on);                 // also resets the frames() position
@@ -45,3 +47,7 @@ int monAuth(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code
 int monChkKeys(const u8 *arg, u32 len, u32 nrarTx, u8 out[3]);
 int monNested(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code,
 	const u8 nestedCmd[4], u32 nrarTx, u32 *nt0);
+// One darkside run (OP_DARKSIDE, chip/memrw.c: arg layout there): out = nt (4 LE), ks[8], mask, nt1
+// (4 LE), hits. 0 = ok, -1 = monitor error.
+#define MON_DARKSIDE_OUT 18
+int monDarkside(const u8 *arg, u32 len, u32 nrarTx, u8 out[MON_DARKSIDE_OUT]);

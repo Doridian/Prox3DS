@@ -92,6 +92,9 @@ int mfReadBlock(Crypto1 *c, u8 block, u8 out[16]);
 // nonces, crapto1). 1 = recovered (keyOut set), 0 = no answer / not recovered, -1 = monitor error.
 int mfNestedRecover(u8 knownBlock, const u8 knownKey[6], bool knownKeyB, u8 targetBlock,
 	bool targetKeyB, u8 keyOut[6]);
+// Darkside: a key with none known, on cards with the NACK bug (FM11RF32N batch; NOTES.md). 1 =
+// recovered and checked on the card (keyOut set), 0 = not recovered (mfWhy), -1 = monitor error.
+int mfDarkside(u8 block, bool keyB, u8 keyOut[6]);
 // FM11RF08S-family static encrypted nonce (NOTES.md). The nested nonce is static; the backdoor
 // AUTH (0x64/0x65 with a vendor key) reveals it in clear, a normal nested AUTH gives it encrypted
 // under the real key. A key fits a sector iff it decrypts ntEnc to nt -- checked offline.

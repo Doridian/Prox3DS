@@ -397,6 +397,42 @@ static const uint32_t fastfwd[2][8] = {
 	{ 0, 0x1D962, 0x4BC53, 0x56531, 0x0ECB1, 0x135D3, 0x450E2, 0x58980 }, // odd  (isodd 1)
 };
 
+// filter() over its 20 input bits as a bitmap, for the darkside's hot loops (built once, 128 KB).
+static uint8_t *ftab;
+
+static int ftab_init(void)
+{
+	if (!ftab && (ftab = malloc(1 << 17)))
+		for (uint32_t x = 0; x < (1u << 20); x += 8) {
+			uint8_t b = 0;
+			for (int k = 0; k < 8; k++) b |= filter(x + k) << k;
+			ftab[x >> 3] = b;
+		}
+	return ftab != NULL;
+}
+
+static int ffilter(uint32_t x)
+{
+	x &= 0xFFFFF;
+	return ftab[x >> 3] >> (x & 7) & 1;
+}
+
+// rollback_word with the keystream fed back, on ffilter.
+static void rollback_word_fb(uint32_t *s, uint32_t in)
+{
+	for (int i = 31; i >= 0; i--) {
+		s[0] &= 0xFFFFFF;
+		uint32_t t = s[0];
+		s[0] = s[1];
+		s[1] = t;
+		uint32_t out = s[1] & 1;
+		s[1] >>= 1;
+		out ^= (LF_POLY_EVEN & s[1]) ^ (LF_POLY_ODD & s[0]);
+		out ^= bebit(in, i) ^ ffilter(s[0]);
+		s[1] |= (uint32_t)par(out) << 23;
+	}
+}
+
 // 21-bit partial states of one LFSR half consistent with the 8 observed NACK keystreams.
 static void prefix_ks(const uint8_t ks[8], int isodd, Vec *out)
 {
@@ -406,8 +442,8 @@ static void prefix_ks(const uint8_t ks[8], int isodd, Vec *out)
 		int good = 1;
 		for (int c = 0; good && c < 8; c++) {
 			uint32_t e = i ^ fastfwd[isodd][c];
-			good &= ((ks[c] >> isodd) & 1) == filter(e >> 1);
-			good &= ((ks[c] >> (isodd + 2)) & 1) == filter(e);
+			good &= ((ks[c] >> isodd) & 1) == ffilter(e >> 1);
+			good &= ((ks[c] >> (isodd + 2)) & 1) == ffilter(e);
 		}
 		if (good) vpush(out, i);
 	}
@@ -419,18 +455,78 @@ static int cmp_u64(const void *a, const void *b)
 	return x < y ? -1 : x > y ? 1 : 0;
 }
 
-uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uint8_t ks3x[8], int *n)
+// The darkside rollback's linear stretches (no keystream feedback, so linear over GF(2) in the state,
+// plus a constant for a known input) as byte lookup tables over the 48-bit state odd | even << 24.
+typedef uint64_t LinTab[6][256];
+static LinTab dsPre, dsPost;
+
+static uint64_t lin_apply(const LinTab t, uint64_t v)
+{
+	return t[0][v & 0xFF] ^ t[1][v >> 8 & 0xFF] ^ t[2][v >> 16 & 0xFF] ^ t[3][v >> 24 & 0xFF] ^ t[4][v >> 32 & 0xFF]
+	     ^ t[5][v >> 40 & 0xFF];
+}
+
+static void lin_build(LinTab t, uint64_t (*f)(uint64_t))
+{
+	uint64_t img[48];
+	for (int i = 0; i < 48; i++) img[i] = f(1ull << i);
+	for (int j = 0; j < 6; j++)
+		for (int b = 0; b < 256; b++) {
+			uint64_t x = 0;
+			for (int k = 0; k < 8; k++)
+				if (b >> k & 1) x ^= img[8 * j + k];
+			t[j][b] = x;
+		}
+}
+
+// After the NACK back to the end of {nr}: 3 keystream bits and the {ar} word, input 0.
+static uint64_t ds_pre(uint64_t v)
+{
+	uint32_t s[2] = { v & 0xFFFFFF, v >> 24 & 0xFFFFFF };
+	rollback_bit(s, 0, 0);
+	rollback_bit(s, 0, 0);
+	rollback_bit(s, 0, 0);
+	rollback_word(s, 0, 0);
+	return (s[0] & 0xFFFFFF) | (uint64_t)(s[1] & 0xFFFFFF) << 24;
+}
+
+// Back over uid ^ nt (its input's part is the constant ds_post's caller adds) and read the key.
+static uint64_t ds_post(uint64_t v)
+{
+	uint32_t s[2] = { v & 0xFFFFFF, v >> 24 & 0xFFFFFF };
+	rollback_word(s, 0, 0);
+	return get_lfsr(s[0], s[1]);
+}
+
+static int has_u64(const uint64_t *a, int n, uint64_t k)
+{
+	int lo = 0, hi = n;
+	while (lo < hi) {
+		int m = (lo + hi) / 2;
+		if (a[m] < k) lo = m + 1;
+		else hi = m;
+	}
+	return lo < n && a[lo] == k;
+}
+
+uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uint8_t ks3x[8], const uint64_t *in,
+	int nin, int *n)
 {
 	*n = 0;
+	if (!ftab_init()) return NULL;
 	Vec odd = {0}, even = {0};
 	prefix_ks(ks3x, 1, &odd);
 	prefix_ks(ks3x, 0, &even);
 	// no_par: every (o, e, top) yields one post-nt state (the parity filter is skipped); roll it back
 	// over uid ^ nt and read the key.
-	size_t cap = odd.n * even.n * 64 + 1;
+	size_t cap = in ? (size_t)nin + 1 : odd.n * even.n * 64 + 1;
 	uint64_t *keys = malloc(cap * sizeof(uint64_t));
 	if (keys && odd.a && even.a) {
 		uint32_t inn = uid ^ nt, cnt = 0;
+		if (!dsPre[0][1]) lin_build(dsPre, ds_pre), lin_build(dsPost, ds_post);
+		uint32_t z[2] = { 0, 0 };
+		rollback_word(z, inn, 0);
+		uint64_t kc = get_lfsr(z[0], z[1]); // uid ^ nt's share of the key
 		for (size_t oi = 0; oi < odd.n; oi++)
 			for (size_t ei = 0; ei < even.n; ei++) {
 				tickMore();
@@ -438,15 +534,14 @@ uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uin
 				for (int top = 0; top < 64; top++) {
 					o += 1u << 21;
 					e += ((top & 7 ? 0 : 1) + 1) << 21;
-					// check_pfx_parity, no_par: advance to nt_diff 0, roll back to the post-nt state.
-					uint32_t s[2] = { o ^ fastfwd[1][0], e ^ fastfwd[0][0] };
-					rollback_bit(s, 0, 0);
-					rollback_bit(s, 0, 0);
-					rollback_bit(s, 0, 0);
-					rollback_word(s, 0, 0);
-					rollback_word(s, nrWire, 1);
-					rollback_word(s, inn, 0);
-					keys[cnt++] = get_lfsr(s[0], s[1]);
+					// check_pfx_parity, no_par: advance to nt_diff 0, roll back to the post-nt state. Only
+					// {nr} (keystream fed back) isn't linear.
+					uint64_t v = ((o ^ fastfwd[1][0]) & 0xFFFFFF) | (uint64_t)((e ^ fastfwd[0][0]) & 0xFFFFFF) << 24;
+					v = lin_apply(dsPre, v);
+					uint32_t s[2] = { v & 0xFFFFFF, v >> 24 };
+					rollback_word_fb(s, nrWire);
+					uint64_t k = lin_apply(dsPost, (s[0] & 0xFFFFFF) | (uint64_t)(s[1] & 0xFFFFFF) << 24) ^ kc;
+					if (!in || has_u64(in, nin, k)) keys[cnt++] = k;
 				}
 			}
 		// sort + unique so the caller can intersect runs by a merge.
@@ -455,6 +550,8 @@ uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uin
 		for (uint32_t i = 0; i < cnt; i++)
 			if (!u || keys[i] != keys[u - 1]) keys[u++] = keys[i];
 		*n = u;
+		uint64_t *k = realloc(keys, (u + 1) * sizeof(uint64_t));
+		if (k) keys = k;
 	} else {
 		free(keys);
 		keys = NULL;

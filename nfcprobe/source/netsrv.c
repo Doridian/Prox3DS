@@ -102,6 +102,8 @@ enum {
 	                       // -> the Amiibo on the reader decrypted with the console's keys (amiibo.h): ok u8 (HMACs
 	                       // check), set u8, charId[8], writes u16, setup u16, written u16, appId u32 (BE), flags
 	                       // u8 (1 registered, 2 app data), nickname (UTF-8). On failure payload = reason
+	OP_MF_DARKSIDE = 0x2A, // block u8, keyB u8 -> key[6] (darkside: cards with the NACK bug, no key needed);
+	                       // on failure payload = reason
 	OP_MF_VALUE    = 0x27, // op u8 (C0 dec, C1 inc, C2 restore), block u8, delta s32 LE, dest u8, keyB u8,
 	                       // key[6] -> dest block read back[16]; on failure payload = reason. WRITES THE CARD
 };
@@ -591,6 +593,21 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	dfFail:
 		*outLen = strlen(dfWhy());
 		memcpy(out, dfWhy(), *outLen);
+		return r < 0 ? -1 : 1;
+	}
+	case OP_MF_DARKSIDE: {
+		if (inLen < 2) return -3;
+		if (!cardReady()) return 1;
+		u8 key[6];
+		int r = mfDarkside(in[0], in[1], key);
+		iso14aParity(true);
+		if (r == 1) {
+			memcpy(out, key, 6);
+			*outLen = 6;
+			return 0;
+		}
+		*outLen = strlen(mfWhy());
+		memcpy(out, mfWhy(), *outLen);
 		return r < 0 ? -1 : 1;
 	}
 	case OP_MF_NESTED: {
