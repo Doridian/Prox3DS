@@ -605,6 +605,12 @@ int mfStaticNonce(u8 block, bool keyB, const u8 bdKey[6], MfStatic *st)
 		if ((r = nestedCapture(bd, block, bdKey, bd, block, &nt0, &enc, NULL)) < 0) return -1;
 	if (r != 1) return 0;
 	st->nt = crapto1_nt_decrypt(key48(bdKey), cardUid(), enc);
+	// Backdoor but no static nonce (FM11RF32N: the nested nonce changes each time): not for this attack
+	r = 0;
+	for (int t = 0; t < 4 && r != 1; t++)
+		if ((r = nestedCapture(bd, block, bdKey, bd, block, &nt0, &enc, NULL)) < 0) return -1;
+	if (r != 1) return 0;
+	if (crapto1_nt_decrypt(key48(bdKey), cardUid(), enc) != st->nt) FAIL(0, "nonce not static");
 	// 2: nested with the normal command -> the same nonce under the real key, with its parity
 	r = 0;
 	for (int t = 0; t < 4 && r != 1; t++)

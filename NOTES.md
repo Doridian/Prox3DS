@@ -1046,6 +1046,15 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   opening key 2, deadbolt override, made 2020-01-01 10:00, expires 2020-01-05 01:00, checksum ok:
   identical to `hf saflok decode`. GPB 69: no MAD. Fudan FM11RF08S 0390.
 
+## FM11RF32N: backdoor without static nonces -- 2026-11-01
+- FM11RF32N (UID 7991086F, ATQA 0002 SAK 18, block 0 ..18 02 00 "FDS70V01"): answers backdoor key
+  518B3354E760, but its nested nonces are not static. staticPass took any backdoor card for an RF08S,
+  so no dictionary key ever matched the (unrelated) nonce pair and it sat in crapto1_static per cell
+  for ~20 s x 80 cells before the dictionary sweep could run.
+- mfStaticNonce now captures the backdoor nonce twice and drops the cell ("nonce not static") unless
+  both decrypt to the same nt. RF32N: all 40 sectors, default keys, 256/256 blocks in ~27 s
+  (`nfcnet.py mfdump`). RF08S path not re-run since (the extra capture repeats step 1).
+
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
   parser (SR / long, IL, chunk flag), descriptions for URI (prefix codes), Text (lang, UTF-8 / UTF-16),
