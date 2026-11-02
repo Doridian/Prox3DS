@@ -17,6 +17,7 @@
 
 #include "amiibo.h"
 #include "desfire.h"
+#include "emv.h"
 #include "mfc.h"
 #include "isodep.h"
 #include "mfu.h"
@@ -111,6 +112,8 @@ enum {
 	                       // to SD): csn[8], kdKnown u8, kcKnown u8, kd[8], kc[8], kdKind u8, kcKind u8, keysTried
 	                       // u16, nblocks u16, per block: have u8 + data[8]; then credential: bits u8, value u64,
 	                       // fc u32, cn u32, parityOk u8, encrypted u8, format (len u8 + text). 1 = no card
+	OP_EMV         = 0x2C, // -> EMV payment card read (emv.c, read only; GPO counts the ATC up), saved to SD:
+	                       // the saved file's text (full card number). On failure payload = reason
 	OP_MF_VALUE    = 0x27, // op u8 (C0 dec, C1 inc, C2 restore), block u8, delta s32 LE, dest u8, keyB u8,
 	                       // key[6] -> dest block read back[16]; on failure payload = reason. WRITES THE CARD
 };
@@ -403,6 +406,24 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		memcpy(p + 1, cr->format, *p);
 		*outLen = p + 1 + *p - out;
 		icStop();
+		return 0;
+	}
+	case OP_EMV: {
+		if (!card.active && !iso14aStart()) return 1;
+		static EmvCard e;
+		char path[128];
+		int r = emvRead(&e);
+		iso14aParity(true);
+		if (r <= 0) {
+			*outLen = strlen(emvWhy());
+			memcpy(out, emvWhy(), *outLen);
+			return r < 0 ? -1 : 1;
+		}
+		if (!emvSave(&e, path, sizeof(path))) return -1;
+		logp("net: saved %s\n", path);
+		FILE *f = fopen(path, "r");
+		*outLen = f ? fread(out, 1, OUT_MAX, f) : 0;
+		if (f) fclose(f);
 		return 0;
 	}
 	case OP_MFU_DUMP: {

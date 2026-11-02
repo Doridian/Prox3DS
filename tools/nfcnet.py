@@ -53,6 +53,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                                            bytes after the command byte
                                                      ck:K:TYPE:KEY[:OTYPE:OKEY][:picc][:vN]  ChangeKey
                                                      info / infokeys       read all (+ key dictionary), print
+       nfcnet.py HOST emv                         EMV payment card, read only (GPO counts the card's ATC up):
+                                                   number, expiry, records, log; also saved to SD
        nfcnet.py HOST shot [OUT.png]               grab the top screen (default shot.png; needs Pillow)
        nfcnet.py HOST log [N]                      the app log's last N lines (default 50), net client lines cut
        nfcnet.py HOST keys KEY [KEY...]            press buttons in the UI, one frame each, ~0.1 s apart
@@ -74,7 +76,7 @@ OP_PUT_FILE = 0x0A
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF, OP_MF_CHK = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26
 OP_MF_VALUE, OP_MFU_NDEF, OP_AMIIBO, OP_MF_DARKSIDE = 0x27, 0x28, 0x29, 0x2A
-OP_ICLASS = 0x2B
+OP_ICLASS, OP_EMV = 0x2B, 0x2C
 MF_VAL_OPS = {"dec": 0xC0, "inc": 0xC1, "restore": 0xC2}
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
 DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
@@ -658,6 +660,9 @@ def main():
                 print(f"{step}: failed: {nfc.why}")
             else:
                 print(f"{step}: status {r[0]:02X}" + (f" {r[1:].hex().upper()}" if len(r) > 1 else ""))
+    elif what == "emv":
+        r = nfc.card_call(OP_EMV, b"", 120)
+        print(r.decode(errors="replace") if r is not None else f"emv failed: {nfc.why}")
     elif what == "mfuwrite":
         ok = nfc.mfu_write(int(args[0], 0), bytes.fromhex(args[1]))
         print("VERIFIED" if ok else f"write failed: {nfc.why}")

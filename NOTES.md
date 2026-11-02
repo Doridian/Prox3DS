@@ -1436,3 +1436,24 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   nothing (cells in order until one opens), (c) on the cells left open after the nested sweep, sweeping
   again if it found any. Built and the parsers checked on the host against pm3's files (key counts,
   UL-C labels); not run on the 3DS yet (console offline).
+
+## EMV payment cards (nfcprobe emv.c / emvui.c) -- 2026-11-02
+
+- pm3 `emv reader`, read only, as a smart card applet tool: "Payment card (EMV)" (the PPSE entry in
+  scApplets: the smart card scan lists it, A opens it; also in the Smart card menu). Net op 0x2C OP_EMV /
+  `nfcnet.py HOST emv` returns the saved file's text.
+- Flow: SELECT 2PAY.SYS.DDF01, the 61 entries under BF0C (4F / 50 / 87, sorted by priority, up to 4); no
+  PPSE: 14 known AIDs one by one. Per application: SELECT (9F38 PDOL, 9F4D log entry, 9F12 / 50 label), GPO
+  80 A8 with 83 + the PDOL filled the way pm3 does (TTQ 26000000 qVSDC, amount 1.00, USA / USD, 9A / 9F21 from
+  the OATH clock (unixNow, now shared), random 9F37, terminal type 22, merchant "nfcprobe", zeros otherwise;
+  numeric fields right aligned). Format 1 (80: AIP + AFL) and 2 (77). The AFL's records; GPO refused: READ
+  RECORD over SFI 1-10, records 1-16 (stops per SFI at the first error). GET DATA 9F36 / 9F13 / 9F17, then
+  9F4F (log format DOL) and the log records from 9F4D's SFI.
+- No GENERATE AC, nothing is paid or signed; GPO counts the ATC up (any tap at a terminal does).
+- Screen: label, brand from the RID (Maestro / Visa Electron / V Pay by PIX), card number masked (A shows
+  it), expiry / effective, PAN sequence, service code, cardholder, issuer country and currency (small
+  tables), ATC / last online ATC / PIN tries, AIP offline auth, records; the log (date, time, amount in its
+  currency, refunds green, merchant or country). R: next application. Y saves smartcard/emv-<last4>.txt
+  with every answer in hex (full card number).
+- Checked on the host against a scripted fake card (iso7816.c over a fake isoDepTx): PPSE + format 2 + AFL +
+  log, no PPSE + format 1, GPO 6985 + SFI scan. Not run on a real card yet (console offline).

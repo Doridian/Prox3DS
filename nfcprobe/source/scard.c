@@ -28,7 +28,8 @@ const ScApplet scApplets[] = {
 	{ "PIV", "A000000308", "NIST SP 800-73 personal identity verification: certificates and keys.", NULL },
 	{ "FIDO U2F / FIDO2", "A0000006472F0001", "Security key for web logins (U2F, CTAP2).", NULL },
 	{ "NDEF (Type 4 tag)", "D2760000850101", "An NFC Forum Type 4 tag: an NDEF message (URL, text, ...).", NULL },
-	{ "Payment (PPSE)", "325041592E5359532E4444463031", "EMV contactless payment directory.", NULL },
+	{ "Payment card (EMV)", "325041592E5359532E4444463031", "EMV contactless payment card (the PPSE directory): "
+		"card number, expiry, cardholder, counters and the transaction log. Read only, nothing is paid.", emvOpenTool },
 	{ "Passport (eMRTD)", "A0000002471001", "ICAO electronic passport / ID card (needs the MRZ to read).", NULL },
 	{ "Calypso transit", "315449432E494341", "Calypso public transport card.", NULL },
 	{ "Keycard", "A0000008040001", "Status Keycard (crypto wallet).", NULL },

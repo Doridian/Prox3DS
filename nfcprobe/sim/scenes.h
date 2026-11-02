@@ -3,6 +3,7 @@
 #include "../source/amiibo.h"
 #include "../source/app.h"
 #include "../source/desfire.h"
+#include "../source/emv.h"
 #include "../source/mfukeys.h"
 #include "../source/oath.h"
 #include "../source/iclass.h"
@@ -47,5 +48,6 @@ void simGp(const GpCard *g, bool ok, const char *why);
 void simGpCaps(void);
 void simOath(const OathInfo *o, int offset);
 void simOathAdd(void);
+void simEmv(const EmvCard *e, bool full);
 void simIclass(const IcCard *c);
 void simIclassMenu(void);

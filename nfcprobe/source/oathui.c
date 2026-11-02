@@ -51,8 +51,9 @@ static void cfgSave(void)
 	fclose(f);
 }
 
-static u64 unixNow(void)
+u64 unixNow(void)
 {
+	cfgLoad();
 	return (u64)time(NULL) - clockOffset;
 }
 

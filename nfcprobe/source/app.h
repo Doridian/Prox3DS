@@ -90,6 +90,8 @@ void uidHex(const Card *c, char *out, const char *sep); // out: up to 30 chars
 // Smart cards (scard.h): applet tools, for the card on the reader
 void gpOpenTool(void);   // GlobalPlatform (gpui.c)
 void oathOpenTool(void); // YubiKey OATH (oathui.c)
+u64 unixNow(void);       // the console clock as UTC, with the OATH tool's clock setting (oathui.c)
+void emvOpenTool(void);  // EMV payment cards (emvui.c)
 void apduConsole(void);  // raw APDUs (scui.c)
 u32 jobCount(void);      // jobs started so far: tells a tool whether another job touched the card since
 bool textInput(const char *hint, const char *init, char *out, u32 max); // system keyboard; false = cancelled / empty

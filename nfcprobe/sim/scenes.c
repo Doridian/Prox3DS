@@ -588,6 +588,50 @@ static void gpNoKeys(void)
 static void gpCaps(void) { simGpCaps(); }
 static void scnOathList(void) { simOath(&oathYk, 60); }
 
+static EmvCard emvCard;
+static void emvFill(void)
+{
+	EmvCard *e = &emvCard;
+	memset(e, 0, sizeof(*e));
+	e->ppse = true, e->napps = 2;
+	EmvApp *a = &e->app[0];
+	hexIn(a->aid, &a->aidLen, "A0000000031010");
+	strcpy(a->label, "VISA DEBIT");
+	a->selected = true;
+	strcpy(a->pan, "4761739001010119");
+	a->hasExp = a->hasEff = true;
+	memcpy(a->exp, "\x27\x12\x31", 3), memcpy(a->eff, "\x22\x01\x01", 3);
+	strcpy(a->name, "DOE/JOHN");
+	a->country = 0x276, a->currency = 0x978, a->panSeq = 1, a->svc = 201;
+	a->hasAip = true, a->aip = 0x2000;
+	a->atc = 1234, a->lastOnlineAtc = 1230, a->pinTries = 3;
+	a->logSfi = 11, a->logMax = 10, a->nrec = 3;
+	static const struct { const char *d, *t, *amt; u16 cur; u8 type; const char *m; } l[] = {
+		{ "\x26\x10\x31", "\x15\x30\x20", "\x00\x00\x00\x00\x12\x34", 0x978, 0, "Test Merchant" },
+		{ "\x26\x10\x29", "\x08\x15\x00", "\x00\x00\x00\x05\x00\x00", 0x840, 0x20, "ACME CORPORATION WITH A LONG NAME" },
+		{ "\x26\x10\x28", "\x12\x00\x00", "\x00\x00\x00\x00\x50\x00", 0x392, 0x01, "" },
+		{ "\x26\x10\x27", "\x09\x41\x13", "\x00\x00\x00\x00\x03\x50", 0x978, 0, "Bakery" },
+		{ "\x26\x10\x26", "\x18\x02\x55", "\x00\x00\x00\x01\x99\x99", 0x826, 0, "Bookshop" },
+		{ "\x26\x10\x25", "\x07\x59\x01", "\x00\x00\x00\x00\x00\x99", 0x123, 0, "Unknown currency" },
+		{ "\x26\x10\x24", "\x23\x59\x59", "\x99\x99\x99\x99\x99\x99", 0x978, 0, "Biggest" },
+	};
+	for (int i = 0; i < 7; i++) {
+		EmvLog *x = &a->log[a->nlog++];
+		x->has = LOG_DATE | LOG_TIME | LOG_AMOUNT | LOG_CUR | LOG_TYPE | (*l[i].m ? LOG_MERCHANT : LOG_COUNTRY);
+		memcpy(x->date, l[i].d, 3), memcpy(x->time, l[i].t, 3), memcpy(x->amount, l[i].amt, 6);
+		x->currency = l[i].cur, x->type = l[i].type, x->country = 0x392;
+		snprintf(x->merchant, sizeof(x->merchant), "%s", l[i].m);
+	}
+	a = &e->app[1];
+	hexIn(a->aid, &a->aidLen, "A0000000043060");
+	a->selected = true;
+	strcpy(a->pan, "6703000000000000011");
+	a->panSeq = a->svc = a->atc = a->lastOnlineAtc = a->pinTries = -1;
+	strcpy(a->why, "GET PROCESSING OPTIONS: 6985 conditions of use not satisfied");
+}
+static void scnEmv(void) { emvFill(); simEmv(&emvCard, false); }
+static void scnEmvFull(void) { simEmv(&emvCard, true); }
+
 static IcCard icc;
 static void icFill(bool found, bool decrypted)
 {
@@ -800,6 +844,8 @@ static const SimStep script[] = {
 	CALL(reset), CALL(gpNoKeys), SHOT("gp_nokeys"), CALL(gpCaps), SHOT("gp_caps"), B,
 	CALL(reset), CALL(scnOathList), SHOT("oath_list"), D, D, D, D, D, D, D, D, D, SHOT("oath_list_end"), Y, SHOT("oath_menu"), B,
 	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
+	CALL(reset), CALL(scnEmv), SHOT("emv_card"), D, D, D, SHOT("emv_card_log_end"), CALL(scnEmvFull), SHOT("emv_card_full"),
+	KEYS(KEY_R), SHOT("emv_app2"),
 
 	// iClass
 	CALL(reset), CALL(scnIclassMenu), SHOT("iclass_menu"), CALL(scnIclass), SHOT("iclass_card"), D, D, D, D, D, D, D, D,
