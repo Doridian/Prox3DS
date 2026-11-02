@@ -1457,3 +1457,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   with every answer in hex (full card number).
 - Checked on the host against a scripted fake card (iso7816.c over a fake isoDepTx): PPSE + format 2 + AFL +
   log, no PPSE + format 1, GPO 6985 + SFI scan. Not run on a real card yet (console offline).
+- Verified on a real card (Visa credit, a Samsung JavaCard with a GlobalPlatform ISD next to the payment
+  applet): smart card scan lists "Payment card (EMV)" as a tool; PPSE -> A0000000031010 "VISA CREDIT", GPO
+  format 2 (track 2, cryptogram, ATC; AIP 0000 = online only, qVSDC), AFL 08080800 = SFI 1 record 8 (9F1F
+  only). Card number + expiry from track 2, the placeholder name "CARDHOLDER/VISA", no issuer country, no
+  log (no 9F4D). Each read counts the ATC up by one (36 -> 37), as expected.
