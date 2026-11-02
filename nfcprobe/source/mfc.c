@@ -718,6 +718,7 @@ static int solveTick(int permille)
 
 // Distance that last gave a key on this card (a calibrated one sticks for the card's other keys).
 static u32 nestedDist = NESTED_DIST, nestedDistUid;
+static bool nestedWindow; // the last nestedOnce got as far as the distance window
 
 // Cards whose PRNG distance jitters (FM11RF32N: 840..850 from one calibration to the next) get every
 // distance within NESTED_WIN of the calibrated one, nearest first, as pm3 does: a candidate nt_T must
@@ -740,7 +741,7 @@ static int distCands(u32 nt0, u32 enc, u8 par, u32 d, u32 *nt, u32 *ks)
 	return n;
 }
 
-int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 keyOut[6])
+static int nestedOnce(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 keyOut[6])
 {
 	u32 nt0, nt0b, enc1, enc, uid = cardUid();
 	if (uid != nestedDistUid) {
@@ -766,18 +767,27 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 		ks2 = enc ^ ntTb;
 	}
 	crapto1_tick = solveTick;
-	u64 k = crapto1_nested(uid, ntTa, ks1, ntTb, ks2);
-	if (mfCancel) FAIL(0, "stopped");
-	// A wrong distance can still leave a (wrong) key in both candidate sets: only an auth proves it.
-	if ((r = keyAuths(k, tb, tgtB)) < 0) return -1;
+	// A card already calibrated (its distance isn't the on-chip op's) goes straight to the window,
+	// which tries the calibrated distance first anyway.
+	bool calibrated = nestedDist != NESTED_DIST && nt0b != nt0;
+	u64 k = 0;
+	r = 0;
+	if (!calibrated) {
+		k = crapto1_nested(uid, ntTa, ks1, ntTb, ks2);
+		if (mfCancel) FAIL(0, "stopped");
+		// A wrong distance can still leave a (wrong) key in both candidate sets: only an auth proves it.
+		if ((r = keyAuths(k, tb, tgtB)) < 0) return -1;
+	}
 	if (!r && nt0b != nt0) { // a PRNG that steps differently: measure the distance, like pm3
 		u32 d;
 		if ((r = calibrate(kb, key, knownB, false, &d)) <= 0) return r;
-		logp("  nested: no key at distance %lu, calibrated %lu\n", nestedDist, d);
+		if (calibrated) logp("  nested: calibrated %lu (last %lu)\n", d, nestedDist);
+		else logp("  nested: no key at distance %lu, calibrated %lu\n", nestedDist, d);
 		char op[sizeof(prog.op)];
 		snprintf(op, sizeof(op), "%s", prog.op);
 		u32 ntA[2 * NESTED_WIN + 1], ksA[2 * NESTED_WIN + 1], ntB[2 * NESTED_WIN + 1], ksB[2 * NESTED_WIN + 1];
 		int na = distCands(nt0, enc1, par1, d, ntA, ksA), nb = distCands(nt0b, enc, par2, d, ntB, ksB);
+		nestedWindow = true;
 		logp("  nested: %d / %d nonces within %d fit the parity\n", na, nb, NESTED_WIN);
 		r = 0;
 		for (int i = 0; i < na && !r && !mfCancel; i++) {
@@ -792,6 +802,17 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 	if (!r) FAIL(0, "no key (wrong distance?)");
 	keyBytes(k, keyOut);
 	return 1;
+}
+
+// A window can come up empty now and then (FM11RF32N: about 1 in 10, every distance found was within
+// 4 of the calibration, so likely a bad capture): once more with fresh captures.
+int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 keyOut[6])
+{
+	nestedWindow = false;
+	int r = nestedOnce(kb, key, knownB, tb, tgtB, keyOut);
+	if (r || mfCancel || !nestedWindow) return r;
+	logp("  nested: %s; again\n", why);
+	return nestedOnce(kb, key, knownB, tb, tgtB, keyOut);
 }
 
 // Encrypted WRITE data frame (16 bytes + CRC = 162 bits with parity). Long bit-mode frames are

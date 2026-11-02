@@ -1077,6 +1077,11 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   (crapto1_nested_any). ~5 survivors each. `nfcnet.py nested`: 3/3 recovered, 52-89 s; full dump with
   that key unknown 74 s, all 40 sectors. Key put back to FFFFFFFFFFFF after. nfcnet's nested timeout
   60 -> 600 s.
+- Once a card has been calibrated (nestedDist != 160), nested goes straight to the window (it tries the
+  calibrated distance first anyway): ~25-35 s instead of ~50 s. Winning distances, 7 runs: all within 4
+  of that run's calibration. 1 run in ~11 came up empty (likely a bad capture), so a window that finds
+  nothing retries once with fresh captures (mfNestedRecover -> nestedOnce x2, only when the window ran).
+  Since: 11/11 recovered, dump 69 s.
 
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
