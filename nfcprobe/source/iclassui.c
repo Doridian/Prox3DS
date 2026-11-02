@@ -190,13 +190,13 @@ static void doneDownload(void)
 {
 	icDictReload();
 	const IcDicts *d = icDicts();
-	if (!dlResult) msgBox("Key dictionaries", "Download failed: %s\n" ICLASS_DICT_URL, icDictWhy());
-	else toast("Dictionaries: %d default, %d elite keys", d->ndef, d->nelite);
+	if (!dlResult) msgBox("iClass keys", "Download failed: %s\n" ICLASS_DICT_URL, icDictWhy());
+	else toast("Dictionaries: %d default, %d elite keys; transport key", d->ndef, d->nelite);
 }
 
 static void startDownload(void)
 {
-	jobStart("Downloading pm3's iClass dictionaries", runDownload, doneDownload, false);
+	jobStart("Downloading pm3's iClass keys", runDownload, doneDownload, false);
 }
 
 static const MenuEntry icEntries[] = {
@@ -206,16 +206,17 @@ static const MenuEntry icEntries[] = {
 	{ "Read with key", "The same with one key you type: a master key (standard or elite) or the card's "
 	                   "diversified key.", startKeyRead },
 	{ "Last card", "The card screen of the last card read.", openCard },
-	{ "Download dictionaries", "Fetch pm3's current iclass_default_keys.dic and iclass_elite_keys.dic (about 14 KB, "
-	                           "over Wi-Fi) to " ICLASS_DIR ": the key search uses them in place of the built-in "
-	                           "copies.", startDownload },
+	{ "Download keys", "Fetch pm3's current iclass_default_keys.dic and iclass_elite_keys.dic (about 14 KB, over "
+	                   "Wi-Fi) to " ICLASS_DIR ": the key search uses them in place of the built-in copies. Also "
+	                   "iclass_decryptionkey.bin, the transport key that decrypts credentials.", startDownload },
 };
 
 static void icExtra(float y)
 {
 	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Dumps: " ICLASS_DIR " (pm3 hf iclass .bin)");
-	uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_DIM], "Credential decryption: pm3's iclass_decryptionkey.bin there");
 	const IcDicts *d = icDicts();
+	uiText(12, y + SMALL_H, S_SMALL, uiCol[d->transport ? COL_DIM : COL_WARN], "Credential decryption: %s",
+		d->transport ? "pm3's transport key (iclass_decryptionkey.bin)" : "no iclass_decryptionkey.bin (download it)");
 	uiText(12, y + 2 * SMALL_H, S_SMALL, uiCol[COL_DIM], "Dictionaries: %d default (%s), %d elite (%s)", d->ndef,
 		d->dlDef ? "downloaded" : "built in", d->nelite, d->dlElite ? "downloaded" : "built in");
 }

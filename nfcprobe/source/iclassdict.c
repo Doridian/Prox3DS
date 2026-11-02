@@ -91,6 +91,8 @@ void icDictReload(void)
 		dicts.elite = (const u8 (*)[8])dlElite, dicts.nelite = n, dicts.dlElite = true;
 	}
 	free(e);
+	struct stat st;
+	dicts.transport = !stat(ICLASS_TRANSPORT, &st) && st.st_size >= 16;
 	loaded = true;
 	logp("iclass: dictionaries: %d default (%s), %d elite (%s)\n", dicts.ndef, dicts.dlDef ? "downloaded" : "built in",
 		dicts.nelite, dicts.dlElite ? "downloaded" : "built in");
@@ -102,16 +104,17 @@ const IcDicts *icDicts(void)
 	return &dicts;
 }
 
-// One file: to path.new, kept only if it parses.
-static int fetch(const char *name, const char *path)
+// One file: to path.new, kept only if it parses (a dictionary) or is 16 bytes (the transport key).
+static int fetch(const char *name, const char *path, bool key)
 {
 	char url[160], tmp[96];
 	snprintf(url, sizeof(url), ICLASS_DICT_URL "%s", name);
 	snprintf(tmp, sizeof(tmp), "%s.new", path);
 	if (!httpGetFile(url, tmp, 1 << 20, why, sizeof(why))) return 0;
 	int n;
-	DlKey *k = parse(tmp, &n);
-	free(k);
+	struct stat st;
+	if (key) n = !stat(tmp, &st) && st.st_size == 16 ? 16 : 0;
+	else free(parse(tmp, &n));
 	if (!n) {
 		remove(tmp);
 		snprintf(why, sizeof(why), "%s has no keys", name);
@@ -119,7 +122,7 @@ static int fetch(const char *name, const char *path)
 	}
 	remove(path);
 	rename(tmp, path);
-	logp("iclass: %s, %d keys\n", name, n);
+	logp("iclass: %s, %d %s\n", name, n, key ? "bytes" : "keys");
 	return n;
 }
 
@@ -127,6 +130,9 @@ int icDictDownload(void)
 {
 	mkdir(MF_DIR, 0777);
 	mkdir(ICLASS_DIR, 0777);
-	// A forged list only makes the key search try other keys (http.h: no certificate checks).
-	return fetch("iclass_default_keys.dic", ICLASS_DICT_DEFAULT) && fetch("iclass_elite_keys.dic", ICLASS_DICT_ELITE);
+	// A forged list only makes the key search try other keys, a forged transport key decrypts credentials
+	// to garbage (http.h: no certificate checks).
+	return fetch("dictionaries/iclass_default_keys.dic", ICLASS_DICT_DEFAULT, false)
+		&& fetch("dictionaries/iclass_elite_keys.dic", ICLASS_DICT_ELITE, false)
+		&& fetch("resources/iclass_decryptionkey.bin", ICLASS_TRANSPORT, true);
 }

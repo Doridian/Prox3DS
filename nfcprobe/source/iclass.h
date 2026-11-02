@@ -13,7 +13,7 @@
 #define ICLASS_TRANSPORT ICLASS_DIR "/iclass_decryptionkey.bin" // pm3's 16-byte credential (block 7-9) key
 #define ICLASS_DICT_DEFAULT ICLASS_DIR "/iclass_default_keys.dic" // pm3's dictionaries, downloaded (iclassdict.c)
 #define ICLASS_DICT_ELITE   ICLASS_DIR "/iclass_elite_keys.dic"
-#define ICLASS_DICT_URL     "https://cdn.jsdelivr.net/gh/RfidResearchGroup/proxmark3@master/client/dictionaries/"
+#define ICLASS_DICT_URL     "https://cdn.jsdelivr.net/gh/RfidResearchGroup/proxmark3@master/client/" // + dictionaries/, resources/
 
 #define ICLASS_BLOCKS 256 // 2k cards use 32, 16k / 32k up to 256 per book / page
 
@@ -79,11 +79,12 @@ typedef struct {
 	const u8 (*elite)[8];
 	int nelite;
 	bool dlDef, dlElite; // downloaded
+	bool transport;      // ICLASS_TRANSPORT is there
 } IcDicts;
 const IcDicts *icDicts(void); // loaded on first use
 void icDictReload(void);      // after a download
-// Fetches both of pm3's dictionaries from ICLASS_DICT_URL; a file is replaced only if the new one has
-// keys. Over Wi-Fi, not in a card job. 1 = done, 0 = failed (icDictWhy).
+// Fetches both of pm3's dictionaries and its transport key (ICLASS_TRANSPORT) from ICLASS_DICT_URL; a
+// file is replaced only if the new one has keys / is 16 bytes. Over Wi-Fi, not in a card job. 1 = done, 0 = failed (icDictWhy).
 int icDictDownload(void);
 const char *icDictWhy(void);
 
