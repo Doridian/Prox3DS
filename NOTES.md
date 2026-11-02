@@ -687,6 +687,16 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - RX is a separate open problem (iClass answers in 15693 format: 423.75 kHz subcarrier, Manchester).
 - pm3 (local patches, uncommitted): `hf iclass sniff -t <ms>` stops by itself (firmware timeout in
   SniffIso15693, checked per DMA buffer); no button needed for unattended sniffs.
+- 2026-11-02, from Android's Broadcom stack (libnfc-nci nfc_brcm_defs.h: NCI_PARAM_ID_I93_DATARATE =
+  0xB7): CORE_SET_CONFIG `B7 01 02` (or 03) before a 15693 poll (map `83 01 83`, RF_DISCOVER 76) makes
+  the ROM send INVENTORY `26 01 00` (high data rate flag) in 1-OF-4: 22016 carrier periods (1.6 ms)
+  for 5 bytes, and `hf iclass sniff` decodes it cleanly with a correct CRC (`26 01 00 F6 0A`). B7 00 / 01
+  = the old 1-of-256 `24 01 00`. The IRQ log at V TX time shows the only framer difference:
+  0x5C558 = 5 (B7 02) vs 0 (B7 00); 0x5C554 18, 0x5C55C 22, r570 1, r574 5 are the same. So 0x5C558 = 5
+  (bits 2-3 = 1: the 302 us/byte slot, bits 0-1 = 1, probably the high-rate RX) is the 1-of-4 coder that
+  iClass needs; earlier 1-of-4 attempts only varied 0x5C554. Next for iClass: raw V TX (stall,
+  0x5C554 = 18, 0x5C558 = 5) of ACTALL / IDENTIFY, checked with `hf iclass sniff`, then the card's
+  answer on RX.
 
 ## DESFire without keys (issue #8) -- 2026-10-31
 - Test card: UID 04B1B1B1B1B1B1, ATQA 0344, SAK 20, ATS 0675778102 80 (FSCI 5 = 64, FWI 8, CID ok).
