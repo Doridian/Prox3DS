@@ -1440,6 +1440,65 @@ static int magicPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict)
 	return 1;
 }
 
+// The dictionary's state across passes: entries already tried per cell (so each is tried once), and
+// for the bar's ETA, the auths done and the time they took.
+typedef struct {
+	int tried[40][2];
+	u32 done, ms;
+} DictState;
+
+// The dictionary on one open cell: 32 keys per on-chip check (mfChkKeys, ~150 keys/s), then the hit
+// read the normal way; a card that doesn't answer the chip's own select gets them one by one.
+// The bar counts the auths still to try in this pass. -1 = monitor error.
+static int dictCell(MfDump *d, int sectors, int sec, int kb, const u8 (*dict)[6], int ndict, DictState *ds)
+{
+	u32 left = 0;
+	for (int c = 2 * sec + kb; c < 2 * sectors; c++)
+		if (!d->keyFound[c / 2][c % 2]) left += ndict - ds->tried[c / 2][c % 2];
+	mfProg.key[sec][kb] = MF_KEY_TRYING;
+	if (ds->tried[sec][kb] < ndict) progOp("Dictionary: sector %d key %c", sec, kb ? 'B' : 'A');
+	for (int k = ds->tried[sec][kb]; k < ndict && !d->keyFound[sec][kb] && !mfCancel;) {
+		progEta(ds->done, ds->done + left, left * (ds->done ? ds->ms / ds->done : 60));
+		int m = ndict - k < 32 ? ndict - k : 32, done = m;
+		u64 t0 = osGetTime();
+		int h = mfChkKeys(mfFirstBlock(sec), kb, dict + k, m);
+		if (h == -3) return -1;
+		if (h >= 0) {
+			if (readSector(d, sec, dict[k + h], kb) < 0) return -1;
+			if (!d->keyFound[sec][kb]) done = h + 1; // the chip's hit didn't read: go on after it
+		} else if (h == -2) {
+			for (int j = 0; j < m && !d->keyFound[sec][kb]; j++)
+				if (readSector(d, sec, dict[k + j], kb) < 0) return -1;
+		}
+		ds->ms += osGetTime() - t0;
+		ds->done += done, left -= done, k += done;
+	}
+	ds->tried[sec][kb] = ndict;
+	return 0;
+}
+
+// The dictionary alone on every open cell, each key found folded back in, until a pass finds nothing
+// new. Cheap with mfChkKeys, so it goes before the attacks. -1 = monitor error.
+static int dictPass(MfDump *d, int sectors, u8 (*dict)[6], int *ndict, DictState *ds)
+{
+	bool progress = true;
+	while (progress && !mfCancel) {
+		progress = false;
+		for (int sec = 0; sec < sectors && !mfCancel; sec++)
+			for (int kb = 0; kb < 2; kb++) {
+				if (d->keyFound[sec][kb]) continue;
+				if (dictCell(d, sectors, sec, kb, (const u8 (*)[6])dict, *ndict, ds) < 0) return -1;
+				if (!d->keyFound[sec][kb]) {
+					mfProg.key[sec][kb] = MF_KEY_OPEN;
+					continue;
+				}
+				*ndict = addKey(dict, *ndict, MF_MAX_KEYS, d->keys[sec][kb]);
+				progress = true;
+			}
+	}
+	return 0;
+}
+
 int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 {
 	memset(d, 0, sizeof(*d));
@@ -1449,51 +1508,32 @@ int mfDumpCard(MfDump *d, int sectors, const u8 (*keys)[6], int nkeys)
 	// Running dictionary: the supplied keys plus every key we recover (a key reused by
 	// another sector is far cheaper to auth than to recover again). Magic cards' trailer keys go first.
 	static u8 dict[MF_MAX_KEYS][6];
+	static DictState ds;
+	memset(&ds, 0, sizeof(ds));
 	int ndict = 0;
 	if (magicPass(d, sectors, dict, &ndict) < 0) return -1;
 	if (kdfPass(d, sectors, dict, &ndict) < 0) return -1;
 	for (int k = 0; k < nkeys; k++) ndict = addKey(dict, ndict, MF_MAX_KEYS, keys[k]);
 	bool nestedTried[40][2] = { 0 };
-	int tried[40][2] = { 0 }; // dict entries already attempted per cell (so each is tried once)
-	int pivotSec = -1; bool pivotB = false; // first confirmed key, used as the nested known key
 
-	// FM11RF08S family: the backdoor solves what it can before the sweep.
+	// The dictionary first, whatever the card; then the FM11RF08S family's backdoor solves what it can.
+	if (dictPass(d, sectors, dict, &ndict, &ds) < 0) return -1;
 	if (staticPass(d, sectors, dict, &ndict) < 0) return -1;
+
+	// First confirmed key, used as the nested known key.
+	int pivotSec = -1; bool pivotB = false;
+	for (int c = 0; c < 2 * sectors && pivotSec < 0; c++)
+		if (d->keyFound[c / 2][c % 2]) pivotSec = c / 2, pivotB = c % 2, mfProg.pivot = true;
 
 	// Sweep until a full pass turns up nothing new: recover EVERY missing A/B key, folding each
 	// one back into the dictionary so later sectors can reuse it before falling back to nested.
-	// The dictionary's bar counts the auths still to try in this pass; its ETA, the time they took.
-	u32 dictDone = 0, dictMs = 0;
 	bool progress = true;
 	while (progress && !mfCancel) {
 		progress = false;
 		for (int sec = 0; sec < sectors && !mfCancel; sec++)
 			for (int kb = 0; kb < 2; kb++) {
 				if (d->keyFound[sec][kb]) continue;
-				u32 left = 0;
-				for (int c = 2 * sec + kb; c < 2 * sectors; c++)
-					if (!d->keyFound[c / 2][c % 2]) left += ndict - tried[c / 2][c % 2];
-				mfProg.key[sec][kb] = MF_KEY_TRYING;
-				if (tried[sec][kb] < ndict) progOp("Dictionary: sector %d key %c", sec, kb ? 'B' : 'A');
-				// 32 keys per on-chip check (mfChkKeys, ~150 keys/s), then the hit read the normal way;
-				// a card that doesn't answer the chip's own select gets them one by one.
-				for (int k = tried[sec][kb]; k < ndict && !d->keyFound[sec][kb] && !mfCancel;) {
-					progEta(dictDone, dictDone + left, left * (dictDone ? dictMs / dictDone : 60));
-					int m = ndict - k < 32 ? ndict - k : 32, done = m;
-					u64 t0 = osGetTime();
-					int h = mfChkKeys(mfFirstBlock(sec), kb, (const u8 (*)[6])dict[k], m);
-					if (h == -3) return -1;
-					if (h >= 0) {
-						if (readSector(d, sec, dict[k + h], kb) < 0) return -1;
-						if (!d->keyFound[sec][kb]) done = h + 1; // the chip's hit didn't read: go on after it
-					} else if (h == -2) {
-						for (int j = 0; j < m && !d->keyFound[sec][kb]; j++)
-							if (readSector(d, sec, dict[k + j], kb) < 0) return -1;
-					}
-					dictMs += osGetTime() - t0;
-					dictDone += done, left -= done, k += done;
-				}
-				tried[sec][kb] = ndict;
+				if (dictCell(d, sectors, sec, kb, (const u8 (*)[6])dict, ndict, &ds) < 0) return -1;
 				if (!d->keyFound[sec][kb]) {
 					mfProg.key[sec][kb] = nestedTried[sec][kb] ? MF_KEY_FAILED : MF_KEY_OPEN;
 					if (pivotSec < 0 || nestedTried[sec][kb] || mfCancel) continue; // nested needs a known key

@@ -1054,6 +1054,12 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - mfStaticNonce now captures the backdoor nonce twice and drops the cell ("nonce not static") unless
   both decrypt to the same nt. RF32N: all 40 sectors, default keys, 256/256 blocks in ~27 s
   (`nfcnet.py mfdump`). RF08S path not re-run since (the extra capture repeats step 1).
+- Dictionary first for every card: mfDumpCard runs dictPass (mfChkKeys over every open cell until
+  nothing new) before staticPass, then the sweep (dictionary with the keys found since + nested). The
+  nested pivot is now seeded from any key already found (before, only from keys the sweep itself found,
+  so keys from magic / KDF / static passes never enabled nested). RF32N: 27 s -> 14 s, same dump.
+  Worst case on an RF08S with no dictionary hits: 256 keys x cells / ~150 keys/s extra (~55 s 1K)
+  before the static attack. RF08S and the nested pivot change not yet re-run on hardware.
 
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
