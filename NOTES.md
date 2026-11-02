@@ -1132,6 +1132,33 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   (log_irq, rf_filter/tmr_filter -> a single identity pass_filter) and OP_SNAP (the one-time NFC-V
   framer snapshot, used only by rfpoll.py/chipmon.py, re-addable from git).
 
+## Multi-core crapto1, darkside pipeline -- 2026-11-01
+- par.c parFor: work items over the caller's core + one helper thread per other usable core (New 3DS:
+  cores 1 and 2; core 1 after APT_SetAppCpuTimeLimit(80)), threads made per call at the caller's
+  priority. Log: "par: core 0 + 2 helper threads". Host builds (sim, PC tests) use pthreads.
+- crapto1: every big pass is split over the cores with results in the same order as one core
+  (PC tests vs the previous version: darkside lists, filtered runs, recover / static / nested all
+  bit-identical; TSan and ASan clean): lfsr_recovery32's seed + extends in 64 chunks joined in order,
+  the top call's 256 groups one per item, the candidate checks after it in 64 chunks (nested_any: the
+  first hit by chunk order); darkside's prefix tables, candidate loop (256 items) and sort. Only the
+  calling thread runs the progress hook.
+- What made the 3DS slow besides the core count: allocation. Below the top call, recover() made 512
+  small growing vectors per node (~65K nodes); malloc has one lock, so 3 cores mostly waited (groups
+  phase 3.6 s on one core, still 2.6 s on three). Now a stable counting sort into one table per half,
+  extend tables sized for the worst case, and each top group's subtree takes its tables from one 256 KB
+  scratch block: groups 1.6 s. Darkside's qsort (~40% of its time on the PC) is now an in-place radix
+  pass on the top byte + the 256 buckets sorted on every core; filtered runs look keys up through a
+  top-16-bit index of the earlier list instead of a binary search over all of it.
+- 3DS, one nested solve (crapto1_nested_any): 8.6 s -> 2.4 s. Nested on 7991086F sector 1: 5-10 s
+  (was 16-37 s). Darkside solve: 0.15-1 s per run (2.5 s for a 1.66M list; was 1.5-5.5 s).
+- mfDarkside: run t's solve runs in its own thread (priority 0x31, below the job thread and the UI)
+  while the chip collects run t + 1, so only the last solve is on the clock. The calibration is kept
+  per UID and only checked next time (<= 4 steering calls; 0.25 s instead of 2.3 s).
+- Darkside now: collection is the bottleneck, ~1.4-2.7 s per run (8 on-target fires out of ~25, one
+  PRNG period = 79 ms apart). All 15 logged runs' keystreams matched the known key; 2/15 lists missed
+  the key (the algorithm's ~10%), each costing an extra run. 6-12 s with the calibration kept.
+- Keyless dump of 7991086F (darkside -> nested -> dictionary): 63 s -> 40 s, 40/40 sectors.
+
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
   parser (SR / long, IL, chunk flag), descriptions for URI (prefix codes), Text (lang, UTF-8 / UTF-16),

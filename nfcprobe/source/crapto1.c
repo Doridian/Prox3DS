@@ -1,12 +1,15 @@
 // Crypto1 key recovery (crapto1 port) for the ARM11. Faithful translation of the validated
 // tools/crapto1.py: lfsr_recovery32 (extend_table / recover with top-byte bucketing) + rollback.
-// Self-contained (no 3DS headers) so it host-compiles for testing.
+// Self-contained (no 3DS headers) so it host-compiles for testing. The big table passes run on
+// every core (par.h), the results in the same order as one core would give them.
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "crapto1.h"
+#include "par.h"
 
 #define LF_POLY_ODD  0x29CE5C
 #define LF_POLY_EVEN 0x870804
@@ -34,22 +37,36 @@ static int bebit(uint32_t x, int n)
 
 int (*crapto1_tick)(int permille);
 
-static int lastTick, stopped; // stopped: the hook said stop, the recovery winds down
+static volatile int stopped; // the hook said stop, the recovery winds down (helpers check it too)
 
 static int tick(int permille)
 {
-	lastTick = permille;
 	if (crapto1_tick && crapto1_tick(permille)) stopped = 1;
 	return stopped;
 }
 
-// In the long flat loops between the progress steps: the same value again every 64K items of work
-// (counted across calls: many of these loops are short), so the caller gets control now and then.
-static uint32_t work;
+// parFor with progress: n items, the bar from `from` to `to` permille as they are handed out, ticked
+// by the caller's thread before each of its items (so items should be short: ~10 ms on the 3DS).
+typedef struct {
+	void (*fn)(void *arg, int i);
+	void *arg;
+	int n, from, to;
+	volatile int started;
+} Each;
 
-static void tickMore(void)
+static void eachItem(void *p, int i)
 {
-	if (!(++work & 0xFFFF)) tick(lastTick);
+	Each *e = p;
+	if (stopped) return;
+	int k = __atomic_fetch_add(&e->started, 1, __ATOMIC_RELAXED);
+	if (parMain()) tick(e->from + (e->to - e->from) * k / e->n);
+	e->fn(e->arg, i);
+}
+
+static void each(int n, void (*fn)(void *arg, int i), void *arg, int from, int to)
+{
+	Each e = { fn, arg, n, from, to, 0 };
+	parFor(n, eachItem, &e);
 }
 
 // --- forward cipher (matches crypto1.py), for candidate filtering / verification ---
@@ -137,103 +154,239 @@ static uint32_t update_contribution(uint32_t item, uint32_t m1, uint32_t m2)
 	return (p << 24) | (item & 0xFFFFFF);
 }
 
-static Vec extend_table(Vec in, int bit, uint32_t m1, uint32_t m2, uint32_t inn)
+// A table pass in SPLIT chunks over [0, total) on every core: fn(ctx, lo, hi, out) appends to out[0]
+// (and out[1] for the seed pass); the chunks' outputs are joined in order.
+#define SPLIT 64
+
+typedef struct {
+	void (*fn)(void *ctx, size_t lo, size_t hi, Vec *out);
+	void *ctx;
+	size_t total;
+	Vec part[SPLIT][2];
+} Split;
+
+static void splitItem(void *p, int c)
 {
-	inn <<= 24;
-	Vec o = {0};
-	for (size_t i = 0; i < in.n; i++) {
-		tickMore();
-		uint32_t t = in.a[i] << 1;
-		if (filter(t) ^ filter(t | 1)) {
-			t |= filter(t) ^ bit;
-			vpush(&o, update_contribution(t, m1, m2) ^ inn);
-		} else if (filter(t) == bit) {
-			vpush(&o, update_contribution(t, m1, m2) ^ inn);
-			vpush(&o, update_contribution(t | 1, m1, m2) ^ inn);
-		}
-	}
-	return o;
+	Split *s = p;
+	s->fn(s->ctx, (uint64_t)s->total * c / SPLIT, (uint64_t)s->total * (c + 1) / SPLIT, s->part[c]);
 }
 
-static Vec extend_table_simple(Vec in, int bit)
+static void split(void (*fn)(void *ctx, size_t lo, size_t hi, Vec *out), void *ctx, size_t total, Vec *out,
+	int nout, int from, int to)
 {
-	Vec o = {0};
-	for (size_t i = 0; i < in.n; i++) {
-		tickMore();
-		uint32_t t = in.a[i] << 1;
-		if (filter(t) ^ filter(t | 1)) {
-			vpush(&o, t | (filter(t) ^ bit));
-		} else if (filter(t) == bit) {
-			vpush(&o, t);
-			vpush(&o, t | 1);
-		}
-	}
-	return o;
-}
-
-// Owns odd/even (frees them); appends final states to out. The top call's buckets report progress.
-static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec *out, uint32_t inn, int top)
-{
-	if (stopped) {
-		free(odd.a);
-		free(even.a);
+	Split *s = calloc(1, sizeof(Split));
+	if (!s) {
+		stopped = 1;
 		return;
 	}
+	s->fn = fn, s->ctx = ctx, s->total = total;
+	each(SPLIT, splitItem, s, from, to);
+	for (int k = 0; k < nout; k++) {
+		size_t n = 0;
+		for (int c = 0; c < SPLIT; c++) n += s->part[c][k].n;
+		out[k].n = 0, out[k].cap = n ? n : 1;
+		out[k].a = malloc(out[k].cap * sizeof(uint32_t));
+		for (int c = 0; c < SPLIT; c++) {
+			if (out[k].a) memcpy(out[k].a + out[k].n, s->part[c][k].a, s->part[c][k].n * sizeof(uint32_t));
+			out[k].n += s->part[c][k].n;
+			free(s->part[c][k].a);
+		}
+		if (!out[k].a) out[k].n = 0, stopped = 1;
+	}
+	free(s);
+}
+
+typedef struct {
+	const uint32_t *in;
+	int bit, simple;
+	uint32_t m1, m2, inn;
+} Ext;
+
+static void extend_part(void *ctx, size_t lo, size_t hi, Vec *o)
+{
+	const Ext *x = ctx;
+	uint32_t inn = x->inn << 24;
+	for (size_t i = lo; i < hi; i++) {
+		uint32_t t = x->in[i] << 1;
+		if (x->simple) {
+			if (filter(t) ^ filter(t | 1)) {
+				vpush(o, t | (filter(t) ^ x->bit));
+			} else if (filter(t) == x->bit) {
+				vpush(o, t);
+				vpush(o, t | 1);
+			}
+		} else if (filter(t) ^ filter(t | 1)) {
+			t |= filter(t) ^ x->bit;
+			vpush(o, update_contribution(t, x->m1, x->m2) ^ inn);
+		} else if (filter(t) == x->bit) {
+			vpush(o, update_contribution(t, x->m1, x->m2) ^ inn);
+			vpush(o, update_contribution(t | 1, x->m1, x->m2) ^ inn);
+		}
+	}
+}
+
+// Scratch for the tables below the top call: one top-level group's whole subtree takes a few
+// dozen KB, handed out from one block (malloc, a lock shared by the cores, is what the subtrees cost
+// otherwise) and given back as a whole when the call that took it returns. Tables that don't fit
+// (and the top call's) come from malloc.
+#define SCRATCH (64 << 10) // entries
+
+typedef struct {
+	uint32_t *base;
+	size_t used;
+} Scratch;
+
+static uint32_t *take(Scratch *sc, size_t n)
+{
+	if (sc && sc->base && sc->used + n <= SCRATCH) {
+		sc->used += n;
+		return sc->base + sc->used - n;
+	}
+	uint32_t *p = malloc(n * sizeof(uint32_t) + 1);
+	if (!p) stopped = 1;
+	return p;
+}
+
+static void give(Scratch *sc, uint32_t *p)
+{
+	if (!sc || p < sc->base || p >= sc->base + SCRATCH) free(p);
+}
+
+// Split over the cores for the top-level tables (from < to), else here into a table sized for the
+// worst case (every entry kept twice), trimmed to what it got when it's the newest scratch.
+static Vec extend(Vec in, int bit, int simple, uint32_t m1, uint32_t m2, uint32_t inn, int from, int to, Scratch *sc)
+{
+	Ext x = { in.a, bit, simple, m1, m2, inn };
+	Vec o = {0};
+	if (from < to) {
+		split(extend_part, &x, in.n, &o, 1, from, to);
+	} else if ((o.a = take(sc, 2 * in.n + 1))) {
+		o.cap = 2 * in.n + 1;
+		extend_part(&x, 0, in.n, &o);
+		if (sc && o.a + o.cap == sc->base + sc->used) sc->used -= o.cap - o.n;
+	}
+	return o;
+}
+
+// The table grouped by top byte (a stable counting sort: the order within a group stays), group b at
+// at[b] .. at[b + 1] of the result.
+static uint32_t *group(Vec v, size_t at[257], Scratch *sc)
+{
+	size_t pos[256] = {0};
+	for (size_t i = 0; i < v.n; i++) pos[v.a[i] >> 24]++;
+	at[0] = 0;
+	for (int b = 0; b < 256; b++) at[b + 1] = at[b] + pos[b], pos[b] = at[b];
+	uint32_t *g = take(sc, v.n);
+	if (g)
+		for (size_t i = 0; i < v.n; i++) g[pos[v.a[i] >> 24]++] = v.a[i];
+	return g;
+}
+
+static Vec part(uint32_t *g, const size_t *at, int b)
+{
+	return (Vec){ g + at[b], at[b + 1] - at[b], 0 };
+}
+
+static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec *out, uint32_t inn, Scratch *sc,
+	int top);
+
+// The top call's 256 groups, one per item, each into its own list and with its own scratch.
+typedef struct {
+	uint32_t *og, *eg;
+	size_t oat[257], eat[257];
+	uint32_t oks, eks, inn;
+	int rem;
+	SVec out[256];
+} Groups;
+
+static void groupItem(void *p, int b)
+{
+	Groups *k = p;
+	Vec o = part(k->og, k->oat, b), e = part(k->eg, k->eat, b);
+	if (!o.n || !e.n) return;
+	Scratch sc = { malloc(SCRATCH * sizeof(uint32_t)), 0 };
+	recover(o, k->oks, e, k->eks, k->rem, &k->out[b], k->inn, &sc, 0);
+	free(sc.base);
+}
+
+// Appends the final states to out; odd and even stay the caller's. The top call's work is spread
+// over the cores and reports progress.
+static void recover(Vec odd, uint32_t oks, Vec even, uint32_t eks, int rem, SVec *out, uint32_t inn, Scratch *sc,
+	int top)
+{
+	if (stopped) return;
 	if (rem == -1) {
 		for (size_t ei = 0; ei < even.n; ei++) {
 			uint32_t e = (even.a[ei] << 1) ^ par(even.a[ei] & LF_POLY_EVEN) ^ ((inn & 4) ? 1 : 0);
 			for (size_t oi = 0; oi < odd.n; oi++)
 				spush(out, e ^ par(odd.a[oi] & LF_POLY_ODD), odd.a[oi]);
 		}
-		free(odd.a);
-		free(even.a);
 		return;
 	}
-	int i = 0;
+	size_t mark = sc ? sc->used : 0;
+	int i = 0, own = 0; // own: odd / even are tables made here
 	while (i < 4) {
-		if (top) tick(110 + 35 * i); // the top call's extends: the biggest tables
-		int old = rem;
+		int old = rem, p = 110 + 35 * i; // the top call's extends: the biggest tables
 		rem--;
 		if (old == 0)
 			break;
 		oks >>= 1;
 		eks >>= 1;
 		inn >>= 2;
-		Vec no = extend_table(odd, oks & 1, (LF_POLY_EVEN << 1) | 1, LF_POLY_ODD << 1, 0);
-		free(odd.a);
-		odd = no;
-		Vec ne = extend_table(even, eks & 1, LF_POLY_ODD, (LF_POLY_EVEN << 1) | 1, inn & 3);
-		free(even.a);
-		even = ne;
-		if (!odd.n || !even.n) {
-			free(odd.a);
-			free(even.a);
-			return;
+		Vec no = extend(odd, oks & 1, 0, (LF_POLY_EVEN << 1) | 1, LF_POLY_ODD << 1, 0, p, top ? p + 17 : p, sc);
+		Vec ne = extend(even, eks & 1, 0, LF_POLY_ODD, (LF_POLY_EVEN << 1) | 1, inn & 3, p + 17, top ? p + 35 : p, sc);
+		if (own) {
+			give(sc, odd.a);
+			give(sc, even.a);
 		}
+		odd = no, even = ne, own = 1;
+		if (!odd.n || !even.n) break;
 		i++;
 	}
-	Vec *ob = calloc(256, sizeof(Vec)), *eb = calloc(256, sizeof(Vec));
-	for (size_t k = 0; k < odd.n; k++) {
-		if (top) tickMore();
-		vpush(&ob[odd.a[k] >> 24], odd.a[k]);
+	Groups *k = NULL;
+	size_t oat[257], eat[257];
+	uint32_t *og = NULL, *eg = NULL;
+	if (odd.n && even.n && !stopped) {
+		if (top && !(k = calloc(1, sizeof(Groups)))) stopped = 1;
+		og = group(odd, k ? k->oat : oat, sc);
+		eg = group(even, k ? k->eat : eat, sc);
 	}
-	for (size_t k = 0; k < even.n; k++) {
-		if (top) tickMore();
-		vpush(&eb[even.a[k] >> 24], even.a[k]);
+	if (own) {
+		give(sc, odd.a);
+		give(sc, even.a);
 	}
-	free(odd.a);
-	free(even.a);
-	for (int b = 0; b < 256; b++) {
-		if (top) tick(250 + 750 * b / 256); // about the same time each, 75% of it all
-		if (ob[b].n && eb[b].n && !stopped) {
-			recover(ob[b], oks, eb[b], eks, rem, out, inn, 0);
-		} else {
-			free(ob[b].a);
-			free(eb[b].a);
+	if (og && eg && top && !stopped) {
+		k->og = og, k->eg = eg, k->oks = oks, k->eks = eks, k->inn = inn, k->rem = rem;
+		each(256, groupItem, k, 250, 1000); // about the same time each, 75% of it all
+		for (int b = 0; b < 256; b++) {
+			for (size_t j = 0; j < k->out[b].n; j++)
+				spush(out, k->out[b].a[j] >> 32, (uint32_t)k->out[b].a[j]);
+			free(k->out[b].a);
+		}
+	} else if (og && eg) {
+		for (int b = 0; b < 256 && !stopped; b++) {
+			Vec o = part(og, oat, b), e = part(eg, eat, b);
+			if (o.n && e.n) recover(o, oks, e, eks, rem, out, inn, sc, 0);
 		}
 	}
-	free(ob);
-	free(eb);
+	give(sc, og);
+	give(sc, eg);
+	free(k);
+	if (sc) sc->used = mark;
+}
+
+typedef struct {
+	int oks, eks;
+} Seed;
+
+static void seed_part(void *ctx, size_t lo, size_t hi, Vec *o)
+{
+	const Seed *x = ctx;
+	for (uint32_t i = lo; i < hi; i++) {
+		int f = filter(i);
+		if (f == x->oks) vpush(&o[0], i);
+		if (f == x->eks) vpush(&o[1], i);
+	}
 }
 
 static void lfsr_recovery32(uint32_t ks2, uint32_t inn, SVec *out)
@@ -243,32 +396,25 @@ static void lfsr_recovery32(uint32_t ks2, uint32_t inn, SVec *out)
 		oks = oks << 1 | bebit(ks2, i);
 	for (int i = 30; i >= 0; i -= 2)
 		eks = eks << 1 | bebit(ks2, i);
-	Vec odd = {0}, even = {0};
 	stopped = 0;
 	tick(0);
-	odd.cap = even.cap = 1 << 20; // reserve to avoid realloc churn in the seed loop
-	odd.a = malloc(odd.cap * sizeof(uint32_t));
-	even.a = malloc(even.cap * sizeof(uint32_t));
-	for (uint32_t i = 0; i <= (1u << 20) && !stopped; i++) {
-		if (!(i & 0xFFFF)) tick(15 * i >> 20);
-		if (filter(i) == (int)(oks & 1))
-			vpush(&odd, i);
-		if (filter(i) == (int)(eks & 1))
-			vpush(&even, i);
-	}
+	Seed sd = { oks & 1, eks & 1 };
+	Vec oe[2] = { {0}, {0} };
+	split(seed_part, &sd, (1u << 20) + 1, oe, 2, 0, 15);
+	Vec odd = oe[0], even = oe[1];
 	for (int r = 0; r < 4 && !stopped; r++) {
-		tick(15 + 95 * r / 4);
+		int p = 15 + 95 * r / 4;
 		oks >>= 1;
 		eks >>= 1;
-		Vec no = extend_table_simple(odd, oks & 1);
+		Vec no = extend(odd, oks & 1, 1, 0, 0, 0, p, p + 12, NULL), ne = extend(even, eks & 1, 1, 0, 0, 0, p + 12, p + 23, NULL);
 		free(odd.a);
-		odd = no;
-		Vec ne = extend_table_simple(even, eks & 1);
 		free(even.a);
-		even = ne;
+		odd = no, even = ne;
 	}
 	inn = (inn >> 16 & 0xff) | (inn << 16) | (inn & 0xff00);
-	recover(odd, oks, even, eks, 11, out, inn << 1, 1);
+	recover(odd, oks, even, eks, 11, out, inn << 1, NULL, 1);
+	free(odd.a);
+	free(even.a);
 	tick(1000);
 }
 
@@ -305,20 +451,60 @@ static uint64_t get_lfsr(uint32_t odd, uint32_t even)
 	return l;
 }
 
-int crapto1_recover(uint32_t uid, uint32_t nt, uint32_t ks, uint64_t *out, int max)
+// The checks after lfsr_recovery32, in SPLIT chunks of its states on every core: each state rolled
+// back over in (uid ^ nt) to a key, kept (in state order) when keep says so. first: only the first
+// one wanted, so a chunk stops once it or one before it has one.
+typedef struct {
+	const uint64_t *st;
+	size_t n;
+	uint32_t in;
+	int (*keep)(const void *ctx, uint64_t key);
+	const void *ctx;
+	int first;
+	int hit; // first: the lowest chunk with a key so far
+	SVec part[SPLIT];
+} Check;
+
+static void checkItem(void *p, int c)
+{
+	Check *k = p;
+	size_t lo = (uint64_t)k->n * c / SPLIT, hi = (uint64_t)k->n * (c + 1) / SPLIT;
+	for (size_t i = lo; i < hi && !(k->first && __atomic_load_n(&k->hit, __ATOMIC_RELAXED) <= c); i++) {
+		uint32_t s[2] = { (uint32_t)(k->st[i] >> 32), (uint32_t)k->st[i] };
+		rollback_word(s, k->in, 0);
+		uint64_t key = get_lfsr(s[0], s[1]);
+		if (k->keep && !k->keep(k->ctx, key)) continue;
+		spush(&k->part[c], key >> 32, (uint32_t)key);
+		for (int h = __atomic_load_n(&k->hit, __ATOMIC_RELAXED); k->first && c < h && !__atomic_compare_exchange_n(&k->hit, &h, c, 0, __ATOMIC_RELAXED,
+			__ATOMIC_RELAXED);)
+			;
+	}
+}
+
+// lfsr_recovery32 + the checks; returns the count written to out (capped at max).
+static int recover_keys(uint32_t ks, uint32_t in, int (*keep)(const void *ctx, uint64_t key), const void *ctx,
+	int first, uint64_t *out, int max)
 {
 	SVec sv = {0};
-	uint32_t inn = uid ^ nt;
-	lfsr_recovery32(ks, inn, &sv);
+	lfsr_recovery32(ks, in, &sv);
+	Check *k = calloc(1, sizeof(Check));
 	int cnt = 0;
-	for (size_t i = 0; i < sv.n && cnt < max; i++) {
-		tickMore();
-		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
-		rollback_word(s, inn, 0);
-		out[cnt++] = get_lfsr(s[0], s[1]);
+	if (k) {
+		k->st = sv.a, k->n = sv.n, k->in = in, k->keep = keep, k->ctx = ctx, k->first = first, k->hit = SPLIT;
+		each(SPLIT, checkItem, k, 1000, 1000);
+		for (int c = 0; c < SPLIT; c++) {
+			for (size_t i = 0; i < k->part[c].n && cnt < max; i++) out[cnt++] = k->part[c].a[i];
+			free(k->part[c].a);
+		}
 	}
+	free(k);
 	free(sv.a);
 	return cnt;
+}
+
+int crapto1_recover(uint32_t uid, uint32_t nt, uint32_t ks, uint64_t *out, int max)
+{
+	return recover_keys(ks, uid ^ nt, NULL, NULL, 0, out, max);
 }
 
 uint32_t crapto1_nt_decrypt(uint64_t key, uint32_t uid, uint32_t ntEnc)
@@ -336,27 +522,26 @@ static int oddpar8(uint32_t b)
 	return !par(b & 0xFF);
 }
 
+typedef struct {
+	uint32_t in;
+	int want;
+} StaticPar;
+
+// The last nonce byte's parity bit is encrypted with the first keystream bit after nt.
+static int static_keep(const void *ctx, uint64_t key)
+{
+	const StaticPar *x = ctx;
+	C1 c;
+	c1_init(&c, key);
+	for (int b = 0; b < 32; b++)
+		c1_bit(&c, (x->in >> (b ^ 24)) & 1);
+	return filter(c.odd) == x->want;
+}
+
 int crapto1_static(uint32_t uid, uint32_t nt, uint32_t ntEnc, int parEnc, uint64_t *out, int max)
 {
-	SVec sv = {0};
-	uint32_t inn = uid ^ nt;
-	lfsr_recovery32(nt ^ ntEnc, inn, &sv);
-	int want = oddpar8(nt) ^ (parEnc & 1), cnt = 0;
-	for (size_t i = 0; i < sv.n && cnt < max; i++) {
-		tickMore();
-		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
-		rollback_word(s, inn, 0);
-		uint64_t key = get_lfsr(s[0], s[1]);
-		// The last nonce byte's parity bit is encrypted with the first keystream bit after nt.
-		C1 c;
-		c1_init(&c, key);
-		for (int b = 0; b < 32; b++)
-			c1_bit(&c, (inn >> (b ^ 24)) & 1);
-		if (filter(c.odd) == want)
-			out[cnt++] = key;
-	}
-	free(sv.a);
-	return cnt;
+	StaticPar x = { uid ^ nt, oddpar8(nt) ^ (parEnc & 1) };
+	return recover_keys(nt ^ ntEnc, uid ^ nt, static_keep, &x, 0, out, max);
 }
 
 uint64_t crapto1_nested(uint32_t uid, uint32_t nt1, uint32_t ks1, uint32_t nt2, uint32_t ks2)
@@ -364,24 +549,26 @@ uint64_t crapto1_nested(uint32_t uid, uint32_t nt1, uint32_t ks1, uint32_t nt2, 
 	return crapto1_nested_any(uid, nt1, ks1, &nt2, &ks2, 1);
 }
 
+typedef struct {
+	uint32_t uid;
+	const uint32_t *nt2, *ks2;
+	int n2;
+} Second;
+
+// Keystream consistent with one of the second nonces.
+static int nested_keep(const void *ctx, uint64_t key)
+{
+	const Second *x = ctx;
+	for (int j = 0; j < x->n2; j++)
+		if (crapto1_ks32(key, x->uid ^ x->nt2[j]) == x->ks2[j]) return 1;
+	return 0;
+}
+
 uint64_t crapto1_nested_any(uint32_t uid, uint32_t nt1, uint32_t ks1, const uint32_t *nt2, const uint32_t *ks2, int n2)
 {
-	SVec sv = {0};
-	uint32_t in1 = uid ^ nt1;
-	lfsr_recovery32(ks1, in1, &sv);
+	Second x = { uid, nt2, ks2, n2 };
 	uint64_t found = 0;
-	for (size_t i = 0; i < sv.n && !found; i++) {
-		tickMore();
-		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
-		rollback_word(s, in1, 0);
-		uint64_t key = get_lfsr(s[0], s[1]);
-		for (int j = 0; j < n2; j++)
-			if (crapto1_ks32(key, uid ^ nt2[j]) == ks2[j]) { // keystream consistent with the 2nd nonce
-				found = key;
-				break;
-			}
-	}
-	free(sv.a);
+	recover_keys(ks1, uid ^ nt1, nested_keep, &x, 1, &found, 1);
 	return found;
 }
 
@@ -434,19 +621,31 @@ static void rollback_word_fb(uint32_t *s, uint32_t in)
 }
 
 // 21-bit partial states of one LFSR half consistent with the 8 observed NACK keystreams.
-static void prefix_ks(const uint8_t ks[8], int isodd, Vec *out)
+typedef struct {
+	const uint8_t *ks;
+	int isodd;
+} Pfx;
+
+static void prefix_part(void *ctx, size_t lo, size_t hi, Vec *out)
 {
-	out->n = 0;
-	for (uint32_t i = 0; i < (1u << 21); i++) {
-		tickMore();
+	const Pfx *x = ctx;
+	for (uint32_t i = lo; i < hi; i++) {
 		int good = 1;
 		for (int c = 0; good && c < 8; c++) {
-			uint32_t e = i ^ fastfwd[isodd][c];
-			good &= ((ks[c] >> isodd) & 1) == ffilter(e >> 1);
-			good &= ((ks[c] >> (isodd + 2)) & 1) == ffilter(e);
+			uint32_t e = i ^ fastfwd[x->isodd][c];
+			good &= ((x->ks[c] >> x->isodd) & 1) == ffilter(e >> 1);
+			good &= ((x->ks[c] >> (x->isodd + 2)) & 1) == ffilter(e);
 		}
 		if (good) vpush(out, i);
 	}
+}
+
+static Vec prefix_ks(const uint8_t ks[8], int isodd, int from, int to)
+{
+	Pfx x = { ks, isodd };
+	Vec o = {0};
+	split(prefix_part, &x, 1u << 21, &o, 1, from, to);
+	return o;
 }
 
 static int cmp_u64(const void *a, const void *b)
@@ -498,65 +697,179 @@ static uint64_t ds_post(uint64_t v)
 	return get_lfsr(s[0], s[1]);
 }
 
-static int has_u64(const uint64_t *a, int n, uint64_t k)
+// The earlier run's list (ascending), indexed by the keys' top 16 bits: the lookups in the candidate
+// loop then search a few dozen keys, not the whole list.
+typedef struct {
+	const uint64_t *a;
+	uint32_t *idx; // idx[h] .. idx[h + 1]: the keys with k >> 32 == h
+} KeySet;
+
+static int keyset_init(KeySet *ks, const uint64_t *a, int n)
 {
-	int lo = 0, hi = n;
+	ks->a = a;
+	if (!(ks->idx = malloc(65537 * sizeof(uint32_t)))) return 0;
+	int j = 0;
+	for (uint32_t h = 0; h <= 65536; h++) {
+		while (j < n && a[j] >> 32 < h) j++;
+		ks->idx[h] = j;
+	}
+	return 1;
+}
+
+static int keyset_has(const KeySet *ks, uint64_t k)
+{
+	uint32_t lo = ks->idx[k >> 32], hi = ks->idx[(k >> 32) + 1];
 	while (lo < hi) {
-		int m = (lo + hi) / 2;
-		if (a[m] < k) lo = m + 1;
+		uint32_t m = (lo + hi) / 2;
+		if (ks->a[m] < k) lo = m + 1;
 		else hi = m;
 	}
-	return lo < n && a[lo] == k;
+	return lo < ks->idx[(k >> 32) + 1] && ks->a[lo] == k;
+}
+
+static void kpush(SVec *s, uint64_t k)
+{
+	spush(s, k >> 32, (uint32_t)k);
+}
+
+// The candidate loop over (odd, even) pairs in DS_ITEMS items: every pair gives 64 keys. Without a
+// list to keep, item c writes its keys straight into their place in keys; with one, into its own
+// list (few survive).
+#define DS_ITEMS 256
+
+typedef struct {
+	Vec odd, even;
+	uint32_t nrWire;
+	uint64_t kc;
+	const KeySet *in;
+	uint64_t *keys;
+	SVec part[DS_ITEMS];
+} DsLoop;
+
+static void dsItem(void *p, int c)
+{
+	DsLoop *d = p;
+	size_t total = d->odd.n * d->even.n, lo = (uint64_t)total * c / DS_ITEMS, hi = (uint64_t)total * (c + 1) / DS_ITEMS;
+	uint64_t *w = d->keys ? d->keys + lo * 64 : NULL;
+	for (size_t j = lo; j < hi; j++) {
+		uint32_t o = d->odd.a[j / d->even.n], e = d->even.a[j % d->even.n];
+		for (int top = 0; top < 64; top++) {
+			o += 1u << 21;
+			e += ((top & 7 ? 0 : 1) + 1) << 21;
+			// check_pfx_parity, no_par: advance to nt_diff 0, roll back to the post-nt state. Only {nr}
+			// (keystream fed back) isn't linear.
+			uint64_t v = ((o ^ fastfwd[1][0]) & 0xFFFFFF) | (uint64_t)((e ^ fastfwd[0][0]) & 0xFFFFFF) << 24;
+			v = lin_apply(dsPre, v);
+			uint32_t s[2] = { v & 0xFFFFFF, v >> 24 };
+			rollback_word_fb(s, d->nrWire);
+			uint64_t k = lin_apply(dsPost, (s[0] & 0xFFFFFF) | (uint64_t)(s[1] & 0xFFFFFF) << 24) ^ d->kc;
+			if (w) *w++ = k;
+			else if (keyset_has(d->in, k)) kpush(&d->part[c], k);
+		}
+	}
+}
+
+// Sort + unique, in place: the keys go to buckets by their top byte (an in-place radix pass), then
+// the buckets are sorted on every core and closed up.
+typedef struct {
+	uint64_t *a;
+	size_t start[257], uniq[256];
+} DsSort;
+
+static void sortItem(void *p, int b)
+{
+	DsSort *d = p;
+	uint64_t *a = d->a + d->start[b];
+	size_t n = d->start[b + 1] - d->start[b], u = 0;
+	qsort(a, n, sizeof(uint64_t), cmp_u64);
+	for (size_t i = 0; i < n; i++)
+		if (!u || a[i] != a[u - 1]) a[u++] = a[i];
+	d->uniq[b] = u;
+}
+
+static size_t sort_unique(uint64_t *a, size_t n)
+{
+	DsSort *d = malloc(sizeof(DsSort));
+	if (!d) return 0;
+	size_t next[256] = {0};
+	for (size_t i = 0; i < n; i++) next[a[i] >> 40 & 0xFF]++;
+	d->a = a, d->start[0] = 0;
+	for (int b = 0; b < 256; b++) d->start[b + 1] = d->start[b] + next[b], next[b] = d->start[b];
+	for (int b = 0; b < 256; b++)
+		while (next[b] < d->start[b + 1]) {
+			uint64_t v = a[next[b]];
+			for (int t = v >> 40 & 0xFF; t != b; t = v >> 40 & 0xFF) {
+				uint64_t x = a[next[t]];
+				a[next[t]++] = v;
+				v = x;
+			}
+			a[next[b]++] = v;
+		}
+	each(256, sortItem, d, 800, 1000);
+	size_t u = 0;
+	for (int b = 0; b < 256; b++) {
+		memmove(a + u, a + d->start[b], d->uniq[b] * sizeof(uint64_t));
+		u += d->uniq[b];
+	}
+	free(d);
+	return u;
 }
 
 uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uint8_t ks3x[8], const uint64_t *in,
 	int nin, int *n)
 {
 	*n = 0;
+	stopped = 0;
 	if (!ftab_init()) return NULL;
-	Vec odd = {0}, even = {0};
-	prefix_ks(ks3x, 1, &odd);
-	prefix_ks(ks3x, 0, &even);
+	if (!dsPre[0][1]) lin_build(dsPre, ds_pre), lin_build(dsPost, ds_post);
+	KeySet set = {0};
+	DsLoop *d = calloc(1, sizeof(DsLoop));
+	uint64_t *keys = NULL;
+	if (!d || (in && !keyset_init(&set, in, nin))) goto out;
+	d->odd = prefix_ks(ks3x, 1, 0, 50);
+	d->even = prefix_ks(ks3x, 0, 50, 100);
 	// no_par: every (o, e, top) yields one post-nt state (the parity filter is skipped); roll it back
 	// over uid ^ nt and read the key.
-	size_t cap = in ? (size_t)nin + 1 : odd.n * even.n * 64 + 1;
-	uint64_t *keys = malloc(cap * sizeof(uint64_t));
-	if (keys && odd.a && even.a) {
-		uint32_t inn = uid ^ nt, cnt = 0;
-		if (!dsPre[0][1]) lin_build(dsPre, ds_pre), lin_build(dsPost, ds_post);
-		uint32_t z[2] = { 0, 0 };
-		rollback_word(z, inn, 0);
-		uint64_t kc = get_lfsr(z[0], z[1]); // uid ^ nt's share of the key
-		for (size_t oi = 0; oi < odd.n; oi++)
-			for (size_t ei = 0; ei < even.n; ei++) {
-				tickMore();
-				uint32_t o = odd.a[oi], e = even.a[ei];
-				for (int top = 0; top < 64; top++) {
-					o += 1u << 21;
-					e += ((top & 7 ? 0 : 1) + 1) << 21;
-					// check_pfx_parity, no_par: advance to nt_diff 0, roll back to the post-nt state. Only
-					// {nr} (keystream fed back) isn't linear.
-					uint64_t v = ((o ^ fastfwd[1][0]) & 0xFFFFFF) | (uint64_t)((e ^ fastfwd[0][0]) & 0xFFFFFF) << 24;
-					v = lin_apply(dsPre, v);
-					uint32_t s[2] = { v & 0xFFFFFF, v >> 24 };
-					rollback_word_fb(s, nrWire);
-					uint64_t k = lin_apply(dsPost, (s[0] & 0xFFFFFF) | (uint64_t)(s[1] & 0xFFFFFF) << 24) ^ kc;
-					if (!in || has_u64(in, nin, k)) keys[cnt++] = k;
-				}
+	size_t total = d->odd.n * d->even.n * 64;
+	if (stopped || !(keys = malloc((in ? 0 : total) * sizeof(uint64_t) + sizeof(uint64_t)))) goto out;
+	uint32_t z[2] = { 0, 0 };
+	rollback_word(z, uid ^ nt, 0);
+	d->kc = get_lfsr(z[0], z[1]); // uid ^ nt's share of the key
+	d->nrWire = nrWire;
+	d->in = &set;
+	d->keys = in ? NULL : keys;
+	each(DS_ITEMS, dsItem, d, 100, in ? 1000 : 800);
+	size_t cnt = total;
+	if (in) {
+		cnt = 0;
+		for (int c = 0; c < DS_ITEMS; c++) cnt += d->part[c].n;
+		uint64_t *k = realloc(keys, (cnt + 1) * sizeof(uint64_t));
+		if (k) {
+			keys = k, cnt = 0;
+			for (int c = 0; c < DS_ITEMS; c++) {
+				memcpy(keys + cnt, d->part[c].a, d->part[c].n * sizeof(uint64_t));
+				cnt += d->part[c].n;
 			}
-		// sort + unique so the caller can intersect runs by a merge.
-		qsort(keys, cnt, sizeof(uint64_t), cmp_u64);
-		uint32_t u = 0;
-		for (uint32_t i = 0; i < cnt; i++)
-			if (!u || keys[i] != keys[u - 1]) keys[u++] = keys[i];
-		*n = u;
-		uint64_t *k = realloc(keys, (u + 1) * sizeof(uint64_t));
-		if (k) keys = k;
-	} else {
+		} else {
+			stopped = 1;
+		}
+	}
+	size_t u = stopped ? 0 : sort_unique(keys, cnt);
+	if (stopped) {
 		free(keys);
 		keys = NULL;
+		goto out;
 	}
-	free(odd.a);
-	free(even.a);
+	*n = u;
+	uint64_t *k = realloc(keys, (u + 1) * sizeof(uint64_t));
+	if (k) keys = k;
+out:
+	if (d) {
+		for (int c = 0; c < DS_ITEMS; c++) free(d->part[c].a);
+		free(d->odd.a);
+		free(d->even.a);
+	}
+	free(d);
+	free(set.idx);
 	return keys;
 }

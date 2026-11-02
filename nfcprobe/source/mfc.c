@@ -733,7 +733,7 @@ static bool nestedWindow; // the last nestedOnce got as far as the distance wind
 // leaves about 1 in 8. par: the raw wire bits (pm3's are XORed with the encrypted byte's parity), bit 3
 // = first byte.
 #define NESTED_WIN 16
-static int distCands(u32 nt0, u32 enc, u8 par, u32 d, u32 *nt, u32 *ks)
+static int distCands(u32 nt0, u32 enc, u8 par, u32 d, uint32_t *nt, uint32_t *ks)
 {
 	int n = 0;
 	for (int i = 0; i <= 2 * NESTED_WIN; i++) {
@@ -792,7 +792,7 @@ static int nestedOnce(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 
 		else logp("  nested: no key at distance %lu, calibrated %lu\n", nestedDist, d);
 		char op[sizeof(prog.op)];
 		snprintf(op, sizeof(op), "%s", prog.op);
-		u32 ntA[2 * NESTED_WIN + 1], ksA[2 * NESTED_WIN + 1], ntB[2 * NESTED_WIN + 1], ksB[2 * NESTED_WIN + 1];
+		uint32_t ntA[2 * NESTED_WIN + 1], ksA[2 * NESTED_WIN + 1], ntB[2 * NESTED_WIN + 1], ksB[2 * NESTED_WIN + 1];
 		int na = distCands(nt0, enc1, par1, d, ntA, ksA), nb = distCands(nt0b, enc, par2, d, ntB, ksB);
 		nestedWindow = true;
 		logp("  nested: %d / %d nonces within %d fit the parity\n", na, nb, NESTED_WIN);
@@ -870,6 +870,73 @@ static bool dsDist(u32 a, u32 b, int *d)
 	return false;
 }
 
+// The last card's calibration (UID, ticks per step, grid spacing): checked, not measured again.
+static u32 dsUid, dsSync;
+static double dsTps;
+
+// One run's candidates, in a thread of its own while the chip collects the next run: only the keys
+// also in the earlier runs' list. The common-prefix recovery misses the key now and then (~1 run in
+// 10, pm3's too): with nothing in common, this run's whole list, as pm3 does. out NULL: out of memory
+// (~1 run in 20 has over a million candidates) or stopped.
+typedef struct {
+	u32 uid;
+	DsRun r;
+	const u64 *in;
+	int nin, n;
+	u64 *out;
+	u32 collectMs, ms;
+} DsSolve;
+
+static void dsSolve(void *arg)
+{
+	DsSolve *s = arg;
+	u64 t = osGetTime();
+	s->n = 0;
+	s->out = s->in ? crapto1_darkside(s->uid, s->r.nt, DS_NR, s->r.ks, s->in, s->nin, &s->n) : NULL;
+	if (!s->n && !mfCancel) free(s->out), s->out = crapto1_darkside(s->uid, s->r.nt, DS_NR, s->r.ks, NULL, 0, &s->n);
+	s->ms = osGetTime() - t;
+}
+
+static int dsStopTick(int permille)
+{
+	return mfCancel;
+}
+
+// A solved run: its list replaces the earlier one (common); few enough are tried on the card. 1 = key
+// found, -1 = monitor error, 0 = go on.
+static int dsUse(DsSolve *s, u64 **common, int *nc, int *runs, u8 block, bool keyB, u8 keyOut[6], u64 t0)
+{
+	free(*common);
+	*common = s->out, *nc = s->n;
+	if (!s->out) {
+		if (!mfCancel) logp("  darkside: out of memory, another run\n");
+		return 0;
+	}
+	logp("  darkside: run %d nt %08lX ks %02X%02X%02X%02X%02X%02X%02X%02X (%lu ms), %d candidates (%lu ms) at %llu ms\n",
+		++*runs, s->r.nt, s->r.ks[0], s->r.ks[1], s->r.ks[2], s->r.ks[3], s->r.ks[4], s->r.ks[5], s->r.ks[6],
+		s->r.ks[7], s->collectMs, s->n, s->ms, osGetTime() - t0);
+	if (*nc > DS_CHECK) return 0;
+	u8 keys[DS_CHECK][6];
+	for (int i = 0; i < *nc; i++) keyBytes((*common)[i], keys[i]);
+	int h = mfChkKeys(block, keyB, (const u8 (*)[6])keys, *nc);
+	if (h == -3) return -1;
+	if (h >= 0) {
+		memcpy(keyOut, keys[h], 6);
+		logp("  darkside: key in %llu ms\n", osGetTime() - t0);
+		return 1;
+	}
+	free(*common), *common = NULL, *nc = 0; // none auths (a miss on both sides of a match?): start over
+	return 0;
+}
+
+static void dsJoin(Thread *th)
+{
+	if (!*th) return;
+	threadJoin(*th, U64_MAX);
+	threadFree(*th);
+	*th = NULL;
+}
+
 int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 {
 	if (card.uidLen != 4 && card.uidLen != 7 && card.uidLen != 10) FAIL(0, "no card");
@@ -885,66 +952,73 @@ int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 	int d;
 	u64 t0 = osGetTime();
 
-	// Ticks per PRNG step, from two AUTHs DS_PROBE ticks apart.
 	progOp("Darkside: calibrating");
 	double tps = 0;
-	for (int t = 0; t < 8 && !tps && !mfCancel; t++) {
-		if (dsRun(a, len, DS_PROBE, 0, 2, &r) < 0) return -1;
-		if (dsDist(r.nt, r.nt1, &d) && d) tps = (double)DS_PROBE / abs(d);
+	u32 sync = 0;
+	if (uid == dsUid) tps = dsTps, sync = dsSync;
+	for (bool fresh = !sync;; fresh = true) {
+		if (fresh) { // ticks per PRNG step, from two AUTHs DS_PROBE ticks apart
+			tps = 0;
+			for (int t = 0; t < 8 && !tps && !mfCancel; t++) {
+				if (dsRun(a, len, DS_PROBE, 0, 2, &r) < 0) return -1;
+				if (dsDist(r.nt, r.nt1, &d) && d) tps = (double)DS_PROBE / abs(d);
+			}
+			if (!tps) FAIL(0, mfCancel ? "stopped" : "darkside: no nonces to calibrate");
+			sync = 65535 * tps + 0.5;
+		}
+		// Grid spacing = one PRNG period (65535 steps): the per-fire nonce advance is deterministic, so
+		// close the loop on it until it is well inside the op's steering window.
+		bool near = false;
+		for (int t = 0; t < (fresh ? 16 : 4) && !near && !mfCancel; t++) {
+			progStep(t, 16);
+			if (dsRun(a, len, sync, 0, 2, &r) < 0) return -1;
+			if (!dsDist(r.nt, r.nt1, &d)) continue;
+			if (!(near = abs(d) <= 8)) sync -= (int)(d * tps + (d < 0 ? -0.5 : 0.5));
+		}
+		if (near || fresh || mfCancel) break;
+		logp("  darkside: the last calibration is off\n");
 	}
-	if (!tps) FAIL(0, mfCancel ? "stopped" : "darkside: no nonces to calibrate");
-	// Grid spacing = one PRNG period (65535 steps): the per-fire nonce advance is deterministic, so
-	// close the loop on it until it is well inside the op's steering window.
-	u32 sync = 65535 * tps + 0.5, tq = tps * 256 + 0.5;
-	for (int t = 0; t < 16 && !mfCancel; t++) {
-		progStep(t, 16);
-		if (dsRun(a, len, sync, 0, 2, &r) < 0) return -1;
-		if (!dsDist(r.nt, r.nt1, &d)) continue;
-		if (abs(d) <= 8) break;
-		sync -= (int)(d * tps + (d < 0 ? -0.5 : 0.5));
-	}
+	dsUid = uid, dsTps = tps, dsSync = sync;
+	u32 tq = tps * 256 + 0.5;
 	logp("  darkside: %.3f ticks/step, sync %lu (%llu ms)\n", tps, sync, osGetTime() - t0);
 
+	// Run t's candidates are worked out while the chip collects run t + 1, a step below this thread
+	// (which waits on the chip most of the time) and the UI; the solve spreads over the other cores.
+	crapto1_tick = dsStopTick;
 	u64 *common = NULL;
-	int nc = 0, runs = 0;
+	int nc = 0, runs = 0, res = 0;
+	DsSolve s;
+	Thread th = NULL;
+	bool pending = false;
 	for (int t = 0; t < DS_RUNS && !mfCancel; t++) {
-		progOp("Darkside: run %d (%d complete)", t + 1, runs);
+		progOp("Darkside: run %d (%d solved)", t + 1, runs);
 		progStep(t, DS_RUNS);
-		if (dsRun(a, len, sync, tq, DS_ITER, &r) < 0) return free(common), -1;
+		u64 tc = osGetTime();
+		if (dsRun(a, len, sync, tq, DS_ITER, &r) < 0) {
+			res = -1;
+			break;
+		}
+		tc = osGetTime() - tc;
 		if (r.mask != 0xFF) {
 			logp("  darkside: incomplete (mask %02X, %d hits)\n", r.mask, r.hits);
 			continue;
 		}
-		// Only the keys also in the earlier runs' list. The common-prefix recovery misses the key now
-		// and then (~1 run in 10, pm3's too): with nothing in common, go on from this run's whole
-		// list, as pm3 does.
-		int n = 0;
-		u64 *cand = common ? crapto1_darkside(uid, r.nt, DS_NR, r.ks, common, nc, &n) : NULL;
-		if (!n) free(cand), cand = crapto1_darkside(uid, r.nt, DS_NR, r.ks, NULL, 0, &n);
-		if (!cand) { // a huge list (~1 run in 20 has over a million candidates): skip this nonce
-			logp("  darkside: out of memory, another run\n");
-			if (common) free(common), common = NULL;
-			continue;
+		if (pending) {
+			dsJoin(&th);
+			pending = false;
+			if ((res = dsUse(&s, &common, &nc, &runs, block, keyB, keyOut, t0))) break;
 		}
-		free(common);
-		runs++;
-		logp("  darkside: run %d nt %08lX (%d hits), %d candidates (%llu ms)\n", runs, r.nt, r.hits, n,
-			osGetTime() - t0);
-		common = cand, nc = n;
-		if (nc > DS_CHECK) continue;
-		u8 keys[DS_CHECK][6];
-		for (int i = 0; i < nc; i++) keyBytes(common[i], keys[i]);
-		int h = mfChkKeys(block, keyB, (const u8 (*)[6])keys, nc);
-		if (h == -3) return free(common), -1;
-		if (h >= 0) {
-			memcpy(keyOut, keys[h], 6);
-			free(common);
-			logp("  darkside: key in %llu ms\n", osGetTime() - t0);
-			return 1;
-		}
-		free(common), common = NULL; // none auths (a miss on both sides of a match?): start over
+		s = (DsSolve){ uid, r, common, nc, 0, NULL, tc };
+		pending = true;
+		if (!(th = threadCreate(dsSolve, &s, 0x8000, 0x31, -2, false))) dsSolve(&s);
+	}
+	if (pending) {
+		dsJoin(&th);
+		if (!res && !mfCancel) res = dsUse(&s, &common, &nc, &runs, block, keyB, keyOut, t0);
+		else if (s.out != common) free(s.out);
 	}
 	free(common);
+	if (res) return res;
 	if (mfCancel) FAIL(0, "stopped");
 	FAIL(0, runs ? "darkside: no key from %d runs" : "darkside: no complete run (no NACK bug?)", runs);
 }
