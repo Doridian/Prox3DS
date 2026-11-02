@@ -6,6 +6,12 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <netdb.h>
+#include <poll.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <3ds.h>
 
 #include "app.h"
@@ -14,10 +20,10 @@
 #include "probe.h"
 #include "ui.h"
 
-#define OATH_CFG MF_DIR "/oath.txt" // utc_offset=<minutes>: the console clock minus UTC
+#define OATH_CFG MF_DIR "/oath.txt" // clock_offset=<seconds>: the console clock minus UTC
 
 static OathInfo oi;
-static int utcOffset; // minutes
+static s64 clockOffset; // seconds: the console clock minus UTC (time zone, or a clock set wrong)
 static bool cfgLoaded;
 static u8 pwKey[16], pwId[8]; // the password's key, for the device it was entered for
 static bool pwKnown;
@@ -32,7 +38,7 @@ static void cfgLoad(void)
 	FILE *f = fopen(OATH_CFG, "r");
 	char line[64];
 	while (f && fgets(line, sizeof(line), f))
-		if (!strncmp(line, "utc_offset=", 11)) utcOffset = atoi(line + 11);
+		if (!strncmp(line, "clock_offset=", 13)) clockOffset = strtoll(line + 13, NULL, 10);
 	if (f) fclose(f);
 }
 
@@ -41,13 +47,13 @@ static void cfgSave(void)
 	mkdir(MF_DIR, 0777);
 	FILE *f = fopen(OATH_CFG, "w");
 	if (!f) return;
-	fprintf(f, "utc_offset=%d\n", utcOffset);
+	fprintf(f, "clock_offset=%lld\n", clockOffset);
 	fclose(f);
 }
 
 static u64 unixNow(void)
 {
-	return (u64)time(NULL) - (s64)utcOffset * 60;
+	return (u64)time(NULL) - clockOffset;
 }
 
 // --- the operations ---
@@ -194,9 +200,12 @@ static void oathDraw(void)
 	u64 t = unixNow();
 	time_t tt = t;
 	struct tm *tm = gmtime(&tt);
-	uiText(12, 26, S_SMALL, uiCol[COL_DIM], "UTC %04d-%02d-%02d %02d:%02d:%02d (console clock %s%d:%02d)",
-		tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, utcOffset < 0 ? "-" : "+",
-		abs(utcOffset) / 60, abs(utcOffset) % 60);
+	char off[48];
+	s64 a = clockOffset < 0 ? -clockOffset : clockOffset;
+	if (a >= 86400) snprintf(off, sizeof(off), "console clock corrected");
+	else snprintf(off, sizeof(off), "console clock %s%lld:%02lld", clockOffset < 0 ? "-" : "+", a / 3600, a / 60 % 60);
+	uiText(12, 26, S_SMALL, uiCol[COL_DIM], "UTC %04d-%02d-%02d %02d:%02d:%02d (%s)", tm->tm_year + 1900, tm->tm_mon + 1,
+		tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, off);
 	int left = 30 - t % 30;
 	uiBar(UI_W - 112, 29, 70, 7, left / 30.0f, uiCol[left <= 5 ? COL_WARN : COL_ACCENT]);
 	uiTextRight(UI_W - 12, 26, S_SMALL, uiCol[COL_DIM], "%2d s", left);
@@ -365,23 +374,77 @@ static void clearPw(void)
 
 static void offsetSet(s64 v)
 {
-	utcOffset = v;
+	clockOffset = v * 60;
 	cfgSave();
 }
 
-static void clockSet(void)
+static void clockZone(void)
 {
 	entryDec("UTC offset", "Minutes the console clock is ahead of UTC (Berlin in winter: 60, New York in "
-		"summer: -240). The 3DS keeps local time without a zone, and TOTP needs UTC.", -720, 840, utcOffset, offsetSet);
+		"summer: -240). The 3DS keeps local time without a zone, and TOTP needs UTC.", -720, 840, clockOffset / 60, offsetSet);
+}
+
+// SNTP: one request to pool.ntp.org, its transmit time against the console clock.
+static s64 ntpOffset;
+static char ntpWhy[64];
+
+static void runNtp(void)
+{
+	*ntpWhy = 0;
+	struct hostent *h = gethostbyname("pool.ntp.org");
+	if (!h || !h->h_addr_list[0]) {
+		snprintf(ntpWhy, sizeof(ntpWhy), "pool.ntp.org not found (no wifi?)");
+		return;
+	}
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0) {
+		snprintf(ntpWhy, sizeof(ntpWhy), "no socket");
+		return;
+	}
+	struct sockaddr_in sa = { .sin_family = AF_INET, .sin_port = htons(123) };
+	memcpy(&sa.sin_addr, h->h_addr_list[0], 4);
+	u8 pkt[48] = { 0x23 }; // LI 0, version 4, client
+	for (int tries = 0; tries < 3 && !mfCancel; tries++) {
+		sendto(fd, pkt, sizeof(pkt), 0, (struct sockaddr *)&sa, sizeof(sa));
+		struct pollfd p = { fd, POLLIN, 0 };
+		if (poll(&p, 1, 1500) <= 0) continue;
+		u8 a[48];
+		if (recv(fd, a, sizeof(a), 0) < 48) continue;
+		u32 secs = a[40] << 24 | a[41] << 16 | a[42] << 8 | a[43];
+		if (!secs) continue;
+		s64 utc = (s64)secs - 2208988800LL; // NTP counts from 1900
+		ntpOffset = (s64)time(NULL) - utc;
+		close(fd);
+		logp("NTP: console clock minus UTC = %lld s\n", ntpOffset);
+		return;
+	}
+	close(fd);
+	snprintf(ntpWhy, sizeof(ntpWhy), mfCancel ? "cancelled" : "no answer from pool.ntp.org");
+}
+
+static void doneNtp(void)
+{
+	if (*ntpWhy) {
+		if (!mfCancel) msgBox("Clock", "%s", ntpWhy);
+		return;
+	}
+	clockOffset = ntpOffset;
+	cfgSave();
+	toast("Clock set from the internet");
+}
+
+static void clockNtp(void)
+{
+	jobStart("Asking pool.ntp.org", runNtp, doneNtp, true);
 }
 
 static void oathMenu(void)
 {
 	static const MenuItem items[] = {
 		{ "Add account", addAccount }, { "Delete account", delAsk }, { "Set password", setPw },
-		{ "Remove password", clearPw }, { "Clock (UTC offset)", clockSet },
+		{ "Remove password", clearPw }, { "Clock: from the internet", clockNtp }, { "Clock: UTC offset", clockZone },
 	};
-	popup("YubiKey OATH", items, 5);
+	popup("YubiKey OATH", items, 6);
 }
 
 static void oathInput(u32 kDown, u32 kRepeat)

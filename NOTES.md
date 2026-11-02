@@ -1271,7 +1271,14 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   Load file byte-identical to gpload.py's. Card left as before (test applet installed).
 - One INITIALIZE UPDATE got "no answer" right after a scan (first GP open); the retry and every later one
   worked. Watch for it.
-- OATH (oath.c): written from yubikey-manager / ykneo-oath; NOT tested on hardware yet (no YubiKey here).
+- OATH (oath.c) verified on the user's YubiKey 5 NFC (OATH 5.4.3, no password): LIST, CALCULATE ALL, DELETE.
+  Test account nfcprobe:test (JBSWY3DPEHPK3PXP) added by APDU: 3DS code 940131 = Python TOTP; deleted from the
+  app again (0 accounts). Not yet tried: password, HOTP, touch accounts, adding from the app (swkbd).
+- YubiKey: random UID, new on wake-ups (seen 5FC544F567B53E and 2749CB0301CB49); ROM scan reports SAK B3.
+  iso14aSelect now falls back to a real anticollision (93/95/97 20, bit mode; select level 2+ in data mode)
+  when the remembered UID gets no answer; checked as raw frames over the net, not yet hit in the app.
+- Console clock is set to 2052: OATH clock correction is now seconds (oath.txt clock_offset=), set over SNTP
+  (pool.ntp.org) or as a UTC offset in minutes.
   `ant oath` in javacard/ builds Yubico's ykneo-oath (clone in javacard/ykneo-oath, gitignored; applet
   A000000527210101, package A0000005272101) to install on the J3H145 via the app as a stand-in.
 - Net op 0x0A OP_PUT_FILE (`nfcnet.py HOST put LOCAL [DEST]`): files under sdmc:/nfcprobe/.
