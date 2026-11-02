@@ -109,3 +109,4 @@ void mfuCloneAsk(const MfuDump *d, const char *name); // confirm, then mfuCloneS
 void ndefOpenMfu(void); // read the card on the reader, then its NDEF screen (ndefui.c)
 void amiiboOpenCard(void); // read the NTAG215 on the reader, then the Amiibo screen (amiiboui.c)
 void amiiboOpenDump(const MfuDump *d, const char *name); // the same for a saved dump
+void amiiboOpenMenu(void); // read, new figures from the figure list, its download

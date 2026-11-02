@@ -597,7 +597,7 @@ static void menuExit(void)
 	quit = true;
 }
 
-static MenuEntry rootEntries[5 + NFAMILIES + 1];
+static MenuEntry rootEntries[6 + NFAMILIES + 1];
 static void rootExtra(float y);
 static Menu rootMenu = { "nfcprobe", rootEntries, 0, rootExtra };
 
@@ -628,6 +628,8 @@ static void rootInit(void)
 		rootEntries[n++] = (MenuEntry){ families[i]->name, families[i]->help, families[i]->menu };
 	rootEntries[n++] = (MenuEntry){ "iClass / PicoPass", "HID iClass (legacy and elite keys): key search, dump, the "
 		"Wiegand credential. Not in the generic scan: iClass is ISO15693, polled on its own.", iclassOpenMenu };
+	rootEntries[n++] = (MenuEntry){ "Amiibo", "Read and copy Amiibo with this console's own keys, or make new ones "
+		"from the figure list (AmiiboAPI, downloaded over Wi-Fi).", amiiboOpenMenu };
 	rootEntries[n++] = (MenuEntry){ "Log", "Everything the card operations logged (also in sdmc:/nfcprobe.log).", openLog };
 	rootEntries[n++] = (MenuEntry){ "Chip info", "Probe the NFC controller: reset, init, firmware patch version.", menuProbe };
 	rootEntries[n++] = (MenuEntry){ "Exit", "Give NFC back to the system and quit.", menuExit };

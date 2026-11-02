@@ -6,6 +6,8 @@ int amiiboKeysLoad(void) { return 1; }
 const char *amiiboWhy(void) { return "no key table in the NFC module"; }
 int amiiboUnpack(const u8 *tag, Amiibo *a) { return 1; }
 int amiiboImage(const Amiibo *a, const u8 head[12], bool fresh, u8 *out) { return 0; }
+int amiiboNew(const u8 id[8], Amiibo *a) { return 0; }
+int amiiboDbDownload(const char *path) { return 0; }
 
 // Show the Amiibo screen for a decrypted figure, as if just read from card c (name: from a dump)
 void simAmiibo(const Amiibo *a, const u8 *tag, const Card *c, const char *name)
@@ -21,3 +23,4 @@ void simAmiibo(const Amiibo *a, const u8 *tag, const Card *c, const char *name)
 
 void simAmiiboActions(void) { actions(); }
 void simAmiiboCopy(bool fresh, bool lock) { copyAsk(fresh, lock); }
+void simAmiiboDownloadFailed(void) { dlResult = 0; doneDownload(); }

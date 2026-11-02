@@ -1295,6 +1295,17 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   same UID as shown, the image rebuilt and rewritten (PWD / PACK surely from the UID, as AUTH0 04 turns the
   password on), PWD_AUTH must give PACK 8080, then the lock stage. Can't be undone: the tag can't take
   another Amiibo after it.
+- Figure list + new figures (2026-11-02, amiibodb.c): root menu "Amiibo" -> Read / New / Download figure list.
+  The list is AmiiboAPI's database/amiibo.json (~180 KB, 932 figures) through jsDelivr
+  (cdn.jsdelivr.net/gh/N3evin/AmiiboAPI@master/...): raw.githubusercontent.com only offers AES-GCM suites
+  and the 3DS SSL module fails the handshake with D8A0A03C; jsDelivr takes AES-CBC. httpc, SSL verify off
+  (old CAs, clock 2052), to sdmc:/nfcprobe/amiibo.json via
+  .new + load check + rename (`nfcnet put amiibo.json` works too). Parsed in place: amiibos (16-hex-digit IDs
+  -> name), amiibo_series (ID byte 6), game_series (first 12 bits), characters (bytes 0-1), types (byte 3).
+  New figure (amiiboNew): plain zeroed, page 4 A5 00 00 00, model info at 0x1DC, the 4 bytes after it and the
+  32-byte keygen salt random (ps:ps), then amiiboImage(fresh) for the blank's UID with the set that verified
+  the last figure read, else set 1. Download + list checked on the 3DS (180938 bytes, 932 figures); writing a
+  new figure onto a blank and System Settings accepting it NOT yet tried.
 
 ## Smart card family, GlobalPlatform, YubiKey OATH (nfcprobe) -- 2026-11-01
 - Generic scan: DESFire's probe returns FAMILY_PASS when GetVersion fails, the next matching family (scFamily,

@@ -263,6 +263,30 @@ static void sdSetup(void)
 		snprintf(p, sizeof(p), MF_DUMPS "/%08X.bin", 0x10000000 * (i + 1) + i);
 		writeFile(p, mf1k.data, 1024, t0 - 86400 - i);
 	}
+	k = fopen(MF_DIR "/amiibo.json", "w"); // a few of AmiiboAPI's figures, long names and escapes
+	fprintf(k, "{\"amiibos\": {\n"
+		"\"0x06420000035f1102\": {\"name\": \"Pikmin\", \"release\": {\"eu\": \"2017-07-28\", \"jp\": null}},\n"
+		"\"0x0000000000000002\": {\"name\": \"Mario\", \"release\": {}},\n"
+		"\"0x0000000000340102\": {\"name\": \"Mario - Wedding\"},\n"
+		"\"0x0001000000350102\": {\"name\": \"Peach - Wedding\"},\n"
+		"\"0x0000010000190002\": {\"name\": \"Mario\"},\n"
+		"\"0x01000000037c0002\": {\"name\": \"Link - Ocarina of Time\"},\n"
+		"\"0x01000000034b0902\": {\"name\": \"Link - The Legend of Zelda: Breath of the Wild (Archer Pose)\"},\n"
+		"\"0x0181010100b40502\": {\"name\": \"Isabelle - Winter\"},\n"
+		"\"0x22430000044a1d02\": {\"name\": \"Ren\\u00e9e\"},\n"
+		"\"0x3200000000300002\": {\"name\": \"Sonic\"},\n"
+		"\"0x1f000000000a0002\": {\"name\": \"Kirby\"},\n"
+		"\"0x0080000002e00d02\": {\"name\": \"Pikachu\"},\n"
+		"\"0x00c00000037b0002\": {\"name\": \"Bowser\"},\n"
+		"\"0x0240000002ec0002\": {\"name\": \"Toon Link\"}\n"
+		"},\n\"amiibo_series\": {\"0x00\": \"Super Smash Bros.\", \"0x01\": \"Super Mario Bros.\", "
+		"\"0x05\": \"Animal Crossing\", \"0x09\": \"The Legend of Zelda\", \"0x11\": \"Pikmin\", "
+		"\"0x1d\": \"Xenoblade Chronicles 3 and its rather long amiibo series name\"},\n"
+		"\"game_series\": {\"0x000\": \"Super Mario\", \"0x010\": \"The Legend of Zelda\", \"0x018\": \"Animal Crossing\", "
+		"\"0x064\": \"Pikmin\", \"0x320\": \"Sonic the Hedgehog\", \"0x1f0\": \"Kirby\", \"0x224\": \"Xenoblade\"},\n"
+		"\"types\": {\"0x00\": \"Figure\", \"0x01\": \"Card\", \"0x02\": \"Yarn\"},\n"
+		"\"characters\": {\"0x0000\": \"Mario\", \"0x0001\": \"Peach\", \"0x0642\": \"Pikmin\", \"0x0100\": \"Link\"}\n}\n");
+	fclose(k);
 	static const char *mfuNames[] = { "04C8E3BA064F80.bin", "04C8E3BA064F80-2.bin", "11223300000000.bin",
 		"amiibo_super_mario_odyssey_wedding_peach_backup_2.bin" };
 	for (int i = 0; i < 4; i++) {
@@ -385,7 +409,7 @@ static void amiiboFixture(Amiibo *a, u8 *tag, bool ok, bool locked)
 }
 
 static void amiiboOk(void) { Amiibo a; u8 t[AMIIBO_TAG]; amiiboFixture(&a, t, true, true); simAmiibo(&a, t, &card7, NULL); }
-static void amiiboNew(void)
+static void amiiboNewFile(void)
 {
 	Amiibo a;
 	u8 t[AMIIBO_TAG];
@@ -399,6 +423,16 @@ static void amiiboUnlocked(void) { Amiibo a; u8 t[AMIIBO_TAG]; amiiboFixture(&a,
 static void amiiboBad(void) { Amiibo a; u8 t[AMIIBO_TAG]; amiiboFixture(&a, t, false, true); simAmiibo(&a, t, &card7, NULL); }
 static void amiiboCopyLock(void) { simAmiiboCopy(false, true); }
 static void amiiboCopyFresh(void) { simAmiiboCopy(true, false); }
+static void amiiboUnknown(void)
+{
+	Amiibo a;
+	u8 t[AMIIBO_TAG];
+	amiiboFixture(&a, t, true, true);
+	a.charId[0] = 0x7E; // in no list
+	simAmiibo(&a, t, &card7, NULL);
+}
+static void kbdMario(void) { simKbdText = "mario"; }
+static void kbdNone(void) { simKbdText = "nothing like it"; }
 
 static void ndefEmptyUrl(void) { simNdefUrl("https://example.com/a/rather/long/path?with=query"); }
 static void pickAmiibo(void)
@@ -696,7 +730,13 @@ static const SimStep script[] = {
 	CALL(amiiboCopyLock), SHOT("amiibo_copy_lock"), B, CALL(amiiboCopyFresh), SHOT("amiibo_copy_fresh"), B,
 	CALL(reset), CALL(amiiboUnlocked), CALL(simAmiiboActions), SHOT("amiibo_actions_unlocked"), KEYS(KEY_UP), A,
 	SHOT("amiibo_lock_confirm"), A, SHOT("amiibo_lock_confirm2"), B,
-	CALL(reset), CALL(amiiboNew), SHOT("amiibo_new_file"), CALL(reset), CALL(amiiboBad), SHOT("amiibo_bad"), CALL(reset), CALL(ndefEmpty), SHOT("ndef_empty"),
+	CALL(reset), CALL(amiiboUnknown), SHOT("amiibo_unknown"),
+	CALL(reset), CALL(amiiboOpenMenu), SHOT("amiibo_menu"), D, SHOT("amiibo_menu_new"), D, SHOT("amiibo_menu_download"),
+	CALL(simAmiiboDownloadFailed), SHOT("amiibo_download_failed"), B, U, A, SHOT("amiibo_list"),
+	R, SHOT("amiibo_list_series"), R, R, R, SHOT("amiibo_list_series4"), KEYS(KEY_L), SHOT("amiibo_list_series_back"),
+	A, SHOT("amiibo_list_popup"), A, SHOT("amiibo_list_confirm"), B, D, A, SHOT("amiibo_list_confirm_lock"), B,
+	CALL(kbdMario), Y, SHOT("amiibo_list_search"), CALL(kbdNone), Y, SHOT("amiibo_list_nomatch"), B,
+	CALL(reset), CALL(amiiboNewFile), SHOT("amiibo_new_file"), CALL(reset), CALL(amiiboBad), SHOT("amiibo_bad"), CALL(reset), CALL(ndefEmpty), SHOT("ndef_empty"),
 	CALL(reset), CALL(pickN215), SHOT("mfu_pick_n215_lim5"), D, A, SHOT("mfu_pick_confirm_lim5"), B,
 	CALL(reset), CALL(pickAmiibo), SHOT("mfu_pick_amiibo"), D, D, D, D, D, D, D, D, D, D, SHOT("mfu_pick_scrolled"),
 	CALL(reset), CALL(pickUlc), SHOT("mfu_pick_ulc"), A, SHOT("mfu_pick_ulc_entry"), B,

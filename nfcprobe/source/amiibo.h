@@ -41,3 +41,11 @@ int amiiboFresh(const u8 *tag, int set, u8 *out);
 // verified it, and an Amiibo's lock bytes, CC, config, PWD (from the UID) and PACK 8080. For
 // mfuAmiiboWrite. 1 = done, 0 = a does not verify.
 int amiiboImage(const Amiibo *a, const u8 head[12], bool fresh, u8 *out);
+
+// A new figure of model id, as the factory would make it: nothing set up, a random keygen salt, signed
+// with the key set that verified the last figure read (else set 1, the retail one). For amiiboImage
+// (fresh). 1 = done, 0 = no keys.
+int amiiboNew(const u8 id[8], Amiibo *a);
+
+// Fetches AMIIBO_DB_URL (amiibodb.h) into path. 1 = done, 0 = failed (amiiboWhy).
+int amiiboDbDownload(const char *path);

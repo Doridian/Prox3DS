@@ -3,8 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "amiibo.h"
+#include "amiibodb.h"
 #include "dfcrypto.h"
 #include "mfckeys.h"
 #include "probe.h"
@@ -24,6 +26,7 @@ typedef struct {
 
 static MasterKey keys[2][2]; // [set][data, tag]
 static int nsets, loaded;    // loaded: 0 not tried, 1 ok, -1 failed
+static int goodSet = -1;     // the set the last figure read verified with
 
 // 3DS ExeFS .code compression ("backward LZ"), in place in a buffer of the decompressed size.
 static bool blzDecompress(u8 *buf, u32 inLen, u32 *outLen)
@@ -258,6 +261,86 @@ int amiiboImage(const Amiibo *a, const u8 head[12], bool fresh, u8 *out)
 	return 1;
 }
 
+int amiiboNew(const u8 id[8], Amiibo *a)
+{
+	memset(a, 0, sizeof(*a));
+	if (!amiiboKeysLoad()) return 0;
+	u8 *p = a->plain;
+	p[0x028] = 0xA5; // page 4: A5, write counter 0
+	memcpy(p + 0x1DC, id, 8);
+	Result r = psInit(); // 4 bytes after the model info, then the keygen salt: random, as each figure's
+	if (R_SUCCEEDED(r)) {
+		r = PS_GenerateRandomBytes(p + 0x1E4, 0x24);
+		psExit();
+	}
+	if (R_FAILED(r)) FAIL("ps:ps random bytes: %08lX", r);
+	memcpy(a->charId, id, 8);
+	a->set = goodSet >= 0 ? goodSet : nsets - 1; // retail consoles: set 1 (NOTES.md)
+	a->ok = true;
+	return 1;
+}
+
+int amiiboDbDownload(const char *path)
+{
+	Result r = httpcInit(0);
+	if (R_FAILED(r)) FAIL("httpc: %08lX", r);
+	httpcContext c;
+	u32 status = 0, len = 0, cap = 256 << 10, got;
+	u8 *buf = NULL;
+	if (R_FAILED(r = httpcOpenContext(&c, HTTPC_METHOD_GET, AMIIBO_DB_URL, 1))) {
+		httpcExit();
+		FAIL("httpc open: %08lX", r);
+	}
+	// The SSL module's root CAs may be too old (and the clock may be off): no verification.
+	// The worst a forged list does is name figures wrong.
+	httpcSetSSLOpt(&c, SSLCOPT_DisableVerify);
+	httpcAddRequestHeaderField(&c, "User-Agent", "nfcprobe");
+	if (R_FAILED(r = httpcBeginRequest(&c)) || R_FAILED(r = httpcGetResponseStatusCode(&c, &status))) {
+		snprintf(why, sizeof(why), "request: %08lX", r);
+		goto out;
+	}
+	if (status != 200) {
+		snprintf(why, sizeof(why), "HTTP %lu", (unsigned long)status);
+		goto out;
+	}
+	buf = malloc(cap);
+	do {
+		if (len == cap) {
+			u8 *b = len < (8 << 20) ? realloc(buf, cap *= 2) : NULL;
+			if (!b) {
+				snprintf(why, sizeof(why), "too big (over %lu bytes)", (unsigned long)len);
+				goto out;
+			}
+			buf = b;
+		}
+		got = 0;
+		r = httpcDownloadData(&c, buf + len, cap - len, &got);
+		len += got;
+	} while (r == (Result)HTTPC_RESULTCODE_DOWNLOADPENDING);
+	if (R_FAILED(r)) {
+		snprintf(why, sizeof(why), "download: %08lX after %lu bytes", r, (unsigned long)len);
+		goto out;
+	}
+	mkdir(MF_DIR, 0777);
+	FILE *f = fopen(path, "wb");
+	if (!f || fwrite(buf, 1, len, f) != len) {
+		snprintf(why, sizeof(why), "can't write %s", path);
+		if (f) fclose(f);
+		goto out;
+	}
+	fclose(f);
+	logp("amiibo: figure list, %lu bytes\n", (unsigned long)len);
+	free(buf);
+	httpcCloseContext(&c);
+	httpcExit();
+	return 1;
+out:
+	free(buf);
+	httpcCloseContext(&c);
+	httpcExit();
+	return 0;
+}
+
 static void utf16(const u8 *p, int chars, bool le, char *out, u32 max)
 {
 	u32 o = 0;
@@ -280,7 +363,7 @@ int amiiboUnpack(const u8 *tag, Amiibo *a)
 	for (int s = 0; s < nsets && !a->ok; s++) {
 		int h = unpackWith(keys[s], internal, a->plain);
 		a->hmacBits |= h << 2 * s;
-		if (h == 3) a->ok = true, a->set = s;
+		if (h == 3) a->ok = true, a->set = goodSet = s;
 	}
 	const u8 *p = a->plain;
 	memcpy(a->charId, p + 0x1DC, 8);

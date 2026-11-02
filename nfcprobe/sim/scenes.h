@@ -32,6 +32,7 @@ void simNdefUrl(const char *url);
 void simAmiibo(const Amiibo *a, const u8 *tag, const Card *c, const char *name);
 void simAmiiboActions(void);
 void simAmiiboCopy(bool fresh, bool lock);
+void simAmiiboDownloadFailed(void);
 void simMfuPick(const Card *c, const MfuDump *d);
 void simMfuReadKey(const MfuDump *d, int result, const char *path, const MfuKey *cand);
 
