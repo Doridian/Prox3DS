@@ -2,7 +2,7 @@
 PREFIX  := /opt/devkitpro/devkitARM/bin/arm-none-eabi-
 CFLAGS  := -mcpu=cortex-m0 -mthumb -Os -ffreestanding -nostdlib -fno-builtin \
            -fno-tree-loop-distribute-patterns -fno-jump-tables -Wall -Wl,--no-warn-rwx-segments
-TARGETS := null dumper1 dumper2 dumper3 dumper4 memrw
+TARGETS := null dumper1 dumper2 dumper3 dumper4 memrw lmon
 
 all: $(TARGETS:=.bin) ../nfcprobe/data/memrw_ncd.bin
 

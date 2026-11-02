@@ -32,10 +32,10 @@ class Mon:
         # Packets that arrive in place of a monitor answer (RF notifications while polling).
         self.on_other = on_other or (lambda pkt: print("  (other) " + nfcnet.describe(pkt)))
 
-    def load(self):
+    def load(self, image="memrw.bin"):
         nfc = self.nfc
         nfc.takeover()
-        if dumpchip.load(nfc, mkpatch.build(open(CHIP + "memrw.bin", "rb").read())) is None:
+        if dumpchip.load(nfc, mkpatch.build(open(CHIP + image, "rb").read())) is None:
             raise MonError("chip dead after download")
         nfc.cmd(nfcnet.CORE_INIT)
 

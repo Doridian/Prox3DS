@@ -1283,3 +1283,43 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   A000000527210101, package A0000005272101) to install on the J3H145 via the app as a stand-in.
 - Net op 0x0A OP_PUT_FILE (`nfcnet.py HOST put LOCAL [DEST]`): files under sdmc:/nfcprobe/.
 - PC checks: sha1/HMAC/PBKDF2 and base32 vs Python, inflate on deflated zips (stored, fixed, dynamic blocks).
+
+## Card mode (listen-A) exploration (chip/lmon.c, tools/exp/listen/) -- 2026-11-01
+- Stock NCI listen: CORE_SET_CONFIG LA_BIT_FRAME_SDD 30 / LA_PLATFORM_CONFIG 31 / LA_SEL_INFO 32 / LA_NFCID1 33,
+  RF_DISCOVER_MAP `04 02 02` (ISO-DEP, listen, ISO-DEP intf; all of 01/02/04 x listen x 01/02 are accepted),
+  RF_DISCOVER `80 01` (listen A), RF_FIELD_INFO 80 = 1. Same with no patch, the stock B5 patch or memrw.
+  LISTEN_MODE_ROUTING (21 01, tech A + ISO-DEP -> DH) is accepted and changes nothing.
+- The config lands in hardware: 0x5C0CC = LA_BIT_FRAME_SDD & 0x1F, 0x5C0D0 = platform config,
+  0x5C0D4..0x5C0E0 = NFCID1 bytes, 0x5C0FC = SAK. Listen sets 0x5C554 = 0x21 (poll A: 0x10), 0x5C548 1,
+  0x5C560 2, 0x5C5B8 1C. At field-on 0x5C658 / 65C / 660 go 0 -> 6 / 4 / 4 (stay; field level / AGC?).
+- pm3 (ttyACM1): a REQA 50 ms after the pm3 field comes on (`hf 14a raw -k -a -b 7 26`) gets ATQA `04 00`
+  about half the time; nothing ever answers WUPA, 93 20, a later REQA, or `hf 14a reader`. Note `-a`
+  re-runs pm3 setup (field off, on, 50 ms wait); `-k` without `-a` keeps the field.
+- Framer ISR 0x197E in listen: when byte 0x380CC is set it calls 0x1037C instead of the three group
+  handlers and their 0x380D4/D8/DC filters (so filters see nothing in listen). 0x1037C: 0x5C5C0 bit 2 ->
+  0x102B2 (RF status 0x5C5C4, w1c: bit 0 field on -> 0x1028E sets 0x380C8 + listen state machine 0x5EA2(1);
+  bit 1 field lost -> 0x5EA2(4) + RF_FIELD_INFO 0; bit 2 activated -> tech 0x5C584 (0 = A) -> 0x5C560 =
+  0x82, 0x15752). Bit 1 -> TX/RX status 0x5C5D0: bit 1 -> 0x10182 (first RX byte via 0x5C620: 93/95/97,
+  E0 RATS, D4 ATR_REQ), bit 4 = RX done -> 0x10114 (frame from the FIFO, tech A -> 0xFF84 state table).
+  Listen RX also reaches 0x632C/0x63FC (RF mode 0x82). 0x5EA2 arms a 3 s timer (0x38278 = 3000000 us,
+  irq6). RF_FIELD_INFO NTF = 0x1AAFE; event dispatcher 0x4868 (bit 12 field on, bit 20 -> 0x43C8 field off).
+- IRQs (lmon wraps the RAM vectors 0x38040..): IRQ0 framer 0x197E, IRQ4 GPIO-style dispatcher 0x8F0
+  (8 handlers at 0x38838), IRQ5 = host interface (fires per I2C packet), IRQ6 = timer.
+- REQA trace: field on (RF bit 0, 0x5C580 = 1) -> REQA at +50 ms: RF bit 2 (0x5C580 3 -> 0x83), TX/RX
+  0x10 with 1 RX byte, status 0x22 -> ATQA on air. Later frames raise nothing.
+- BLOCKER: the hardware keeps 0x5C580 bit 0 ("field present", listen active) for exactly ~106 ms after
+  field detect, then drops it and does not re-arm while the field stays on (pm3 `hf tune`, steady 38 V).
+  Shown with lmon swallowing every framer IRQ (ROM handler never runs, no NTFs) and on-chip sampling every
+  2 ms: 0 x 58, 1 x 53, then 0. With the ROM the drop comes after 73-253 ms and is reported as field lost;
+  with the field-lost status hidden from the ROM, the hardware re-detects and drops every ~61 ms.
+  Writing 0x5C580 = 1, 0x5C580 0 -> 1, or 0x5C554 0 -> 21 after the drop doesn't re-arm. In swallow mode
+  no field-lost IRQ fires (0x5C5C8 = 5 looks like an IRQ enable: the ROM makes it 6 at field-on).
+  Registers 0x5C540-5FF / 0x5C640-6FF are identical idle vs field-on apart from status and 0x5C658/660,
+  so the 106 ms window is set elsewhere (0x5C000-53F, 0x5C700+, timer / AON / PMU blocks?).
+- Nintendo's nfc module only carries reader-side vendor config (TLV list at .code 0x13B1A1:
+  CB 01 01, A5 01 01, CA [20 bytes], C5 01 01), so card mode was never configured on the 3DS.
+- lmon (chip/lmon.c, own SRAM image, ~3.3 KB): memrw ops 0-4 + op 5 IRQLOG (wrap IRQ0..7, 5 watched
+  registers per IRQ, optional swallow of IRQ0 with register snapshots at field on) + op 6 SAMPLE (on-chip
+  register sampling). AON RAM above 0x68410 is not free (lmon's ring there hung the chip): its buffers live in
+  the SRAM image. chipmon.Mon.load(image) loads another chip image. While RF_DISCOVER polls with no card, the
+  chip stops answering monitor requests (memrw too).
