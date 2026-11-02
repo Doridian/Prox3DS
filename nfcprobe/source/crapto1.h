@@ -15,6 +15,8 @@ int crapto1_recover(uint32_t uid, uint32_t nt, uint32_t ks, uint64_t *out, int m
 // Recover the key from two nested nonces of the same target sector: recovers candidates from the
 // first and keeps the one consistent with the second. Returns the 48-bit key, or 0 if none.
 uint64_t crapto1_nested(uint32_t uid, uint32_t nt1, uint32_t ks1, uint32_t nt2, uint32_t ks2);
+// The same with a choice of second nonces (nt2[j], ks2[j]): the first candidate consistent with any.
+uint64_t crapto1_nested_any(uint32_t uid, uint32_t nt1, uint32_t ks1, const uint32_t *nt2, const uint32_t *ks2, int n2);
 
 // FM11RF08S static encrypted nonce (NOTES.md): candidates from the clear static nonce nt, its
 // encryption ntEnc under the unknown key, and the 4 raw encrypted parity bits (bit 0 = last byte,

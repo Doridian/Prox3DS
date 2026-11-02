@@ -185,7 +185,7 @@ class Nfc:
         6-byte key, or None (reason in self.why)."""
         arg = (bytes([known_block, 1 if known_b else 0]) + bytes(known_key)
                + bytes([target_block, 1 if target_b else 0]))
-        return self.card_call(OP_MF_NESTED, arg, 60)
+        return self.card_call(OP_MF_NESTED, arg, 600)
 
     def mf_magic(self, gen2=False, pwd=GEN4_PWD):
         """-> ({'gen1a', 'gen2', 'gen4', 'uscuid'}, gen4 config, uscuid config) or None (no card). gen2=True also tests

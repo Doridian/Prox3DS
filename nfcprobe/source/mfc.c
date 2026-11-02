@@ -719,6 +719,27 @@ static int solveTick(int permille)
 // Distance that last gave a key on this card (a calibrated one sticks for the card's other keys).
 static u32 nestedDist = NESTED_DIST, nestedDistUid;
 
+// Cards whose PRNG distance jitters (FM11RF32N: 840..850 from one calibration to the next) get every
+// distance within NESTED_WIN of the calibrated one, nearest first, as pm3 does: a candidate nt_T must
+// match the 3 parity bits the encrypted nonce leaks (the 4th needs the next keystream bit), which
+// leaves about 1 in 8. par: the raw wire bits (pm3's are XORed with the encrypted byte's parity), bit 3
+// = first byte.
+#define NESTED_WIN 16
+static int distCands(u32 nt0, u32 enc, u8 par, u32 d, u32 *nt, u32 *ks)
+{
+	int n = 0;
+	for (int i = 0; i <= 2 * NESTED_WIN; i++) {
+		int dd = (int)d + (i & 1 ? -(i + 1) / 2 : i / 2);
+		if (dd < 0) continue;
+		u32 t = prngSuccessor(nt0, dd), k = enc ^ t;
+		bool ok = true;
+		for (int b = 0; b < 3 && ok; b++)
+			ok = oddParity(t >> (24 - 8 * b)) == ((par >> (3 - b) & 1) ^ (k >> (16 - 8 * b) & 1)); // raw bits
+		if (ok) nt[n] = t, ks[n++] = k;
+	}
+	return n;
+}
+
 int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 keyOut[6])
 {
 	u32 nt0, nt0b, enc1, enc, uid = cardUid();
@@ -726,10 +747,11 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 		nestedDist = NESTED_DIST;
 		nestedDistUid = uid;
 	}
-	int r = nestedNonce(kb, key, knownB, tb, tgtB, &nt0, &enc1);
+	u8 ac = knownB ? 0x61 : 0x60, nc = tgtB ? 0x61 : 0x60, par1, par2;
+	int r = nestedCapture(ac, kb, key, nc, tb, &nt0, &enc1, &par1);
 	if (r <= 0) return r;
 	u32 ntTa = prngSuccessor(nt0, nestedDist), ks1 = enc1 ^ ntTa;
-	r = nestedNonce(kb, key, knownB, tb, tgtB, &nt0b, &enc);
+	r = nestedCapture(ac, kb, key, nc, tb, &nt0b, &enc, &par2);
 	if (r <= 0) return r;
 	u32 ntTb = prngSuccessor(nt0b, nestedDist), ks2 = enc ^ ntTb;
 	if (nt0b == nt0) { // static first nonce: the two captures are the same; see nestedNonce2
@@ -754,13 +776,17 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 		logp("  nested: no key at distance %lu, calibrated %lu\n", nestedDist, d);
 		char op[sizeof(prog.op)];
 		snprintf(op, sizeof(op), "%s", prog.op);
-		progOp("%.50s, again", op); // a second solve: its own bar
-		ntTa = prngSuccessor(nt0, d);
-		ntTb = prngSuccessor(nt0b, d);
-		k = crapto1_nested(uid, ntTa, enc1 ^ ntTa, ntTb, enc ^ ntTb);
-		if (mfCancel) FAIL(0, "stopped");
-		if ((r = keyAuths(k, tb, tgtB)) < 0) return -1;
-		if (!r) FAIL(0, "no key (calibrated distance %lu)", d);
+		u32 ntA[2 * NESTED_WIN + 1], ksA[2 * NESTED_WIN + 1], ntB[2 * NESTED_WIN + 1], ksB[2 * NESTED_WIN + 1];
+		int na = distCands(nt0, enc1, par1, d, ntA, ksA), nb = distCands(nt0b, enc, par2, d, ntB, ksB);
+		logp("  nested: %d / %d nonces within %d fit the parity\n", na, nb, NESTED_WIN);
+		r = 0;
+		for (int i = 0; i < na && !r && !mfCancel; i++) {
+			progOp("%.40s, again (%d/%d)", op, i + 1, na); // each solve: its own bar
+			k = crapto1_nested_any(uid, ntA[i], ksA[i], ntB, ksB, nb);
+			if (mfCancel) FAIL(0, "stopped");
+			if ((r = keyAuths(k, tb, tgtB)) < 0) return -1;
+		}
+		if (!r) FAIL(0, "no key (calibrated distance %lu +-%d)", d, NESTED_WIN);
 		nestedDist = d;
 	}
 	if (!r) FAIL(0, "no key (wrong distance?)");

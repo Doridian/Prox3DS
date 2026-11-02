@@ -361,19 +361,25 @@ int crapto1_static(uint32_t uid, uint32_t nt, uint32_t ntEnc, int parEnc, uint64
 
 uint64_t crapto1_nested(uint32_t uid, uint32_t nt1, uint32_t ks1, uint32_t nt2, uint32_t ks2)
 {
+	return crapto1_nested_any(uid, nt1, ks1, &nt2, &ks2, 1);
+}
+
+uint64_t crapto1_nested_any(uint32_t uid, uint32_t nt1, uint32_t ks1, const uint32_t *nt2, const uint32_t *ks2, int n2)
+{
 	SVec sv = {0};
-	uint32_t in1 = uid ^ nt1, in2 = uid ^ nt2;
+	uint32_t in1 = uid ^ nt1;
 	lfsr_recovery32(ks1, in1, &sv);
 	uint64_t found = 0;
-	for (size_t i = 0; i < sv.n; i++) {
+	for (size_t i = 0; i < sv.n && !found; i++) {
 		tickMore();
 		uint32_t s[2] = { (uint32_t)(sv.a[i] >> 32), (uint32_t)sv.a[i] };
 		rollback_word(s, in1, 0);
 		uint64_t key = get_lfsr(s[0], s[1]);
-		if (crapto1_ks32(key, in2) == ks2) { // keystream consistent with the 2nd nonce
-			found = key;
-			break;
-		}
+		for (int j = 0; j < n2; j++)
+			if (crapto1_ks32(key, uid ^ nt2[j]) == ks2[j]) { // keystream consistent with the 2nd nonce
+				found = key;
+				break;
+			}
 	}
 	free(sv.a);
 	return found;

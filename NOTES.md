@@ -1067,6 +1067,16 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   found", 37 s total; key put back to FFFFFFFFFFFF after. Untouched 5A5A0002: 6 s (was 7.5 s).
 - The pivot change ran there too: before the fix, sector 2 A fell through to nested from a known key
   (as expected it fails on a static card: "no key at distance 160").
+- Nested on the FM11RF32N (sector 2 A set to 5A1B2C3D4E5F): the pivot change made nested run, but it
+  failed. The nonce distance jitters: 839..850 from one calibration to the next (NXP-like PRNG ticking
+  with time, not the fixed 160 of the on-chip op on other cards). mfNestedRecover now captures both
+  nonces with parity; after the calibration, every distance within +-16 whose nt_T fits the 3 leaked
+  parity bits (oddpar(nt byte i) == raw par bit i ^ ks bit 16-8i; pm3's valid_nonce XORs in the
+  encrypted byte's parity because its par[] is stored that way, ours are raw wire bits -- checked
+  against crypto1.py, 200/200) is solved, nearest first, against all of the 2nd capture's survivors
+  (crapto1_nested_any). ~5 survivors each. `nfcnet.py nested`: 3/3 recovered, 52-89 s; full dump with
+  that key unknown 74 s, all 40 sectors. Key put back to FFFFFFFFFFFF after. nfcnet's nested timeout
+  60 -> 600 s.
 
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
