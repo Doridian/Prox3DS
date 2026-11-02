@@ -1258,3 +1258,21 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   same UID as shown, the image rebuilt and rewritten (PWD / PACK surely from the UID, as AUTH0 04 turns the
   password on), PWD_AUTH must give PACK 8080, then the lock stage. Can't be undone: the tag can't take
   another Amiibo after it.
+
+## Smart card family, GlobalPlatform, YubiKey OATH (nfcprobe) -- 2026-11-01
+- Generic scan: DESFire's probe returns FAMILY_PASS when GetVersion fails, the next matching family (scFamily,
+  scui.c) takes the card. Scan = ATS, gpSelect (ISD A000000151000000 / A000000003000000 / default app) + GET DATA
+  9F7F / 66 / E0 / C1, then SELECT of every scApplets[] AID + sdmc:/nfcprobe/smartcard/aids.txt.
+- J3H145: scan finds ISD + test applet; CRD decodes as GP 2.1.1 (OID 2A864886FC6B 02 02 01 01; pm3 printed
+  2.2.1), SCP03 i=00, Java Card 2. Sequence counter (C1) = 0.
+- GP from the 3DS (gp.c): default keys found offline, EXTERNAL AUTHENTICATE ok, GET STATUS (P2 02 tag format,
+  P1 80 / 40 / 10) -> 18 entries. Install of dspm-test.cap from sdmc:/nfcprobe/cap (DELETE old package 9000,
+  LOAD 608 bytes, INSTALL 9000), applet answers its name afterwards; instance DELETE (P2 00) keeps the package.
+  Load file byte-identical to gpload.py's. Card left as before (test applet installed).
+- One INITIALIZE UPDATE got "no answer" right after a scan (first GP open); the retry and every later one
+  worked. Watch for it.
+- OATH (oath.c): written from yubikey-manager / ykneo-oath; NOT tested on hardware yet (no YubiKey here).
+  `ant oath` in javacard/ builds Yubico's ykneo-oath (clone in javacard/ykneo-oath, gitignored; applet
+  A000000527210101, package A0000005272101) to install on the J3H145 via the app as a stand-in.
+- Net op 0x0A OP_PUT_FILE (`nfcnet.py HOST put LOCAL [DEST]`): files under sdmc:/nfcprobe/.
+- PC checks: sha1/HMAC/PBKDF2 and base32 vs Python, inflate on deflated zips (stored, fixed, dynamic blocks).

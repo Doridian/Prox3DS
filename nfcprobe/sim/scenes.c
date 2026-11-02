@@ -237,6 +237,12 @@ static void sdSetup(void)
 	mkdir(MF_DUMPS, 0777);
 	mkdir(MFU_DIR, 0777);
 	mkdir(DF_DIR, 0777);
+	mkdir(GP_CAPS, 0777);
+	FILE *cap = fopen(GP_CAPS "/dspm-test.cap", "w");
+	fprintf(cap, "PK");
+	fclose(cap);
+	cap = fopen(GP_CAPS "/ykneo-oath-with-a-rather-long-file-name-for-testing.cap", "w");
+	fclose(cap);
 	FILE *k = fopen(MF_KEYS, "w");
 	fprintf(k, "A0A1A2A3A4A5\nD3F7D3F7D3F7\n");
 	fclose(k);
@@ -437,6 +443,124 @@ static void edEv1(void) { mfuEditorOpen(&ev1, MFU_DIR "/04C8E3BA064F80-2.bin"); 
 static void edUnk(void) { mfuEditorOpen(&unk, MFU_DIR "/11223300000000.bin"); }
 
 static void dfMenu(void) { simDfMenu(); }
+
+// --- smart cards ---
+
+static Card cardJc = { true, { 0x48, 0x00 }, { 0x04, 0x6D, 0x45, 0x52, 0x8C, 0x50, 0x80 }, 7, 0x20 };
+static ScInfo scJc, scBare;
+static GpCard gpJc;
+static OathInfo oathYk;
+
+static void hexIn(u8 *out, u8 *len, const char *h)
+{
+	int n = scUnhex(h, out, 255);
+	*len = n;
+}
+
+static void fillSc(void)
+{
+	GpCard *g = &gpJc;
+	memset(g, 0, sizeof(*g));
+	hexIn(g->isd, &g->isdLen, "A000000151000000");
+	hexIn(g->cplc, &g->cplcLen, "4790050382116351030290610012800748880000000000000000000000000000000000000000000000");
+	hexIn(g->crd, &g->crdLen, "733D06072A864886FC6B01600C060A2A864886FC6B02020101630906072A864886FC6B03640B06092A864886"
+		"FC6B040300660C060A2B060104012A026E0102");
+	g->kvn = 0xFF, g->scp = 3, g->hasSeq = true, g->seq = 1234;
+	static const struct { u8 kind, state, priv; const char *aid, *pkg; int mods; } ents[] = {
+		{ GP_ISD, 0x07, 0x9E, "A000000151000000", NULL, 0 },
+		{ GP_APP, 0x07, 0x00, "F0334453504D01", "F0334453504D", 0 },
+		{ GP_APP, 0x07, 0x00, "A000000527210101", "A0000005272101", 0 },
+		{ GP_APP, 0x83, 0x00, "D2760001240102000000000000010000", "D27600012401", 0 },
+		{ GP_APP, 0x0F, 0x80, "A000000151535041", "A0000001515350", 0 },
+		{ GP_PKG, 0x01, 0x00, "A0000001515350", NULL, 1 },
+		{ GP_PKG, 0x01, 0x00, "F0334453504D", NULL, 1 },
+		{ GP_PKG, 0x01, 0x00, "A0000005272101", NULL, 1 },
+		{ GP_PKG, 0x01, 0x00, "D27600012401", NULL, 3 },
+		{ GP_PKG, 0x01, 0x00, "D276000098636F6E74726F6C6C6572", NULL, 0 },
+		{ GP_PKG, 0x01, 0x00, "A0000000620001", NULL, 0 },
+	};
+	for (int i = 0; i < (int)(sizeof(ents) / sizeof(ents[0])); i++) {
+		GpEntry *e = &g->ent[g->nent++];
+		memset(e, 0, sizeof(*e));
+		e->kind = ents[i].kind, e->state = ents[i].state, e->priv = ents[i].priv;
+		hexIn(e->aid, &e->aidLen, ents[i].aid);
+		if (ents[i].pkg) hexIn(e->pkg, &e->pkgLen, ents[i].pkg);
+		else e->pkg[0] = 1, e->pkg[1] = 0;
+		e->nmods = ents[i].mods;
+		for (int m = 0; m < e->nmods; m++) memcpy(e->mods[m], e->aid, e->aidLen), e->modLen[m] = e->aidLen + 1;
+	}
+	g->listed = true;
+
+	ScInfo *s = &scJc;
+	memset(s, 0, sizeof(*s));
+	hexIn(s->ats, &s->atsLen, "0578777102");
+	s->hasGp = true, s->gp = *g;
+	static const struct { const char *aid, *fci; u16 sw; } f[] = {
+		{ "A000000151000000", "", 0x9000 }, { "A0000005272101", "79030504037108A1B2C3D4E5F60718", 0x9000 },
+		{ "A000000527471117", "5669727475616C206D67722D46572076657273696F6E20352E342E33", 0x9000 },
+		{ "D27600012401", "", 0x6283 }, { "F0334453504D01", "", 0x9000 },
+		{ "A0000003080000100001", "61114F0600001000010079074F05A000000308", 0x9000 },
+	};
+	for (int i = 0; i < 6; i++) {
+		ScFound *x = &s->found[s->nfound++];
+		hexIn(x->aid, &x->aidLen, f[i].aid);
+		hexIn(x->fci, &x->fciLen, f[i].fci);
+		x->sw = f[i].sw;
+		x->app = scAppletFor(x->aid, x->aidLen);
+		snprintf(x->name, sizeof(x->name), "%s", x->app ? x->app->name : "My corporate badge applet");
+	}
+	s->found[5].app = NULL;
+	snprintf(s->found[5].name, sizeof(s->found[5].name), "Door badge (aids.txt)");
+
+	s = &scBare;
+	memset(s, 0, sizeof(*s));
+	hexIn(s->ats, &s->atsLen, "0D7833B2908031FE45736D61727478");
+
+	OathInfo *o = &oathYk;
+	memset(o, 0, sizeof(*o));
+	o->ver[0] = 5, o->ver[1] = 4, o->ver[2] = 3;
+	static const struct { const char *name; u8 type, digits; bool touch, code; u32 v; } c[] = {
+		{ "GitHub:someone@example.com", OATH_TOTP, 6, false, true, 12345 },
+		{ "Google:a.very.long.address.for.testing@example.org", OATH_TOTP, 6, false, true, 987654 },
+		{ "60/Steam:gamer", OATH_TOTP, 8, false, true, 1234567 },
+		{ "Mastodon:@me@social.example", OATH_TOTP, 6, false, true, 555 },
+		{ "AWS:root", OATH_TOTP, 6, true, false, 0 },
+		{ "VPN counter", OATH_HOTP, 6, false, false, 0 },
+		{ "Bank", OATH_HOTP, 8, false, true, 31415926 },
+		{ "Discord:me", OATH_TOTP, 6, false, true, 42 },
+		{ "Proton:me", OATH_TOTP, 6, false, true, 999999 },
+		{ "Tenth:account", OATH_TOTP, 6, false, true, 100000 },
+	};
+	for (int i = 0; i < 10; i++) {
+		OathCred *x = &o->c[o->n++];
+		snprintf(x->name, sizeof(x->name), "%s", c[i].name);
+		x->type = c[i].type, x->alg = OATH_SHA1, x->digits = c[i].digits, x->touch = c[i].touch;
+		x->hasCode = c[i].code, x->code = c[i].v, x->period = i == 2 ? 60 : 30;
+	}
+}
+
+static void scMenu(void) { simScMenu(); }
+static void scCard(void) { simScCard(&cardJc, &scJc, 1, ""); }
+static void scBareCard(void) { simScCard(&card10, &scBare, 1, ""); }
+static void scConsole(void) { simScConsole(false); }
+static void scConsoleEmpty(void) { simScConsole(true); }
+static void scnGpList(void) { simGp(&gpJc, true, ""); }
+static void gpNoKeys(void)
+{
+	GpCard g = gpJc;
+	g.listed = false, g.nent = 0;
+	simGp(&g, false, "None of 3 known keys fits (none was sent).");
+}
+static void gpCaps(void) { simGpCaps(); }
+static void scnOathList(void) { simOath(&oathYk, 60); }
+static void oathEmpty(void)
+{
+	OathInfo o = oathYk;
+	o.n = 0;
+	simOath(&o, -240);
+}
+static void oathAdd(void) { simOathAdd(); }
+static void kbdHex(void) { simKbdText = "00A4040007A0000005272101"; }
 static void dfCard(void) { simDfCard(&cardDf, &dfi, 1, ""); }
 static void dfIsoCard(void) { simDfCard(&card10, &dfIso, 0, "GetVersion: permission denied 9D (not a DESFire)"); }
 static void dfData(void) { simDfData(0, 3); }
@@ -582,6 +706,18 @@ static const SimStep script[] = {
 	CALL(reset), CALL(dfRandomCard), SHOT("df_random_card"),
 	CALL(reset), CALL(dfKeyedCard), CALL(dfKeyedData), SHOT("df_keyed_data256"), D, D, D, D, SHOT("df_keyed_data256_end"), B,
 	CALL(reset), CALL(dfMenu), CALL(dfIsoCard), B, SHOT("df_menu_lastcard"),
+
+	// smart cards
+	CALL(reset), CALL(scMenu), SHOT("sc_menu"), CALL(scCard), SHOT("sc_card"), D, D, D, D, D, SHOT("sc_card_scrolled"),
+	KEYS(KEY_R), SHOT("sc_details"), B, U, U, U, A, SHOT("sc_details_mgmt"), B, Y, SHOT("sc_card_menu"), B, B, SHOT("sc_menu_lastcard"),
+	CALL(reset), CALL(scBareCard), SHOT("sc_card_bare"),
+	CALL(reset), CALL(scConsoleEmpty), SHOT("sc_console_empty"), CALL(scConsole), SHOT("sc_console"), U, U, U, SHOT("sc_console_up"),
+	CALL(reset), CALL(scnGpList), SHOT("gp_list"), D, D, D, SHOT("gp_list_locked"), D, D, D, D, D, D, D, SHOT("gp_list_end"),
+	A, SHOT("gp_actions"), A, SHOT("gp_details"), B, A, D, A, SHOT("gp_delete_pkg"), B, U, U, U, U, U, U, U, U, U, A, D, A,
+	SHOT("gp_delete_applet"), B, Y, SHOT("gp_menu"), D, A, SHOT("gp_key_entry"), B,
+	CALL(reset), CALL(gpNoKeys), SHOT("gp_nokeys"), CALL(gpCaps), SHOT("gp_caps"), B,
+	CALL(reset), CALL(scnOathList), SHOT("oath_list"), D, D, D, D, D, D, D, D, D, SHOT("oath_list_end"), Y, SHOT("oath_menu"), B,
+	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
 	END,
 };
 
@@ -603,6 +739,7 @@ int main(int argc, char **argv)
 	fillMfu(&ulPlain, NULL, 0, mfuTypeForPages(16));
 	fillMfu(&unk, vUnk, 0, NULL);
 	fillDf();
+	fillSc();
 	sdSetup();
 	uiInit();
 	simScript(script);

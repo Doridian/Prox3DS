@@ -8,7 +8,8 @@
 // The app shell (app.c): a stack of screens, dialogs, the card job worker, and the root menu with a
 // generic scan that identifies the card and hands it to its family (Proxmark style: "hf search", then
 // "hf mf ..."). Families: MIFARE Classic (mfui.c, editor.c), Ultralight / NTAG (mfuui.c, mfuedit.c),
-// DESFire / ISO14443-4 (dfui.c).
+// DESFire (dfui.c), any other ISO14443-4 smart card (scui.c: applets, APDUs, GlobalPlatform in gpui.c,
+// applet tools such as YubiKey OATH in oathui.c).
 
 typedef struct {
 	void (*show)(void); // whenever it becomes the top screen (entered, or returned to); may be NULL
@@ -62,18 +63,36 @@ void menuInput(Menu *m, u32 kDown, u32 kRepeat);
 void menuDraw(Menu *m);
 void menuLastCard(float y, const Card *c, const char *type); // a status line for the menu's extra()
 
+// A form screen: a field per row (A edits it), the last row runs it.
+typedef struct {
+	const char *label;
+	void (*value)(char *out); // its current value, in words (up to 63 chars)
+	void (*edit)(void);
+} Field;
+// count: fields shown (they may depend on each other); run goes after the form is gone.
+void formOpen(const char *title, const char *go, const char *help, const Field *f, int (*count)(void), void (*run)(void));
+
 // A card family: what the generic scan hands a card to.
 typedef struct {
 	const char *name, *help;
 	bool (*match)(const Card *c); // from the activation (ATQA, SAK, UID)
-	int (*probe)(void);           // in the job, card active: family detection. 1 ok, 0 lost, -1 chip error
+	int (*probe)(void);           // in the job, card active: family detection. 1 ok, 0 lost, -1 chip error,
+	                              // FAMILY_PASS: not one after all, the next family that matches gets it
 	void (*show)(void);           // UI thread: push its card screen
 	void (*menu)(void);           // UI thread: push its menu
 } CardFamily;
-extern const CardFamily mfcFamily, mfuFamily, dfFamily;
+#define FAMILY_PASS 2
+extern const CardFamily mfcFamily, mfuFamily, dfFamily, scFamily;
 
 const char *cardTypeName(const Card *c); // best guess from ATQA / SAK, any ISO14443-A card
 void uidHex(const Card *c, char *out, const char *sep); // out: up to 30 chars
+
+// Smart cards (scard.h): applet tools, for the card on the reader
+void gpOpenTool(void);   // GlobalPlatform (gpui.c)
+void oathOpenTool(void); // YubiKey OATH (oathui.c)
+void apduConsole(void);  // raw APDUs (scui.c)
+u32 jobCount(void);      // jobs started so far: tells a tool whether another job touched the card since
+bool textInput(const char *hint, const char *init, char *out, u32 max); // system keyboard; false = cancelled / empty
 
 // MIFARE Classic
 void cloneStart(const MfDump *d, bool force); // write a dump onto the magic card on the reader

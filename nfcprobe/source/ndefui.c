@@ -138,17 +138,6 @@ static void writeAsk(const u8 *msg, u32 len, bool empty)
 		nd.info.type->name, uid, ndWhat, (unsigned long)ndTlvLen);
 }
 
-// The system keyboard; false = cancelled or empty.
-static bool textInput(const char *hint, const char *init, char *out, u32 max)
-{
-	SwkbdState kb;
-	swkbdInit(&kb, SWKBD_TYPE_NORMAL, 2, max - 1);
-	swkbdSetHintText(&kb, hint);
-	swkbdSetInitialText(&kb, init);
-	swkbdSetValidation(&kb, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
-	return swkbdInputText(&kb, out, max) == SWKBD_BUTTON_CONFIRM && out[0];
-}
-
 static void writeUrl(void)
 {
 	char s[512];

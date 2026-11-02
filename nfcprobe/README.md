@@ -47,6 +47,21 @@ MIFARE Ultralight / NTAG (`source/mfu.c`, `source/mfuui.c`, `source/mfuedit.c`),
   type and becomes a full copy (UID, version, signature, password, every page), read back as a reader
   would. Writing a Classic dump onto a GTU in Ultralight mode switches it back to Classic.
 
+Smart cards (`source/iso7816.c`, `source/scard.c`, `source/scui.c`): any ISO14443-4 card that isn't a DESFire
+(the DESFire family passes it on: `FAMILY_PASS` in `source/app.h`).
+- Scan card: ATS, the GlobalPlatform security domain's CPLC and card recognition data, and every applet from
+  `scApplets[]` (`source/scard.c`) or `sdmc:/nfcprobe/smartcard/aids.txt` ("AID name" per line) that answers SELECT.
+  An applet with a tool opens it; the others show their SELECT answer.
+- APDU console: APDUs typed in hex (system keyboard), 61xx collected, the session kept between commands.
+- GlobalPlatform (`source/gp.c`, `source/gpui.c`): SCP03 with C-MAC. Keys (default 404142..4F, then
+  `sdmc:/nfcprobe/gp/keys.txt`) are checked against the INITIALIZE UPDATE card cryptogram first; EXTERNAL
+  AUTHENTICATE (counted by the card) only goes out with a key that matched. Lists the ISD, applets / domains and
+  packages, deletes them, installs CAP files from `sdmc:/nfcprobe/cap/` (zip, stored or deflated: `source/zip.c`).
+- YubiKey OATH (`source/oath.c`, `source/oathui.c`): TOTP / HOTP codes, touch accounts, password (PBKDF2,
+  asked when set), add / delete accounts, set / remove the password. The 3DS clock has no time zone: the UTC
+  offset is a setting (`sdmc:/nfcprobe/oath.txt`). Works with ykneo-oath on a JavaCard (`ant oath` in javacard/).
+- A new applet tool: a screen file, its open function in `app.h`, an entry in `scApplets[]`.
+
 - Chip info: reset / init / patch version.
 
 `sim/` builds the UI for the PC with fake citro2d / libctru and mock cards, renders every screen to
@@ -59,6 +74,7 @@ exposes raw takeover / power / I2C / GPIO primitives, plus the app's card operat
 (`scan`, `mfread`, `mfdump`, `gen1awrite`, `mfwrite`, `mfudump`, `mfuwrite`, `mfuclone` in `tools/nfcnet.py`;
 ops 0x10-0x1F and 0x22 in `source/netsrv.c`; `mfwrite` is an encrypted Mifare Classic write, `mfuwrite` an Ultralight
 user page write, both WRITE THE CARD).
+`nfcnet.py HOST put LOCAL [sdmc:/nfcprobe/...]` copies a file onto the SD card (CAP files go to `cap/`).
 `nfcnet.py HOST shot [OUT.png]` grabs the top screen and `nfcnet.py HOST keys a down ...` presses
 buttons (ops 0x20/0x21, served even while a job holds the chip). Drive it from the PC with
 `tools/nfcnet.py HOST probe|spd FILE.ncd|send HEX...|release`, or import `Nfc` from it.

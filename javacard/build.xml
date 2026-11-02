@@ -3,7 +3,9 @@
      targeting its bundled 3.0.4 API. Tools in ~/Applications/javacard:
      git clone https://github.com/martinpaljak/oracle_javacard_sdks sdks
      curl -LO https://github.com/martinpaljak/ant-javacard/releases/latest/download/ant-javacard.jar
-     JAVA_HOME=/usr/lib/jvm/java-17-openjdk ant -->
+     JAVA_HOME=/usr/lib/jvm/java-17-openjdk ant
+     ant oath: Yubico's ykneo-oath (GPLv3, YubiKey OATH protocol: nfcprobe's OATH tool works with it) from
+     git clone https://github.com/Yubico/ykneo-oath (here, not in git) -> ykneo-oath.cap -->
 <project name="dspm-test" default="cap">
   <property name="jc.tools" value="${user.home}/Applications/javacard"/>
   <property name="jc.home" value="${jc.tools}/sdks/jc320v26.0_kit"/>
@@ -13,6 +15,13 @@
     <javacard jckit="${jc.home}">
       <cap targetsdk="${jc.target}" aid="F0334453504D" output="dspm-test.cap" sources="src" version="1.0">
         <applet class="dspm.TestApplet" aid="F0334453504D01"/>
+      </cap>
+    </javacard>
+  </target>
+  <target name="oath">
+    <javacard jckit="${jc.home}">
+      <cap targetsdk="${jc.target}" aid="A0000005272101" output="ykneo-oath.cap" sources="ykneo-oath/applet/src" version="1.0">
+        <applet class="pkgYkneoOath.YkneoOath" aid="A000000527210101"/>
       </cap>
     </javacard>
   </target>

@@ -67,6 +67,7 @@ PORT = 8020
 (OP_PING, OP_TAKEOVER, OP_POWER, OP_WRITE, OP_READ, OP_XFER, OP_GPIO, OP_RELEASE, OP_UPDATE,
  OP_UPDATE_DONE) = range(10)
 UPDATE_CHUNK = 0x7000
+OP_PUT_FILE = 0x0A
 (OP_14A_START, OP_14A_PARITY, OP_14A_TX, OP_MF_READ, OP_MF_DUMP,
  OP_GEN1A_WRITE, OP_MF_WRITE, OP_MF_NESTED, OP_MF_MAGIC, OP_GEN4_READ,
  OP_GEN4_WRITE, OP_GEN4_CONFIG, OP_USC_CONFIG, OP_MF_CLONE, OP_MFU_DUMP, OP_MFU_WRITE) = range(0x10, 0x20)
@@ -252,6 +253,12 @@ class Nfc:
         """DESFire op (netsrv OP_DF): status byte + data, None on a lost card (self.why)."""
         return self.card_call(OP_DF, bytes([action]) + args, timeout)
 
+    def put_file(self, path, data):
+        """A file onto the SD card, under sdmc:/nfcprobe/ (directories made as needed)."""
+        p = path.encode()
+        for o in range(0, max(len(data), 1), UPDATE_CHUNK):
+            self.call(OP_PUT_FILE, struct.pack("<IB", o, len(p)) + p + data[o:o + UPDATE_CHUNK])
+
     def update(self, data, log=print):
         """Upload a new .3dsx; the app swaps it in, exits and relaunches itself."""
         for o in range(0, len(data), UPDATE_CHUNK):
@@ -396,6 +403,12 @@ def main():
         path = args[0] if args else os.path.join(os.path.dirname(__file__), "../nfcprobe/nfcprobe.3dsx")
         nfc.update(open(path, "rb").read())
         print("updated, app restarting")
+    elif what == "put":  # LOCAL [sdmc:/nfcprobe/...]: default: CAP files to cap/, else the app's folder
+        local = args[0]
+        name = os.path.basename(local)
+        dest = args[1] if len(args) > 1 else "sdmc:/nfcprobe/" + ("cap/" if name.lower().endswith(".cap") else "") + name
+        nfc.put_file(dest, open(local, "rb").read())
+        print(f"put {dest}")
     elif what == "shot":
         out = args[0] if args else "shot.png"
         nfc.shot().save(out)

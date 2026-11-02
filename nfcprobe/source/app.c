@@ -169,6 +169,16 @@ static void dialogDraw(void)
 	uiHints(hint);
 }
 
+bool textInput(const char *hint, const char *init, char *out, u32 max)
+{
+	SwkbdState kb;
+	swkbdInit(&kb, SWKBD_TYPE_NORMAL, 2, max - 1);
+	swkbdSetHintText(&kb, hint);
+	swkbdSetInitialText(&kb, init);
+	swkbdSetValidation(&kb, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
+	return swkbdInputText(&kb, out, max) == SWKBD_BUTTON_CONFIRM && out[0];
+}
+
 // --- job worker ---
 
 static Thread worker;
@@ -177,6 +187,12 @@ static const char *jobTitle;
 static void (*jobRun)(void), (*jobDone)(void);
 static bool jobCancellable;
 static float (*jobView)(float x, float y, float w);
+static u32 jobs;
+
+u32 jobCount(void)
+{
+	return jobs;
+}
 
 static void jobThread(void *arg)
 {
@@ -204,6 +220,7 @@ void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool
 	mfCancel = false;
 	jobFinished = false;
 	jobBusy = true;
+	jobs++;
 	logp("--- %s ---\n", title);
 	worker = threadCreate(jobThread, NULL, 0x8000, 0x30, -2, false);
 	if (!worker) {
@@ -377,7 +394,7 @@ void menuDraw(Menu *m)
 	}
 	uiRect(200, 27, UI_W - 208, 140, uiCol[COL_PANEL]);
 	uiTextWrap(208, 32, UI_W - 224, S_SMALL, uiCol[COL_TEXT], m->entries[m->l.sel].help);
-	if (m->extra) m->extra(178);
+	if (m->extra) m->extra(30 + m->n * 20 > 176 ? 30 + m->n * 20 + 2 : 178); // under the last entry
 	uiFooter(depth > 1 ? BTN_A " select   " BTN_B " back   SELECT log   START exit"
 	                   : BTN_A " select   SELECT log   START exit");
 }
@@ -390,9 +407,106 @@ void menuLastCard(float y, const Card *c, const char *type)
 	uiText(12, y, S_SMALL, uiCol[COL_DIM], "%s", uiFit(s, UI_W - 24, S_SMALL));
 }
 
+// --- a form: fields, A edits one, the last row runs it ---
+
+static struct {
+	const char *title, *go, *help;
+	const Field *f;
+	int (*count)(void); // fields shown (they may depend on each other)
+	void (*run)(void);
+	UiList l;
+} form;
+
+#define FORM_ROWS 11
+
+static void formDraw(void)
+{
+	int n = form.count();
+	uiHeader(form.title, NULL);
+	float y = 26;
+	for (int i = 0; i <= n; i++, y += LINE_H) {
+		if (i == form.l.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
+		if (i == n) {
+			uiText(14, y, S_BODY, uiCol[COL_ACCENT], "%s", form.go);
+			break;
+		}
+		char v[64];
+		form.f[i].value(v);
+		uiText(14, y, S_BODY, uiCol[COL_DIM], "%s", form.f[i].label);
+		uiTextRight(UI_W - 14, y, S_BODY, uiCol[COL_TEXT], "%s", v);
+	}
+	if (form.help) uiTextWrap(12, y + LINE_H + 4, UI_W - 24, S_SMALL, uiCol[COL_DIM], form.help);
+	uiFooter(BTN_UD " field   " BTN_A " change / go   " BTN_B " cancel");
+}
+
+static void formInput(u32 kDown, u32 kRepeat)
+{
+	int n = form.count();
+	uiListNav(&form.l, n + 1, FORM_ROWS + 1, kRepeat & (KEY_UP | KEY_DOWN));
+	if (kDown & KEY_A) {
+		if (form.l.sel == n) {
+			appBack();
+			form.run();
+		} else {
+			form.f[form.l.sel].edit();
+		}
+	} else if (kDown & KEY_B) {
+		appBack();
+	}
+}
+
+// The fields as touch buttons (two columns for a long form): a tap edits that one.
+static void formBottom(void)
+{
+	int n = form.count();
+	if (n + 1 <= 7) {
+		for (int i = 0; i <= n; i++) {
+			char v[64], l[96];
+			if (i < n) form.f[i].value(v), snprintf(l, sizeof(l), "%s: %s", form.f[i].label, v);
+			else snprintf(l, sizeof(l), "%s", form.go);
+			if (uiButton(4, 4 + i * 30, UI_BW - 8, 28, i == n ? uiCol[COL_SEL] : uiCol[COL_BAR], l)) {
+				form.l.sel = i;
+				appPress(KEY_A);
+			}
+		}
+		if (uiButton(4, UI_H - 30, UI_BW - 8, 26, uiCol[COL_PANEL], "Cancel")) appPress(KEY_B);
+		return;
+	}
+	// fields, then Create and Cancel, down the columns
+	int rows = (n + 3) / 2;
+	float w = (UI_BW - 12) / 2, h = 31;
+	for (int i = 0; i < n + 2; i++) {
+		float x = 4 + (i / rows) * (w + 4), y = 4 + (i % rows) * (h + 2);
+		bool hit;
+		if (i < n) {
+			char v[64];
+			form.f[i].value(v);
+			hit = uiButton2(x, y, w, h, uiCol[COL_BAR], form.f[i].label, v);
+		} else {
+			hit = uiButton(x, y, w, h, i == n ? uiCol[COL_SEL] : uiCol[COL_PANEL], i == n ? form.go : "Cancel");
+		}
+		if (!hit) continue;
+		if (i == n + 1) {
+			appPress(KEY_B);
+		} else {
+			form.l.sel = i;
+			appPress(KEY_A);
+		}
+	}
+}
+
+static const Screen formScreen = { NULL, formInput, formDraw, formBottom };
+
+void formOpen(const char *title, const char *go, const char *help, const Field *f, int (*count)(void), void (*run)(void))
+{
+	form.title = title, form.go = go, form.help = help, form.f = f, form.count = count, form.run = run;
+	form.l = (UiList){ 0 };
+	appScreen(&formScreen);
+}
+
 // --- generic scan ("hf search"): identify, then hand the card to its family ---
 
-static const CardFamily *families[] = { &mfcFamily, &mfuFamily, &dfFamily };
+static const CardFamily *families[] = { &mfcFamily, &mfuFamily, &dfFamily, &scFamily };
 #define NFAMILIES (int)(sizeof(families) / sizeof(families[0]))
 
 static Card tag; // the last card the generic scan found
@@ -405,11 +519,17 @@ static void runIdentify(void)
 	tagFamily = NULL;
 	if (!cardWait()) return;
 	tag = card;
-	for (int i = 0; i < NFAMILIES && !tagFamily; i++)
-		if (families[i]->match(&tag)) tagFamily = families[i];
-	logp("identified: %s%s%s\n", cardTypeName(&tag), tagFamily ? " -> " : " (not supported)",
-		tagFamily ? tagFamily->name : "");
-	tagResult = tagFamily && tagFamily->probe ? tagFamily->probe() : 1;
+	tagResult = 1;
+	for (int i = 0; i < NFAMILIES; i++) {
+		if (!families[i]->match(&tag)) continue;
+		tagFamily = families[i];
+		logp("identified: %s -> %s\n", cardTypeName(&tag), tagFamily->name);
+		tagResult = tagFamily->probe ? tagFamily->probe() : 1;
+		if (tagResult != FAMILY_PASS) break;
+		tagFamily = NULL;
+		tagResult = 1;
+	}
+	if (!tagFamily) logp("identified: %s (not supported)\n", cardTypeName(&tag));
 	iso14aParity(true);
 }
 

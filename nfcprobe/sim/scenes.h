@@ -4,6 +4,8 @@
 #include "../source/app.h"
 #include "../source/desfire.h"
 #include "../source/mfukeys.h"
+#include "../source/oath.h"
+#include "../source/scard.h"
 
 void simReset(void); // root menu, no dialog / toast / job
 void simTag(const Card *c);
@@ -35,3 +37,11 @@ void simMfuReadKey(const MfuDump *d, int result, const char *path, const MfuKey 
 void simDfCard(const Card *c, const DfInfo *d, int result, const char *why);
 void simDfMenu(void);
 void simDfData(int app, int file);
+
+void simScCard(const Card *c, const ScInfo *s, int result, const char *why);
+void simScMenu(void);
+void simScConsole(bool empty);
+void simGp(const GpCard *g, bool ok, const char *why);
+void simGpCaps(void);
+void simOath(const OathInfo *o, int offset);
+void simOathAdd(void);

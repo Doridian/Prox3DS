@@ -34,9 +34,11 @@ static int probe(bool keys)
 	return diResult < 0 ? -1 : diResult || di.atsLen;
 }
 
+// From the generic scan: a card that isn't a DESFire goes on to the smart card family.
 static int dfProbe(void)
 {
-	return probe(false);
+	int r = probe(false);
+	return r > 0 && diResult <= 0 ? FAMILY_PASS : r;
 }
 
 static int scanResult;
@@ -630,109 +632,6 @@ static DfFile *curFile(void)
 {
 	DfApp *a = curApp();
 	return a->fileSt || !a->nfiles ? NULL : &a->files[fl.sel];
-}
-
-// --- a form: fields, A edits one, the last row runs it ---
-
-typedef struct {
-	const char *label;
-	void (*value)(char *out); // its current value, in words
-	void (*edit)(void);
-} Field;
-
-static struct {
-	const char *title, *go, *help;
-	const Field *f;
-	int (*count)(void); // fields shown (they may depend on each other)
-	void (*run)(void);
-	UiList l;
-} form;
-
-#define FORM_ROWS 11
-
-static void formDraw(void)
-{
-	int n = form.count();
-	uiHeader(form.title, NULL);
-	float y = 26;
-	for (int i = 0; i <= n; i++, y += LINE_H) {
-		if (i == form.l.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
-		if (i == n) {
-			uiText(14, y, S_BODY, uiCol[COL_ACCENT], "%s", form.go);
-			break;
-		}
-		char v[64];
-		form.f[i].value(v);
-		uiText(14, y, S_BODY, uiCol[COL_DIM], "%s", form.f[i].label);
-		uiTextRight(UI_W - 14, y, S_BODY, uiCol[COL_TEXT], "%s", v);
-	}
-	if (form.help) uiTextWrap(12, y + LINE_H + 4, UI_W - 24, S_SMALL, uiCol[COL_DIM], form.help);
-	uiFooter(BTN_UD " field   " BTN_A " change / go   " BTN_B " cancel");
-}
-
-static void formInput(u32 kDown, u32 kRepeat)
-{
-	int n = form.count();
-	uiListNav(&form.l, n + 1, FORM_ROWS + 1, kRepeat & (KEY_UP | KEY_DOWN));
-	if (kDown & KEY_A) {
-		if (form.l.sel == n) {
-			appBack();
-			form.run();
-		} else {
-			form.f[form.l.sel].edit();
-		}
-	} else if (kDown & KEY_B) {
-		appBack();
-	}
-}
-
-// The fields as touch buttons (two columns for a long form): a tap edits that one.
-static void formBottom(void)
-{
-	int n = form.count();
-	if (n + 1 <= 7) {
-		for (int i = 0; i <= n; i++) {
-			char v[64], l[96];
-			if (i < n) form.f[i].value(v), snprintf(l, sizeof(l), "%s: %s", form.f[i].label, v);
-			else snprintf(l, sizeof(l), "%s", form.go);
-			if (uiButton(4, 4 + i * 30, UI_BW - 8, 28, i == n ? uiCol[COL_SEL] : uiCol[COL_BAR], l)) {
-				form.l.sel = i;
-				appPress(KEY_A);
-			}
-		}
-		if (uiButton(4, UI_H - 30, UI_BW - 8, 26, uiCol[COL_PANEL], "Cancel")) appPress(KEY_B);
-		return;
-	}
-	// fields, then Create and Cancel, down the columns
-	int rows = (n + 3) / 2;
-	float w = (UI_BW - 12) / 2, h = 31;
-	for (int i = 0; i < n + 2; i++) {
-		float x = 4 + (i / rows) * (w + 4), y = 4 + (i % rows) * (h + 2);
-		bool hit;
-		if (i < n) {
-			char v[64];
-			form.f[i].value(v);
-			hit = uiButton2(x, y, w, h, uiCol[COL_BAR], form.f[i].label, v);
-		} else {
-			hit = uiButton(x, y, w, h, i == n ? uiCol[COL_SEL] : uiCol[COL_PANEL], i == n ? form.go : "Cancel");
-		}
-		if (!hit) continue;
-		if (i == n + 1) {
-			appPress(KEY_B);
-		} else {
-			form.l.sel = i;
-			appPress(KEY_A);
-		}
-	}
-}
-
-static const Screen formScreen = { NULL, formInput, formDraw, formBottom };
-
-static void formOpen(const char *title, const char *go, const char *help, const Field *f, int (*count)(void), void (*run)(void))
-{
-	form.title = title, form.go = go, form.help = help, form.f = f, form.count = count, form.run = run;
-	form.l = (UiList){ 0 };
-	appScreen(&formScreen);
 }
 
 static const char *const keyTypes[] = { "DES / 2K3DES", "3K3DES", "AES" };

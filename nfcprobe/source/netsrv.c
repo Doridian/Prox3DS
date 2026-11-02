@@ -41,6 +41,8 @@ enum {
 	// it in and has the app exit (chip handed back as usual) and relaunch itself (main.c).
 	OP_UPDATE      = 0x08, // offset u32 (0 = start over), data
 	OP_UPDATE_DONE = 0x09, // size u32
+	OP_PUT_FILE    = 0x0A, // offset u32 (0 = new file), path length u8, path (under sdmc:/nfcprobe/, no
+	                       // ".."), data: a file onto the SD card (CAP files to install, key lists)
 	// High-level card ops (mfc.c); they take over the chip themselves. Result 0 = ok,
 	// 1 = no card / auth refused, -1 = chip monitor error.
 	OP_14A_START  = 0x10, // load the monitor, activate a card -> ATQA[2] SAK uidLen uid
@@ -684,6 +686,28 @@ static Result handleUpdate(u8 op, const u8 *in, u32 inLen)
 	return 0;
 }
 
+static Result handlePutFile(const u8 *in, u32 inLen)
+{
+	if (inLen < 5 || inLen < 5u + in[4]) return -3;
+	u32 off;
+	memcpy(&off, in, 4);
+	char path[256];
+	memcpy(path, in + 5, in[4]);
+	path[in[4]] = 0;
+	if (strncmp(path, MF_DIR "/", strlen(MF_DIR "/")) || strstr(path, "..")) return -3;
+	// its directories first
+	for (char *p = path + strlen(MF_DIR "/"); (p = strchr(p, '/')); p++) {
+		*p = 0;
+		mkdir(path, 0777);
+		*p = '/';
+	}
+	FILE *f = fopen(path, off ? "r+b" : "wb");
+	if (!f) return -5;
+	u32 n = inLen - 5 - in[4];
+	bool ok = !fseek(f, off, SEEK_SET) && fwrite(in + 5 + in[4], 1, n, f) == n;
+	return fclose(f) || !ok ? -5 : 0;
+}
+
 // Handles one request; out/outLen is the reply payload.
 static Result handle(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 {
@@ -694,6 +718,7 @@ static Result handle(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		return 0;
 	}
 	if (op == OP_UPDATE || op == OP_UPDATE_DONE) return handleUpdate(op, in, inLen);
+	if (op == OP_PUT_FILE) return handlePutFile(in, inLen);
 	if (op == OP_TAKEOVER) return chipEnsure() ? 0 : -1;
 	if (op == OP_RELEASE) {
 		if (irqEvent) chipRelease();

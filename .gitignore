@@ -40,3 +40,6 @@ __pycache__/
 # nfcprobe UI simulator
 /nfcprobe/sim/uisim
 /nfcprobe/sim/out/
+# javacard: third-party applet sources (cloned) and their builds
+/javacard/ykneo-oath/
+/javacard/ykneo-oath.cap
