@@ -13,6 +13,12 @@ import chipmon
 import nfcnet
 
 
+def cfg_cmds():
+    """Env CFG: extra CORE_SET_CONFIG TLVs (hex, comma-separated, one SET_CONFIG each)."""
+    for tlv in filter(None, __import__("os").environ.get("CFG", "").split(",")):
+        yield f"2002{len(tlv) // 2 + 1:02X}01{tlv}"
+
+
 def main():
     host = sys.argv[1]
     secs = float(sys.argv[2]) if len(sys.argv) > 2 else 30
@@ -40,6 +46,7 @@ def main():
         "200204018001" "01",  # RF_FIELD_INFO on
         *([f"20020501" "0002" + EXTRA] if (EXTRA := __import__("os").environ.get("TOTAL", "")) else []),
         # LISTEN_MODE_ROUTING: tech A -> DH (power on), proto ISO-DEP -> DH
+        *cfg_cmds(),
         "21010C" "0002" "000300" "0100" "010300" "0104",
         "2103030180" "01",
     ]
@@ -48,6 +55,10 @@ def main():
     for c in cmds:
         for p in nfc.cmd(bytes.fromhex("10" + c)):
             print("  " + nfcnet.describe(p))
+    pokes = [(int(a, 16), int(v, 16)) for a, v in
+             (x.split("=") for x in __import__("os").environ.get("POKE", "").split())]
+    for a, v in pokes:  # env POKE: addr=val 32-bit register writes after the listen setup (memrw)
+        mon.write32(a, [v])
     end = time.time() + secs
     while time.time() < end:
         for p in nfc.drain(100):
@@ -55,6 +66,8 @@ def main():
             if p[0] == 0x10 and p[1] >> 5 == 0 and len(p) > 4:  # DATA: answer echo + 9000
                 ans = p[4:] + b"\x90\x00"
                 nfc.write(bytes([0x10, 0x00, 0x00, len(ans)]) + ans)
+    for a, v in pokes:
+        print(f"  poke {a:05X}={v:X} now {mon.read32(a, 1)[0]:X}")
     for p in nfc.cmd(bytes.fromhex("1021060100")):
         print("  " + nfcnet.describe(p))
 

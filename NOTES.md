@@ -1307,7 +1307,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   (8 handlers at 0x38838), IRQ5 = host interface (fires per I2C packet), IRQ6 = timer.
 - REQA trace: field on (RF bit 0, 0x5C580 = 1) -> REQA at +50 ms: RF bit 2 (0x5C580 3 -> 0x83), TX/RX
   0x10 with 1 RX byte, status 0x22 -> ATQA on air. Later frames raise nothing.
-- BLOCKER: the hardware keeps 0x5C580 bit 0 ("field present", listen active) for exactly ~106 ms after
+- (Retracted 2026-11-02, see below: this was the pm3 field, not the chip.) The hardware keeps 0x5C580 bit 0 ("field present", listen active) for exactly ~106 ms after
   field detect, then drops it and does not re-arm while the field stays on (pm3 `hf tune`, steady 38 V).
   Shown with lmon swallowing every framer IRQ (ROM handler never runs, no NTFs) and on-chip sampling every
   2 ms: 0 x 58, 1 x 53, then 0. With the ROM the drop comes after 73-253 ms and is reported as field lost;
@@ -1316,6 +1316,35 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   no field-lost IRQ fires (0x5C5C8 = 5 looks like an IRQ enable: the ROM makes it 6 at field-on).
   Registers 0x5C540-5FF / 0x5C640-6FF are identical idle vs field-on apart from status and 0x5C658/660,
   so the 106 ms window is set elsewhere (0x5C000-53F, 0x5C700+, timer / AON / PMU blocks?).
+- 2026-11-02 follow-up, conclusion: NOT USABLE AS A CARD, card mode dropped.
+  - The "106 ms window" was an artifact. "Field present" (0x5C580 bit 0) follows the pm3 field exactly:
+    `hf tune -n 100` = 424 ms, `-n 150` = 632 ms, `-n 1200` held for the whole 4.7 s of sampling, with
+    the ROM's handler running and with it swallowed alike. Field detection is edge-triggered: a field
+    that is already on when RF_DISCOVER starts is never seen. It is also placement-sensitive: at
+    29 V (tight coupling) there were no field events at all.
+  - RX works. The chip activates on REQA (0x5C580 0x81) and on 93 20 (0x83), and its hardware
+    anticollision answers by itself. Once the pm3 decoded the exact CL1 answer `01 02 03 04 04`
+    (UID 01020304 + BCC). Note: `93 20` must go without `-c`; last session it was sent with a CRC,
+    which is why "nothing answered 93 20".
+  - TX (load modulation) is too weak for a pm3 RDV4 lying on the 3DS. At the 32 V spot the pm3 decoded
+    about 1 in 5 answers, mostly truncated (`04` for ATQA `04 00`, `00 01` / `07` for the UID). At 38 V,
+    0 of 8 in every run, while the chip still activated on each frame. Placement changes it a lot;
+    no spot was reliable.
+  - Android's BCM20791B5 HCE config (Nexus 5 / Nexus 7 2013 `libnfc-brcm-20791b05.conf`: CB, A5, CA,
+    B5 ISODEP, C9 FW_WORKAROUND, 5B, B2, CF CONFORMANCE_MODE, B1 CLF_REGS_CFG, C2 SWPCFG, C8
+    PREINIT_DSP_CFG): every TLV is accepted, but none changes the RF block, and the answers decode no
+    better. IDs from libnfc-nci `src/hal/int/nfc_brcm_defs.h`.
+  - Listen start sets ~50 registers in 0x5C000-0x5C7FF (all 0 when idle, so the block is reset per
+    discovery). The per-tech analog tables (ROM 0xD858 -> 0xD728, RAM tables 0x38440+, class bytes at
+    0x384A8) are applied only for reader RF modes < 14, so listen runs with 0x5C440-4B8 = 0.
+    Poking these at 38 V changed nothing (still 0 decodes): 0x5C05C, 064, 06C, 070, 074, 078, 104,
+    10C, 110, 32C, 360, 3C4, 3E0 (0 / max each), and the reader-A (07 C3 0A C8) and B analog tables
+    copied into listen.
+  - Verdict: the 3DS antenna and matching were built for reader mode only (Nintendo never configured
+    card mode), and the card-side answer is barely visible even to a pm3 lying on top of it. A full
+    card (anticollision + MFC/MFU/ISO-DEP in our own chip firmware) would be unusable with real
+    readers, so card mode is not pursued further. Tools left in place: stock.py env CFG (extra
+    SET_CONFIG TLVs) / POKE (register writes after setup); sample.py / snap.py env PRE.
 - Nintendo's nfc module only carries reader-side vendor config (TLV list at .code 0x13B1A1:
   CB 01 01, A5 01 01, CA [20 bytes], C5 01 01), so card mode was never configured on the 3DS.
 - lmon (chip/lmon.c, own SRAM image, ~3.3 KB): memrw ops 0-4 + op 5 IRQLOG (wrap IRQ0..7, 5 watched

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Listen-A, then sample a register on-chip (lmon OP_SAMPLE) while a reader field is applied;
 print the run-length encoded trace.   sample.py HOST REG INTERVAL_US COUNT [DELAY_S]
+env PRE: NCI commands (hex, no 10 prefix) sent before the listen setup.
 Starts sampling DELAY_S (default 3) after the listen setup. SWALLOW (6th arg) 1 = lmon acks the
 framer interrupts and the ROM's handler never runs."""
 import struct
@@ -20,7 +21,7 @@ def main():
     mon.read = lambda addr, n: b"".join(mon._do(chipmon.OP_READ8, a, bytes([min(200, addr + n - a)]))
                                         for a in range(addr, addr + n, 200))
     mon.load("lmon.bin")
-    for c in ["20021004" "300104" "310100" "320120" "330401020304",
+    for c in __import__("os").environ.get("PRE", "").split() + ["20021004" "300104" "310100" "320120" "330401020304",
               "21000401040202", "200204018001" "01", "2103030180" "01"]:
         nfc.cmd(bytes.fromhex("10" + c))
     if len(sys.argv) > 6:  # swallow mode: lmon acks framer IRQs itself, the ROM never sees them

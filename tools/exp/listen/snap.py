@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Listen-A with a distinctive UID DE AD BE EF / ATQA 0344 / SAK 28: dump 0x5C000-0x5C7FF while
 listening, then again once the reader's field is on; diff and grep for the config values.
-    snap.py HOST"""
+    snap.py HOST          env PRE: NCI commands (hex, no 10 prefix) sent first"""
 import sys
 import time
 
@@ -31,7 +31,7 @@ def main():
     nfc = nfcnet.Nfc(sys.argv[1])
     mon = chipmon.Mon(nfc, on_other=other)
     mon.load()
-    for c in ["20021004" "300144" "310103" "320128" "3304DEADBEEF",
+    for c in __import__("os").environ.get("PRE", "").split() + ["20021004" "300144" "310103" "320128" "3304DEADBEEF",
               "21000401040202", "200204018001" "01", "2103030180" "01"]:
         for p in nfc.cmd(bytes.fromhex("10" + c)):
             other(p)
