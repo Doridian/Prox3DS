@@ -726,8 +726,9 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
     iclass_default_keys.dic / iclass_elite_keys.dic and resources/iclass_decryptionkey.bin (the transport
     key, 16 bytes) via jsDelivr (gh/RfidResearchGroup/proxmark3@master) to iclass/; the key search uses
     each dictionary that has keys in place of the built-in copy. Download verified on the 3DS (29 / 729
-    keys, same as iclasskeys.c; transport key identical to pm3's); a key search with the downloaded lists
-    not yet run (no card on the reader).
+    keys, same as iclasskeys.c; transport key identical to pm3's). With the downloaded files and
+    known.txt emptied: same Kd / Kc found, 404 tries, 19.0 s (net op), 256 blocks, credential decrypted
+    (FC 1234 CN 567890).
   - Not done yet: writes (UPDATE 87 + MAC), other books / pages of 16k/32k cards, iClass in the generic
     scan, SE / SR (non-legacy) credentials.
 
