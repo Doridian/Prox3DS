@@ -157,12 +157,17 @@ bool monTxraw(const u8 *data, u32 len, u8 code, u8 r570, u8 r574, u8 r55c)
 
 bool monTxsched(const u8 *data, u32 len, u8 code, const MonStore *st, u32 n)
 {
+	return monTxschedRegs(data, len, code, 0, 1, 0x88, st, n);
+}
+
+bool monTxschedRegs(const u8 *data, u32 len, u8 code, u8 r570, u8 r574, u8 r55c, const MonStore *st, u32 n)
+{
 	u8 arg[5 + 10 * MON_MAX_STORES + 0x40], out[4];
 	if (n > MON_MAX_STORES || len > 0x40) return false;
-	arg[0] = 0;
-	arg[1] = 1;
+	arg[0] = r570;
+	arg[1] = r574;
 	arg[2] = code;
-	arg[3] = 0x88;
+	arg[3] = r55c;
 	arg[4] = n;
 	u8 *p = arg + 5;
 	for (u32 i = 0; i < n; i++, p += 10) {

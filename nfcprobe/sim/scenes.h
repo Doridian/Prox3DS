@@ -5,6 +5,7 @@
 #include "../source/desfire.h"
 #include "../source/mfukeys.h"
 #include "../source/oath.h"
+#include "../source/iclass.h"
 #include "../source/scard.h"
 
 void simReset(void); // root menu, no dialog / toast / job
@@ -45,3 +46,5 @@ void simGp(const GpCard *g, bool ok, const char *why);
 void simGpCaps(void);
 void simOath(const OathInfo *o, int offset);
 void simOathAdd(void);
+void simIclass(const IcCard *c);
+void simIclassMenu(void);

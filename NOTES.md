@@ -697,6 +697,33 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   iClass needs; earlier 1-of-4 attempts only varied 0x5C554. Next for iClass: raw V TX (stall,
   0x5C554 = 18, 0x5C558 = 5) of ACTALL / IDENTIFY, checked with `hf iclass sniff`, then the card's
   answer on RX.
+- iClass UNPARKED and working, 2026-11-02 (card 01020304F7FF12E0 with the pm3 stacked on it as sniffer):
+  - TX: from the stalled V poll (capture on, RF_DISCOVER 76 after `B7 01 02`), 0x5C554 = 18, 0x5C558 = 5,
+    0x5C560 = 0C (no HW CRC), memrw txsched with r570 1 / r574 5 / r55c 88: ACTALL `0A` and IDENTIFY
+    `0C` go out as clean 1-of-4 frames (416 us busy), and the card answers IDENTIFY with its ASN.
+  - RX needs the V analog values the stall skips: 0x5C440-44C = 08 D5 1C 9A, 0x5C48C = 18, 0x5C53C = 1.
+    Then memrw's capture ring gets every card answer (TX/RX status 0x10, 0x5C5A0 = byte count),
+    identical to the pm3 sniff. No RX-start command is needed after TX (ROM 0x1206 skips 0x5C56C = 2 in
+    V mode as well).
+  - iClass CRC = poly 1021 reflected, init E012 (4807 bit-reversed), no final xor, LSB first (fitted from
+    ASN 7C7C7C7C7C7C7C7C -> 81C3 and READ 01 -> FA22; pm3 lists init 4807 / xorout 0BC3 in another form).
+  - Flow (tools/exp/iclass/icl.py, then the app): ACTALL, IDENTIFY -> ASN + CRC, SELECT 81 ASN -> CSN +
+    CRC, READ 0C blk CRC -> 8 + CRC, READCHECK 88/18 02 -> CC (8, no CRC), CHECK 05 NR(4) MAC(4) ->
+    tag MAC (4), MAC = pm3 opt_doReaderMAC(CC + NR, diversified key); a wrong MAC gets no answer.
+  - Keys of this card: Kd = elite master F3807F40B07650F2 (pm3 iclass_elite_keys.dic), Kc = standard
+    master FDCB5A52EA8F3090 (iclass_default_keys.dic). Card: 32 KBits / 17 app areas (2 books / 8
+    pages), AA1 6-18, AA2 19-255 (pm3 `hf iclass info` agrees; earlier "2k" above was wrong). Credential
+    blocks 7-9 2K3DES with pm3's transport key (client/resources/iclass_decryptionkey.bin): block 7 =
+    000000069A5154A4 -> HID Corporate 1000 35-bit FC 1234 CN 567890.
+  - App (nfcprobe/source/iclass.c math, iclassrw.c reader, iclassui.c UI, iclasskeys.c from
+    tools/gen_iclasskeys.py, net op 0x2B OP_ICLASS / nfcnet.py iclass()): root menu "iClass / PicoPass":
+    read with key search (remembered keys for the CSN in iclass/known.txt, iclass/keys.txt, pm3 defaults
+    standard + elite, the 729 elite keys elite), read with a typed key, card screen with config, keys,
+    credential (if iclass/iclass_decryptionkey.bin is on the SD) and blocks. First-page dump in pm3 .bin
+    format (blocks 3/4 = diversified keys) to iclass/. Full search on this card: 404 tries, 17.7 s;
+    with remembered keys 2.8 s (net op, 256 blocks 5.5 s). 4/4 reads identical to the pm3 dump.
+  - Not done yet: writes (UPDATE 87 + MAC), other books / pages of 16k/32k cards, iClass in the generic
+    scan, SE / SR (non-legacy) credentials.
 
 ## DESFire without keys (issue #8) -- 2026-10-31
 - Test card: UID 04B1B1B1B1B1B1, ATQA 0344, SAK 20, ATS 0675778102 80 (FSCI 5 = 64, FWI 8, CID ok).

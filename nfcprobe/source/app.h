@@ -94,6 +94,9 @@ void apduConsole(void);  // raw APDUs (scui.c)
 u32 jobCount(void);      // jobs started so far: tells a tool whether another job touched the card since
 bool textInput(const char *hint, const char *init, char *out, u32 max); // system keyboard; false = cancelled / empty
 
+// HID iClass / PicoPass (iclassui.c)
+void iclassOpenMenu(void);
+
 // MIFARE Classic
 void cloneStart(const MfDump *d, bool force); // write a dump onto the magic card on the reader
 void editorOpen(const MfDump *d, const char *path);

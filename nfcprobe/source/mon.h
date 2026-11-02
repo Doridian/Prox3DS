@@ -35,6 +35,8 @@ typedef struct {
 #define MON_MAX_STORES 8
 // Bit-mode TX (r570 0, r574 1, r55c 0x88) with timed stores; waits for the TX to end.
 bool monTxsched(const u8 *data, u32 len, u8 code, const MonStore *st, u32 n);
+// The same with the framer's TX registers given (ISO15693 coding: r570 1, r574 5).
+bool monTxschedRegs(const u8 *data, u32 len, u8 code, u8 r570, u8 r574, u8 r55c, const MonStore *st, u32 n);
 // Mifare Classic first auth on the chip (OP_AUTH). Returns 1 (nt answered with {nr}{ar}),
 // 0 (no nt), -1 (monitor error).
 int monAuth(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code, u32 nrarTx,

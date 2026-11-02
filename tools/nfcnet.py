@@ -74,6 +74,7 @@ OP_PUT_FILE = 0x0A
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF, OP_MF_CHK = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26
 OP_MF_VALUE, OP_MFU_NDEF, OP_AMIIBO, OP_MF_DARKSIDE = 0x27, 0x28, 0x29, 0x2A
+OP_ICLASS = 0x2B
 MF_VAL_OPS = {"dec": 0xC0, "inc": 0xC1, "restore": 0xC2}
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
 DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
@@ -226,6 +227,24 @@ class Nfc:
         (30 bytes) write it and read it back: True if verified. WRITES THE CARD CONFIG."""
         p = self.card_call(OP_GEN4_CONFIG, bytes(pwd) + bytes(cfg or b""), 30)
         return p if cfg is None or p is None else True
+
+    def iclass(self, key=None, kind=0):
+        """iClass read (key search unless key: 8 bytes, kind 0 std / 1 elite / 2 diversified) -> dict or
+        None (no card)."""
+        p = self.card_call(OP_ICLASS, (bytes(key) + bytes([kind])) if key else b"", 600)
+        if p is None:
+            return None
+        r = {"csn": p[0:8], "kd": p[10:18] if p[8] else None, "kc": p[18:26] if p[9] else None,
+             "kd_kind": p[26], "kc_kind": p[27], "tried": struct.unpack_from("<H", p, 28)[0]}
+        n = struct.unpack_from("<H", p, 30)[0]
+        o = 32
+        r["blocks"] = [p[o + 9 * i + 1:o + 9 * i + 9] if p[o + 9 * i] else None for i in range(n)]
+        o += 9 * n
+        bits, value, fc, cn, par, enc = struct.unpack_from("<BQIIBB", p, o)
+        o += 19
+        r["cred"] = {"bits": bits, "value": value, "fc": fc, "cn": cn, "parity": bool(par), "encrypted": bool(enc),
+                     "format": p[o + 1:o + 1 + p[o]].decode()}
+        return r
 
     def mfu_dump(self, pwd=None):
         """-> (header[56], pwd_ok, pages [bytes or None], type name), or None (self.why)."""

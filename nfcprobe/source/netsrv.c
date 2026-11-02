@@ -20,6 +20,7 @@
 #include "mfc.h"
 #include "isodep.h"
 #include "mfu.h"
+#include "iclass.h"
 #include "ndef.h"
 #include "nfchw.h"
 #include "probe.h"
@@ -106,6 +107,10 @@ enum {
 	                       // u8 (1 registered, 2 app data), nickname (UTF-8). On failure payload = reason
 	OP_MF_DARKSIDE = 0x2A, // block u8, keyB u8 -> key[6] (darkside: cards with the NACK bug, no key needed);
 	                       // on failure payload = reason
+	OP_ICLASS      = 0x2B, // [key[8], kind u8 (0 std, 1 elite, 2 diversified)] -> iClass read (iclassrw.c, saved
+	                       // to SD): csn[8], kdKnown u8, kcKnown u8, kd[8], kc[8], kdKind u8, kcKind u8, keysTried
+	                       // u16, nblocks u16, per block: have u8 + data[8]; then credential: bits u8, value u64,
+	                       // fc u32, cn u32, parityOk u8, encrypted u8, format (len u8 + text). 1 = no card
 	OP_MF_VALUE    = 0x27, // op u8 (C0 dec, C1 inc, C2 restore), block u8, delta s32 LE, dest u8, keyB u8,
 	                       // key[6] -> dest block read back[16]; on failure payload = reason. WRITES THE CARD
 };
@@ -368,6 +373,37 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		*outLen = strlen(mfWhy());
 		memcpy(out, mfWhy(), *outLen);
 		return r < 0 ? -1 : 1;
+	}
+	case OP_ICLASS: {
+		if (inLen != 0 && inLen != 9) return -3;
+		IcCard *c = &icCard;
+		if (!icWait(c->csn, 6000)) return 1;
+		int r = icReadCard(c, inLen ? in : NULL, inLen ? in[8] : 0);
+		if (r <= 0) return r < 0 ? -1 : 1;
+		char path[80];
+		if (icSaveDump(c, path, sizeof(path))) logp("net: saved %s\n", path);
+		u8 *p = out;
+		memcpy(p, c->csn, 8), p += 8;
+		*p++ = c->kdKnown, *p++ = c->kcKnown;
+		memcpy(p, c->kd, 8), memcpy(p + 8, c->kc, 8), p += 16;
+		*p++ = c->kdKind, *p++ = c->kcKind;
+		*p++ = c->keysTried, *p++ = c->keysTried >> 8;
+		*p++ = c->nblocks, *p++ = c->nblocks >> 8;
+		for (int b = 0; b < c->nblocks; b++, p += 9) {
+			p[0] = c->have[b];
+			memcpy(p + 1, c->blocks[b], 8);
+		}
+		const IcCredential *cr = &c->cred;
+		*p++ = cr->bits;
+		for (int i = 0; i < 8; i++) *p++ = cr->value >> (8 * i);
+		for (int i = 0; i < 4; i++) *p++ = cr->fc >> (8 * i);
+		for (int i = 0; i < 4; i++) *p++ = cr->cn >> (8 * i);
+		*p++ = cr->parityOk, *p++ = cr->encrypted;
+		*p = strlen(cr->format);
+		memcpy(p + 1, cr->format, *p);
+		*outLen = p + 1 + *p - out;
+		icStop();
+		return 0;
 	}
 	case OP_MFU_DUMP: {
 		static MfuDump d;

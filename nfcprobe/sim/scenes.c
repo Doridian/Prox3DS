@@ -553,6 +553,45 @@ static void gpNoKeys(void)
 }
 static void gpCaps(void) { simGpCaps(); }
 static void scnOathList(void) { simOath(&oathYk, 60); }
+
+static IcCard icc;
+static void icFill(bool found, bool decrypted)
+{
+	static const u8 dump[10][8] = {
+		{ 0x01, 0x02, 0x03, 0x04, 0xF7, 0xFF, 0x12, 0xE0 }, { 0x12, 0xFF, 0xFF, 0xFF, 0xE9, 0x7F, 0xFF, 0x3C },
+		{ 0xFF, 0xFF, 0xFF, 0xFF, 0x11, 0xFC, 0xFF, 0xFF }, { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 },
+		{ 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 }, { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF },
+		{ 0x03, 0x03, 0x03, 0x03, 0x00, 0x03, 0xE0, 0x17 }, { 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18 },
+		{ 0x2A, 0xD4, 0xC8, 0x21, 0x1F, 0x99, 0x68, 0x71 }, { 0x2A, 0xD4, 0xC8, 0x21, 0x1F, 0x99, 0x68, 0x71 } };
+	memset(&icc, 0, sizeof(icc));
+	memcpy(icc.csn, dump[0], 8);
+	icConfig(dump[1], &icc.cfg);
+	icc.nblocks = icc.cfg.lastBlock + 1;
+	for (int b = 0; b < icc.nblocks; b++) {
+		bool hdr = b < 3 || b == 5;
+		icc.have[b] = found || hdr;
+		memcpy(icc.blocks[b], b < 10 ? dump[b] : dump[5], 8);
+	}
+	icc.keysTried = found ? 404 : 1487;
+	if (found) {
+		icc.kdKnown = icc.kcKnown = true;
+		memcpy(icc.kd, dump[3], 8), memcpy(icc.kc, dump[4], 8);
+		icc.kdKind = IC_KEY_ELITE, icc.kcKind = IC_KEY_STD;
+		snprintf(icc.kdLabel, sizeof(icc.kdLabel), "elite dictionary");
+		snprintf(icc.kcLabel, sizeof(icc.kcLabel), "default: from HID multiclassSE reader");
+		icCredential(icc.blocks[0], icc.nblocks, NULL, &icc.cred); // encrypted: no transport key here
+		if (decrypted) { // what the transport key gives for this card: C1k35s FC 1234 CN 567890
+			icc.cred.encrypted = false;
+			icc.cred.bits = 35;
+			icc.cred.value = 0x69A5154A4ULL;
+			icWiegand(icc.cred.value, 35, &icc.cred);
+		}
+	}
+}
+static void scnIclass(void) { icFill(true, true); simIclass(&icc); }
+static void scnIclassEnc(void) { icFill(true, false); simIclass(&icc); }
+static void scnIclassNoKey(void) { icFill(false, false); simIclass(&icc); }
+static void scnIclassMenu(void) { simIclassMenu(); }
 static void oathEmpty(void)
 {
 	OathInfo o = oathYk;
@@ -718,6 +757,11 @@ static const SimStep script[] = {
 	CALL(reset), CALL(gpNoKeys), SHOT("gp_nokeys"), CALL(gpCaps), SHOT("gp_caps"), B,
 	CALL(reset), CALL(scnOathList), SHOT("oath_list"), D, D, D, D, D, D, D, D, D, SHOT("oath_list_end"), Y, SHOT("oath_menu"), B,
 	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
+
+	// iClass
+	CALL(reset), CALL(scnIclassMenu), SHOT("iclass_menu"), CALL(scnIclass), SHOT("iclass_card"), D, D, D, D, D, D, D, D,
+	SHOT("iclass_card_scrolled"), CALL(reset), CALL(scnIclassEnc), SHOT("iclass_card_encrypted"),
+	CALL(reset), CALL(scnIclassNoKey), SHOT("iclass_card_nokey"),
 	END,
 };
 
