@@ -92,7 +92,7 @@ class Mon:
 
     def capture(self, on=True):
         """Start/stop RX capture (memrw OP_CAPTURE); remembers the ring address."""
-        self.ring, self.irqlog = struct.unpack("<II", self._do(OP_CAPTURE, 0, bytes([1 if on else 0])))
+        self.ring = struct.unpack("<I", self._do(OP_CAPTURE, 0, bytes([1 if on else 0])))[0]
         self.seen = struct.unpack("<I", self.read(self.ring, 4))[0]
 
     def frames(self):
@@ -145,14 +145,18 @@ class Mon:
             return None
         return struct.unpack("<I", p)[0]
 
-    def darkside(self, steps, acode, aframe, nrar_frames, sync, tq=0, maxiter=40, atw=5000, nrar_tx=0):
-        """One darkside run (memrw OP_DARKSIDE): fire AUTHs about one PRNG period (sync ticks) apart,
-        steering onto the first nonce (tq = ticks per PRNG step * 256; 0 = no steering, for calibration).
-        steps: list of (r574, code, rx, bytes) re-select frames (parity on); acode/aframe: the AUTH
-        frame (parity off, packed); nrar_frames: 8 packed 9-byte {nr}{ar} frames (parity off, nt_diff
-        0..7). Returns (nt, nt1, ks[8], mask, hits): nt = the locked (first) nonce, nt1 the second (for
-        period calibration), mask a bit per filled nt_diff (0xFF = complete)."""
-        arg = struct.pack("<IhHHHB", sync, 0, maxiter, atw, tq, len(steps))
+    def darkside(self, steps, acode, aframe, nrar_frames, sync, tq=0, maxiter=40, atw=5000, nrar_tx=0,
+                 nslot=1, need=None, sfr=0):
+        """Darkside runs (memrw OP_DARKSIDE): fire AUTHs on a grid sync ticks apart, slot i taking every
+        nslot-th grid point (sync * nslot = one PRNG period), each slot steering onto its own nonce
+        (tq = ticks per PRNG step * 256; 0 = no steering, for calibration); stops when `need` slots
+        (default all) are complete. steps: list of (r574, code, rx, bytes) re-select frames (parity
+        on); acode/aframe: the AUTH frame (parity off, packed); nrar_frames: 8 packed 9-byte {nr}{ar}
+        frames (parity off, nt_diff 0..7). Returns per slot (nt, ks[8], mask, hits): nt the slot's
+        locked (first) nonce, mask a bit per filled nt_diff (0xFF = complete). Unsteered with 2 slots,
+        the two nonces are a grid point apart (period calibration)."""
+        arg = struct.pack("<IhHHHBBB", sync, sfr, maxiter, atw, tq, nslot,
+                          nslot if need is None else need, len(steps))
         for r574, code, rx, data in steps:
             arg += bytes([r574, code, rx, len(data)]) + bytes(data)
         arg += bytes([acode, len(aframe)]) + bytes(aframe)
@@ -164,20 +168,11 @@ class Mon:
             p = self._do(OP_DARKSIDE, nrar_tx, arg, timeout_ms=45000, grace_ms=45000)
         finally:
             self.nfc.sock.settimeout(10)
-        nt, nt1 = struct.unpack_from("<I", p)[0], struct.unpack_from("<I", p, 13)[0]
-        return nt, nt1, list(p[4:12]), p[12], p[17]
-
-    def irqs(self):
-        """Framer interrupt log: [(timer, group, status)], oldest first (group 0 = 0x5C5C4,
-        1 = 0x5C5D0 TX/RX, 2 = 0x5C5DC)."""
-        n_log = 16  # memrw N_LOG
-        raw = self.read(self.irqlog, 4 + n_log * 8)
-        count = struct.unpack_from("<I", raw)[0]
-        out = []
-        for i in range(max(0, count - n_log), count):
-            a, st = struct.unpack_from("<II", raw, 4 + (i % n_log) * 8)
-            out.append((a >> 8, a & 0xFF, st))
-        return out
+        slots = []
+        for i in range(nslot):  # memrw struct dslot: target, ph, ks[8], mask, hits, lost, pad
+            o = 20 * i
+            slots.append((struct.unpack_from("<I", p, o)[0], list(p[o + 8:o + 16]), p[o + 16], p[o + 17]))
+        return slots
 
     def call(self, addr, *args):
         args = (list(args) + [0] * 4)[:4]

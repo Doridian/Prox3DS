@@ -1128,7 +1128,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   BLOCK [b]`. Verified: 7991086F (4K) with every trailer changed to non-dictionary keys (sector 0 A/B
   3D5B1FA9E4C7, sectors 1-39 A/B 7E2C94D1B8A3, access bits still FF078069): keyless dump in 63 s --
   darkside 8 s -> nested (sector 1) -> dictionary for the rest, 40/40 sectors. THE CARD KEEPS THESE KEYS.
-- Chip SRAM for the patch is full (3356/3364 bytes). To fit OP_DARKSIDE: removed the debug IRQ logging
+- Chip SRAM for the patch is full (3356/3364 bytes; 3360 after the slots, next sections). To fit OP_DARKSIDE: removed the debug IRQ logging
   (log_irq, rf_filter/tmr_filter -> a single identity pass_filter) and OP_SNAP (the one-time NFC-V
   framer snapshot, used only by rfpoll.py/chipmon.py, re-addable from git).
 
@@ -1163,6 +1163,36 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   went run 2 / run 3 "nothing in common", run 4 "met an earlier list" -> 1 candidate (the newest-only
   rule would have needed another run).
 - Keyless dump of 7991086F (darkside -> nested -> dictionary): 63 s -> 40 s, 40/40 sectors.
+
+## Darkside: three runs per PRNG period -- 2026-11-01
+- Where a run's ~25 fires went (a temporary trace build of OP_DARKSIDE, the steps each fire was off):
+  never a lost card, every off-target nonce within +-3 steps of the target. Two causes: each run
+  started with ~5 fires of drift (`T 3 1 1 2 1 1 ...`, the per-fire correction learning from 0), and
+  ping-pong (`1 -2 1 -2`) from correcting ~1 step of jitter at full gain. A slow sweep with no
+  steering: the nonce follows the fire time smoothly with ~+-1 step of noise. Half gain was worse
+  (stuck at -1 for runs of fires).
+- The card's clock stops in every reader pause, so each AUTH cycle (HLTA/WUPA/SELECT, AUTH, {nr}{ar})
+  costs F PRNG steps besides the time between AUTHs. With probe steps at DS_PROBE ticks and 65535 + d
+  at sync ticks: real ticks/step = (sync - DS_PROBE) / (65535 + d - probe) = 1.180 (DS_PROBE / probe
+  = 1.572 folds F in), F = 1268 steps. Steering with 1.572 overshot by a third.
+- Slots: a PRNG period is ~79 ms but a fire cycle only a few ms, so OP_DARKSIDE now takes nslot slots
+  on a grid of tps * (65535 / nslot + F) ticks; slot i fires every nslot-th grid point and steers onto
+  its own nonce (own phase, shared drift correction), and the call returns when `need` slots are
+  complete. Without F in the grid, slots never saw their nonce again. 3 slots: 3 runs in ~2-2.5 s
+  (35/36 complete; with the old ticks/step 3.1 s, 29/36); 4 slots start leaving runs a NACK short.
+  Calibration calls use 2 unsteered slots (the two targets are the old nt / nt1).
+- SRAM: 3360/3364. Room for the slot loop (+140 B): the slot table lives in the (now aligned) reply
+  buffer, OP_CAPTURE no longer returns the dead irqlog pointer (chipmon.irqs() gone, reply 4 bytes),
+  chkkeys and darkside share skip_steps. Tried first: code in AON RAM after the 14-byte thunk
+  (0x68018-0x680FF, the stock patch ran code from AON). OP_CHKKEYS worked with send_steps/recv_nt
+  there, but OP_DARKSIDE never answered, even HEAD's version with only those two moved. Unexplained,
+  so not used.
+- App (mfDarkside): DS_SLOTS 3 per call, up to 4 calls; the runs of a call go through the same solve
+  thread one by one. A list over the set-aside cap no longer pushes the kept ones out (a 2.6M list
+  dropped the good run's list, 17 s instead of ~10 s).
+- 7991086F: 24/24 recoveries, 2.4-6.5 s with the calibration kept (one 17 s before the eviction fix:
+  3 of 6 runs missed), 4.8 s fresh. 42 logged keystreams all match the known key; the algorithm missed
+  9/42. Keyless dump 39 s, byte-identical to the previous one.
 
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record

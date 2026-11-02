@@ -47,7 +47,8 @@ int monAuth(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code
 int monChkKeys(const u8 *arg, u32 len, u32 nrarTx, u8 out[3]);
 int monNested(const u8 key[6], u32 uid, u32 nr, const u8 *frame, u32 flen, u8 code,
 	const u8 nestedCmd[4], u32 nrarTx, u32 *nt0);
-// One darkside run (OP_DARKSIDE, chip/memrw.c: arg layout there): out = nt (4 LE), ks[8], mask, nt1
-// (4 LE), hits. 0 = ok, -1 = monitor error.
-#define MON_DARKSIDE_OUT 18
-int monDarkside(const u8 *arg, u32 len, u32 nrarTx, u8 out[MON_DARKSIDE_OUT]);
+// Darkside runs (OP_DARKSIDE, chip/memrw.c: arg layout there): out = nslot * struct dslot (target, ph,
+// ks[8], mask, hits, lost, pad). 0 = ok, -1 = monitor error.
+#define MON_DARKSIDE_SLOT  20
+#define MON_DARKSIDE_SLOTS 8
+int monDarkside(const u8 *arg, u32 len, u32 nrarTx, int nslot, u8 *out);

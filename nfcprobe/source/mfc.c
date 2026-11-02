@@ -826,35 +826,44 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 // {nr}{ar} with an encrypted 4-bit NACK whatever its parity (FM11RF32N batch). For one tag nonce and a
 // fixed reader nonce, the 8 NACKs over nt_diff (top 3 bits of nr's last byte) narrow the key to ~100k
 // candidates (crapto1_darkside); runs with different nonces intersect to the key. The card's PRNG
-// free-runs, so the chip fires its AUTHs about one PRNG period apart and steers onto one nonce; the
-// period and ticks per step are calibrated here from nonce pairs the op samples.
+// free-runs, so the chip fires its AUTHs on a grid and steers onto repeating nonces: DS_SLOTS slots per
+// PRNG period, each collecting its own run. The period and ticks per step are calibrated here from
+// nonce pairs the op samples.
 #define DS_NR    0xAABBCC00 // fixed on-wire reader nonce; the low 5 bits of the last byte stay 0
 #define DS_AR    0x11223344 // fixed on-wire reader response
 #define DS_ATW   5000       // ticks to wait for the NACK
 #define DS_PROBE 6000       // grid spacing (ticks) for measuring ticks per PRNG step
-#define DS_ITER  40         // AUTHs per collecting run (one PRNG period, ~79 ms, apart)
-#define DS_RUNS  12         // collecting runs before giving up
+#define DS_ITER  40         // AUTHs per slot and collecting call (one PRNG period, ~79 ms, apart)
+#define DS_SLOTS 3          // runs collected at once (4: the slots start missing their nonces)
+#define DS_CALLS 4          // collecting calls before giving up
 #define DS_CHECK 64         // candidates few enough to try on the card
 
 typedef struct {
-	u32 nt, nt1; // the locked nonce (calibration: the first) and the second
+	u32 nt; // the slot's locked nonce (unsteered: the first it saw)
 	u8 ks[8], mask, hits;
 } DsRun;
 
-static int dsRun(u8 *a, u32 len, u32 sync, u32 tq, u16 maxiter, DsRun *o)
+// One OP_DARKSIDE call: grid points `grid` ticks apart (fraction included), nslot slots (all to be
+// completed), tq = ticks per PRNG step * 256 (0: unsteered).
+static int dsRun(u8 *a, u32 len, double grid, u32 tq, u16 maxiter, int nslot, DsRun *o)
 {
-	u8 out[MON_DARKSIDE_OUT];
-	for (int i = 0; i < 4; i++) a[i] = sync >> (8 * i);
-	a[4] = a[5] = 0; // sfracq: the op learns the drift
+	u8 out[MON_DARKSIDE_SLOT * MON_DARKSIDE_SLOTS];
+	u32 g = grid;
+	s16 sfr = (grid - g) * 256 + 0.5; // the fraction; the op learns the drift on top
+	for (int i = 0; i < 4; i++) a[i] = g >> (8 * i);
+	a[4] = sfr, a[5] = sfr >> 8;
 	a[6] = maxiter, a[7] = maxiter >> 8;
 	a[8] = DS_ATW & 0xFF, a[9] = DS_ATW >> 8;
 	a[10] = tq, a[11] = tq >> 8;
-	if (monDarkside(a, len, NRAR_TX, out) < 0) FAIL(-1, "darkside: monitor");
-	o->nt = out[0] | out[1] << 8 | out[2] << 16 | (u32)out[3] << 24;
-	o->nt1 = out[13] | out[14] << 8 | out[15] << 16 | (u32)out[16] << 24;
-	memcpy(o->ks, out + 4, 8);
-	o->mask = out[12];
-	o->hits = out[17];
+	a[12] = a[13] = nslot;
+	if (monDarkside(a, len, NRAR_TX, nslot, out) < 0) FAIL(-1, "darkside: monitor");
+	for (int i = 0; i < nslot; i++) { // memrw struct dslot: target, ph, ks[8], mask, hits, lost, pad
+		const u8 *q = out + MON_DARKSIDE_SLOT * i;
+		o[i].nt = q[0] | q[1] << 8 | q[2] << 16 | (u32)q[3] << 24;
+		memcpy(o[i].ks, q + 8, 8);
+		o[i].mask = q[16];
+		o[i].hits = q[17];
+	}
 	return 0;
 }
 
@@ -872,7 +881,7 @@ static bool dsDist(u32 a, u32 b, int *d)
 
 // The last card's calibration (UID, ticks per step, grid spacing): checked, not measured again.
 static u32 dsUid, dsSync;
-static double dsTps;
+static int dsProbe;
 
 // Lists set aside: the common-prefix recovery misses the key now and then (~1 run in 10, pm3's too),
 // so when a run has nothing in common with the list so far, either may be the miss. The list so far
@@ -959,7 +968,8 @@ static int dsUse(DsSolve *s, DsList *common, DsList *old, int *nold, int *runs, 
 	} else if (s->full) { // nothing in common: one of them is the miss, keep both
 		int total = common->n;
 		for (int j = 0; j < *nold; j++) total += old[j].n;
-		while (*nold && (*nold == DS_OLD || total > DS_OLD_MAX)) { // drop the oldest
+		// (a list too big to keep at all doesn't push the others out)
+		while (common->n <= DS_OLD_MAX && *nold && (*nold == DS_OLD || total > DS_OLD_MAX)) { // drop the oldest
 			total -= old[0].n;
 			free(old[0].k);
 			memmove(old, old + 1, --*nold * sizeof(DsList));
@@ -1000,7 +1010,7 @@ static void dsJoin(Thread *th)
 int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 {
 	if (card.uidLen != 4 && card.uidLen != 7 && card.uidLen != 10) FAIL(0, "no card");
-	u8 a[250], *p = selectAuthArg(a + 12, block, keyB), zero[8] = { 0 }, code;
+	u8 a[250], *p = selectAuthArg(a + 14, block, keyB), zero[8] = { 0 }, code;
 	for (int c = 0; c < 8; c++) { // {nr}{ar} per nt_diff, fake (all-zero) parity
 		u32 nr = DS_NR | c << 5;
 		u8 b[8];
@@ -1008,39 +1018,48 @@ int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 		p += mfPack(b, 8, zero, p, &code);
 	}
 	u32 len = p - a, uid = cardUid();
-	DsRun r;
-	int d;
+	DsRun r[DS_SLOTS];
+	int d = 0;
 	u64 t0 = osGetTime();
 
+	// Calibration from unsteered pairs of nonces a grid point apart (2 slots, one AUTH each).
 	progOp("Darkside: calibrating");
-	double tps = 0;
+	int probe = 0;
 	u32 sync = 0;
-	if (uid == dsUid) tps = dsTps, sync = dsSync;
+	if (uid == dsUid) probe = dsProbe, sync = dsSync;
 	for (bool fresh = !sync;; fresh = true) {
-		if (fresh) { // ticks per PRNG step, from two AUTHs DS_PROBE ticks apart
-			tps = 0;
-			for (int t = 0; t < 8 && !tps && !mfCancel; t++) {
-				if (dsRun(a, len, DS_PROBE, 0, 2, &r) < 0) return -1;
-				if (dsDist(r.nt, r.nt1, &d) && d) tps = (double)DS_PROBE / abs(d);
+		if (fresh) { // nonce steps between two AUTHs DS_PROBE ticks apart
+			probe = 0;
+			for (int t = 0; t < 8 && !probe && !mfCancel; t++) {
+				if (dsRun(a, len, DS_PROBE, 0, 2, 2, r) < 0) return -1;
+				if (dsDist(r[0].nt, r[1].nt, &d)) probe = abs(d);
 			}
-			if (!tps) FAIL(0, mfCancel ? "stopped" : "darkside: no nonces to calibrate");
-			sync = 65535 * tps + 0.5;
+			if (!probe) FAIL(0, mfCancel ? "stopped" : "darkside: no nonces to calibrate");
+			sync = 65535.0 * DS_PROBE / probe + 0.5;
 		}
 		// Grid spacing = one PRNG period (65535 steps): the per-fire nonce advance is deterministic, so
 		// close the loop on it until it is well inside the op's steering window.
 		bool near = false;
 		for (int t = 0; t < (fresh ? 16 : 4) && !near && !mfCancel; t++) {
 			progStep(t, 16);
-			if (dsRun(a, len, sync, 0, 2, &r) < 0) return -1;
-			if (!dsDist(r.nt, r.nt1, &d)) continue;
-			if (!(near = abs(d) <= 8)) sync -= (int)(d * tps + (d < 0 ? -0.5 : 0.5));
+			if (dsRun(a, len, sync, 0, 2, 2, r) < 0) return -1;
+			if (!dsDist(r[0].nt, r[1].nt, &d)) continue;
+			if (!(near = abs(d) <= 8)) sync -= (int)(d * (double)DS_PROBE / probe + (d < 0 ? -0.5 : 0.5));
 		}
+		if (!near) d = 0;
 		if (near || fresh || mfCancel) break;
 		logp("  darkside: the last calibration is off\n");
 	}
-	dsUid = uid, dsTps = tps, dsSync = sync;
+	dsUid = uid, dsProbe = probe, dsSync = sync;
+	// The card's clock stops in the reader's modulation pauses, so each AUTH (re-select, AUTH, {nr}{ar})
+	// costs F PRNG steps on top of the time between them: DS_PROBE ticks = probe steps, sync ticks =
+	// 65535 + d. Hence the real ticks per step (what moving one AUTH does; probe / DS_PROBE alone is
+	// ~30% off, which made the steering overshoot) and F, and the grid for DS_SLOTS slots per period.
+	double tps = (double)(sync - DS_PROBE) / (65535 + d - probe), pause = DS_PROBE / tps - probe;
+	double grid = tps * (65535.0 / DS_SLOTS + pause);
 	u32 tq = tps * 256 + 0.5;
-	logp("  darkside: %.3f ticks/step, sync %lu (%llu ms)\n", tps, sync, osGetTime() - t0);
+	logp("  darkside: %.4f ticks/step, %.0f steps per AUTH, sync %lu, grid %.1f (%llu ms)\n", tps, pause, sync,
+		grid, osGetTime() - t0);
 
 	// Run t's candidates are worked out while the chip collects run t + 1, a step below this thread
 	// (which waits on the chip most of the time) and the UI; the solve spreads over the other cores.
@@ -1050,28 +1069,30 @@ int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 	DsSolve s;
 	Thread th = NULL;
 	bool pending = false;
-	for (int t = 0; t < DS_RUNS && !mfCancel; t++) {
-		progOp("Darkside: run %d (%d solved)", t + 1, runs);
-		progStep(t, DS_RUNS);
+	for (int t = 0; t < DS_CALLS && !mfCancel && !res; t++) {
+		progOp("Darkside: runs %d-%d (%d solved)", t * DS_SLOTS + 1, (t + 1) * DS_SLOTS, runs);
+		progStep(t, DS_CALLS);
 		u64 tc = osGetTime();
-		if (dsRun(a, len, sync, tq, DS_ITER, &r) < 0) {
+		if (dsRun(a, len, grid, tq, DS_ITER * DS_SLOTS, DS_SLOTS, r) < 0) {
 			res = -1;
 			break;
 		}
 		tc = osGetTime() - tc;
-		if (r.mask != 0xFF) {
-			logp("  darkside: incomplete (mask %02X, %d hits)\n", r.mask, r.hits);
-			continue;
+		for (int i = 0; i < DS_SLOTS && !mfCancel; i++) {
+			if (r[i].mask != 0xFF) {
+				logp("  darkside: incomplete (mask %02X, %d hits)\n", r[i].mask, r[i].hits);
+				continue;
+			}
+			if (pending) {
+				dsJoin(&th);
+				pending = false;
+				if ((res = dsUse(&s, &common, old, &nold, &runs, block, keyB, keyOut, t0))) break;
+			}
+			s = (DsSolve){ .uid = uid, .r = r[i], .in = common, .nold = nold, .collectMs = tc };
+			memcpy(s.old, old, nold * sizeof(DsList));
+			pending = true;
+			if (!(th = threadCreate(dsSolve, &s, 0x8000, 0x31, -2, false))) dsSolve(&s);
 		}
-		if (pending) {
-			dsJoin(&th);
-			pending = false;
-			if ((res = dsUse(&s, &common, old, &nold, &runs, block, keyB, keyOut, t0))) break;
-		}
-		s = (DsSolve){ .uid = uid, .r = r, .in = common, .nold = nold, .collectMs = tc };
-		memcpy(s.old, old, nold * sizeof(DsList));
-		pending = true;
-		if (!(th = threadCreate(dsSolve, &s, 0x8000, 0x31, -2, false))) dsSolve(&s);
 	}
 	if (pending) {
 		dsJoin(&th);

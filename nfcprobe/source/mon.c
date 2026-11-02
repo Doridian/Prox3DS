@@ -115,7 +115,7 @@ bool monWrite32(u32 addr, u32 value)
 bool monCapture(bool on)
 {
 	u8 arg = on, out[8], cnt[4];
-	if (monDo(MON_CAPTURE, 0, &arg, 1, out, 8) != 8) return false;
+	if (monDo(MON_CAPTURE, 0, &arg, 1, out, 4) != 4) return false;
 	ringAddr = get32(out);
 	if (!monRead(ringAddr, cnt, 4)) return false;
 	seen = get32(cnt);
@@ -221,9 +221,9 @@ int monChkKeys(const u8 *arg, u32 len, u32 nrarTx, u8 out[3])
 	return monDo(MON_CHKKEYS, nrarTx, arg, len, out, 3) == 3 ? 0 : -1;
 }
 
-int monDarkside(const u8 *arg, u32 len, u32 nrarTx, u8 out[MON_DARKSIDE_OUT])
+int monDarkside(const u8 *arg, u32 len, u32 nrarTx, int nslot, u8 *out)
 {
-	// a run is up to maxiter AUTHs a PRNG period (~79 ms) apart
-	int r = monDoWait(MON_DARKSIDE, nrarTx, arg, len, out, MON_DARKSIDE_OUT, 30000);
-	return r == MON_DARKSIDE_OUT ? 0 : -1;
+	// up to maxiter AUTHs, nslot per PRNG period (~79 ms)
+	int n = MON_DARKSIDE_SLOT * nslot, r = monDoWait(MON_DARKSIDE, nrarTx, arg, len, out, n, 30000);
+	return r == n ? 0 : -1;
 }

