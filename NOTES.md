@@ -1462,3 +1462,15 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   format 2 (track 2, cryptogram, ATC; AIP 0000 = online only, qVSDC), AFL 08080800 = SFI 1 record 8 (9F1F
   only). Card number + expiry from track 2, the placeholder name "CARDHOLDER/VISA", no issuer country, no
   log (no 9F4D). Each read counts the ATC up by one (36 -> 37), as expected.
+- Mastercard debit card (UID 4 bytes, SAK 20, two applications A0000000041010 "Mastercard Debit" +
+  A0000000042203 "US Debit", one shared log, format 9F27 9F02 5F2A 9A 9F36 9F52 DF3E 9F21 9F7C): first
+  "lost card". Three causes, all in the generic layers:
+  - The chip captures stray 1-byte frames (00/02/04/06/08) around this card's answers, before or after
+    the real frame. block() (isodep.c) and the select path (mfc.c answer() / sakOf()) took the last
+    frame only: now the last frame with a good CRC / the expected length, and block() keeps polling when
+    only strays came (the answer may be behind them). R(NAK) retries 2 -> 4.
+  - After a session the card answers nothing (DESELECT included) until a new discovery: isoDepActivate
+    tries up to 3 times, the 2nd and 3rd from iso14aStart. Also 5 ms after DESELECT before the WUPA.
+  - Same reason for ATQA 0000 on its scan line: the ROM leaves it in ISO-DEP, iso14aStart's select fails.
+  10 reads in a row OK after that; UI scan -> tool -> read OK. Each read counts the card's ATC up (about
+  55 reads during the debugging).

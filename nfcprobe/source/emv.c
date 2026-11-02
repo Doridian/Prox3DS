@@ -536,7 +536,7 @@ int emvRead(EmvCard *e)
 		logp("EMV %s %s: %d records, %d log entries%s%s\n", h, a->label, a->nrec, a->nlog, *a->why ? "; " : "", a->why);
 	}
 	if (lost == -2) FAIL(-1, "monitor");
-	if (lost) FAIL(0, "lost the card: %s", scWhy());
+	if (lost) FAIL(0, "%s", scWhy());
 	return 1;
 }
 

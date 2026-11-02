@@ -5,6 +5,7 @@
 
 #include "isodep.h"
 #include "mfc.h"
+#include "mon.h"
 
 static char why[64];
 static u8 bn; // our block number
@@ -16,38 +17,61 @@ const char *isoDepWhy(void)
 
 #define FAIL(ret, ...) ({ snprintf(why, sizeof(why), __VA_ARGS__); return (ret); })
 
-// One frame out, one block back (CRC checked and cut), polled `polls` times 2 ms apart. Its length,
-// 0 = none / broken, -1 = monitor.
+// One frame out, one block back (CRC checked and cut), polled `polls` times 2 ms apart: the last frame
+// with a good CRC (a Mastercard debit card's answers come with stray 1-byte frames, before or after).
+// Its length, 0 = none / broken, -1 = monitor.
 static int block(const u8 *f, u32 len, u8 *out, u32 max, int polls)
 {
-	MonFrame a[2];
+	MonFrame a[4];
 	u8 crc[2];
-	int n = iso14aDataTx(f, len, a, 2, polls);
-	if (n <= 0) return n;
-	const MonFrame *m = &a[n - 1];
-	if (m->len < 3 || m->len < m->regs[4]) return 0;
-	iso14aCrc(m->data, m->len - 2, crc);
-	if (memcmp(crc, m->data + m->len - 2, 2)) return 0;
-	u32 k = m->len - 2 < max ? m->len - 2 : max;
-	memcpy(out, m->data, k);
-	return k;
+	int n = iso14aDataTx(f, len, a, 4, polls), left = polls;
+	while (n > 0) {
+		for (int i = n; i-- > 0; ) {
+			const MonFrame *m = &a[i];
+			if (m->len < 3 || m->len < m->regs[4]) continue;
+			iso14aCrc(m->data, m->len - 2, crc);
+			if (memcmp(crc, m->data + m->len - 2, 2)) continue;
+			u32 k = m->len - 2 < max ? m->len - 2 : max;
+			memcpy(out, m->data, k);
+			return k;
+		}
+		// only stray frames so far: the answer may still be on its way
+		for (n = 0; !n && left > 0; left--) {
+			svcSleepThread(2000000);
+			if ((n = monFrames(a, 4)) < 0) return -1;
+		}
+	}
+	return n;
 }
 
 int isoDepActivate(u8 *ats, u32 atsMax)
 {
 	u8 desel = 0xC2, rats[2] = { 0xE0, 0x20 }, a[34]; // RATS: FSDI 2 (32 bytes), CID 0
-	if (!iso14aParity(true)) FAIL(-1, "parity on");
-	if (block(&desel, 1, a, sizeof(a), 40) < 0) FAIL(-1, "deselect: monitor");
-	int sak = iso14aSelect();
-	if (sak == -2) FAIL(-1, "select: monitor");
-	if (sak < 0) FAIL(0, "select: no answer");
-	if (!(sak & 0x20)) FAIL(0, "SAK %02X: not ISO14443-4", sak);
-	int r = block(rats, 2, a, sizeof(a), 40);
-	if (r < 0) FAIL(-1, "RATS: monitor");
-	if (!r || a[0] != r) FAIL(0, "RATS: no ATS");
-	memcpy(ats, a, (u32)r < atsMax ? (u32)r : atsMax);
-	bn = 0;
-	return 1;
+	for (int t = 0; t < 3; t++) {
+		// the next times from a new discovery: a card left alone a while after a session (a Mastercard
+		// debit card) answers nothing, DESELECT included, until the chip starts over
+		if (t && !iso14aStart()) FAIL(0, "no card on a new discovery");
+		if (!iso14aParity(true)) FAIL(-1, "parity on");
+		if (block(&desel, 1, a, sizeof(a), 40) < 0) FAIL(-1, "deselect: monitor");
+		svcSleepThread(5000000); // that card ignores a WUPA right after its DESELECT answer
+		int sak = iso14aSelect();
+		if (sak == -2) FAIL(-1, "select: monitor");
+		if (sak < 0) {
+			snprintf(why, sizeof(why), "select: no answer");
+			continue;
+		}
+		if (!(sak & 0x20)) FAIL(0, "SAK %02X: not ISO14443-4", sak);
+		int r = block(rats, 2, a, sizeof(a), 40);
+		if (r < 0) FAIL(-1, "RATS: monitor");
+		if (!r || a[0] != r) {
+			snprintf(why, sizeof(why), "RATS: no ATS");
+			continue;
+		}
+		memcpy(ats, a, (u32)r < atsMax ? (u32)r : atsMax);
+		bn = 0;
+		return 1;
+	}
+	return 0;
 }
 
 int isoDepTx(const u8 *inf, u32 len, u8 *out, u32 max)
@@ -71,7 +95,7 @@ int isoDepTx(const u8 *inf, u32 len, u8 *out, u32 max)
 		if (k < 0) FAIL(-1, "monitor");
 		if (!k) {
 			// R(NAK): the card repeats its last block, or ACKs if our I-block never got there
-			if (++fails > 2) FAIL(0, "no answer");
+			if (++fails > 4) FAIL(0, "no answer"); // stray frames around a slow card's answer cost a few
 			r[0] = 0xB2 | bn;
 			tx = r, txLen = 1;
 			continue;

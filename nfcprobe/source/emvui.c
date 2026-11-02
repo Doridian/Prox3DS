@@ -104,8 +104,8 @@ static void emvDraw(void)
 	if (*a->name) o += sprintf(s + o, "%s", a->name);
 	if (a->country) {
 		const char *c = emvCountry(a->country);
-		if (c) o += sprintf(s + o, "%sissued in %s", o ? ", " : "Issued in ", c);
-		else o += sprintf(s + o, "%sissuer country %03X", o ? ", " : "Issuer country ", a->country);
+		if (c) o += sprintf(s + o, "%s%s", o ? ", issued in " : "Issued in ", c);
+		else o += sprintf(s + o, "%s%03X", o ? ", issuer country " : "Issuer country ", a->country);
 	}
 	if (a->currency) {
 		const char *c = emvCurrency(a->currency, NULL);

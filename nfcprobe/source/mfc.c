@@ -149,6 +149,23 @@ static u32 cardUid(void)
 	return u[0] << 24 | u[1] << 16 | u[2] << 8 | u[3];
 }
 
+// The answer among a poll's frames: the last one of at least min bytes. Some cards (a Mastercard debit
+// card) come with stray 1-byte frames around their answers, before or after it.
+static const MonFrame *answer(const MonFrame *f, int n, int min)
+{
+	while (n-- > 0)
+		if (f[n].len >= min) return &f[n];
+	return NULL;
+}
+
+// The SAK from a SELECT's frames: one with its CRC if there is one, else as before (the last frame).
+static int sakOf(const MonFrame *f, int n)
+{
+	const MonFrame *a = answer(f, n, 3);
+	if (a) return a->data[0];
+	return n && f[n - 1].len ? f[n - 1].data[0] : -1;
+}
+
 // WUPA and a real anticollision (93 / 95 / 97 20), for a card whose UID changed under us (random UIDs, as
 // YubiKeys have, are new after each wake-up): card.uid becomes the one it tells now.
 static int selectKnown(void);
@@ -162,19 +179,20 @@ static int selectAnticoll(void)
 	if (!monTxraw(hlta, 4, 4 << 4, 0, 1, 0x88)) return -2;
 	int n = iso14aTx(&wupa, 1, 0x07, f, 4);
 	if (n < 0) return -2;
-	if (!n || f[n - 1].len != 2) return -1;
-	memcpy(card.atqa, f[n - 1].data, 2);
+	const MonFrame *a = answer(f, n, 2);
+	if (!a || a->len != 2) return -1;
+	memcpy(card.atqa, a->data, 2);
 	for (int l = 0; l < 3; l++) {
 		u8 ac[2] = { 0x93 + 2 * l, 0x20 }, sel[7] = { 0x93 + 2 * l, 0x70 };
 		n = iso14aTx(ac, 2, 0, f, 4);
 		if (n < 0) return -2;
-		const u8 *d = f[n - 1].data;
-		if (!n || f[n - 1].len < 5 || (d[0] ^ d[1] ^ d[2] ^ d[3]) != d[4]) return -1;
+		if (!(a = answer(f, n, 5))) return -1;
+		const u8 *d = a->data;
+		if ((d[0] ^ d[1] ^ d[2] ^ d[3]) != d[4]) return -1;
 		memcpy(sel + 2, d, 5);
 		n = l ? dataTx(sel, 7, f, 4) : iso14aTx(sel, 7, 0, f, 4);
 		if (n < 0) return -2;
-		if (!n || !f[n - 1].len) return -1;
-		sak = f[n - 1].data[0];
+		if ((sak = sakOf(f, n)) < 0) return -1;
 		if (d[0] == 0x88) memcpy(uid + len, d + 1, 3), len += 3;
 		else memcpy(uid + len, d, 4), len += 4;
 		if (!(sak & 0x04)) break; // UID complete
@@ -201,8 +219,9 @@ static int selectKnown(void)
 	if (!monTxraw(hlta, 4, 4 << 4, 0, 1, 0x88)) return -2; // never answered: no wait
 	int n = iso14aTx(&wupa, 1, 0x07, f, 4);
 	if (n < 0) return -2;
-	if (!n || f[n - 1].len != 2) return -1;
-	memcpy(card.atqa, f[n - 1].data, 2);
+	const MonFrame *a = answer(f, n, 2);
+	if (!a || a->len != 2) return -1;
+	memcpy(card.atqa, a->data, 2);
 	// 7/10-byte UID: cascade tag 88 + 3 bytes at each level but the last, which gets the last 4
 	int levels = card.uidLen / 3, sak = -1;
 	for (int l = 0; l < levels - 1; l++) {
@@ -217,8 +236,7 @@ static int selectKnown(void)
 		// The bit-mode framer CRCs 93 70 by itself; levels 2 and 3 go in data mode, which CRCs any frame.
 		n = l ? dataTx(sel, 7, f, 4) : iso14aTx(sel, 7, 0, f, 4);
 		if (n < 0) return -2;
-		if (!n || !f[n - 1].len) return -1;
-		sak = f[n - 1].data[0];
+		if ((sak = sakOf(f, n)) < 0) return -1;
 	}
 	card.sak = sak; // a GTU config write changes it under an active card
 	return sak;
