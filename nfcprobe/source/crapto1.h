@@ -29,3 +29,10 @@ uint32_t crapto1_nt_decrypt(uint64_t key, uint32_t uid, uint32_t ntEnc);
 // Forward keystream word: Crypto1(key) fed `in` (= uid ^ nt), as crypto1.py's word(). For checking
 // a candidate against another nonce, or verifying a recovered key.
 uint32_t crapto1_ks32(uint64_t key, uint32_t in);
+
+// Darkside / common-prefix recovery, always-leak (par == 0) path (NOTES.md, tools/darkside.py): for a
+// fixed tag nonce nt and the fixed on-wire reader nonce nrWire (last 3 bits cleared), ks3x[c] is the
+// 4-bit NACK keystream observed with nt_diff = c (top 3 bits of nrWire's last byte = c). Returns a
+// malloc'd, ascending, de-duplicated array of candidate 48-bit keys (caller frees) with the count in
+// *n, or NULL on OOM. The key is the one common to several runs with different nt (intersect the lists).
+uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uint8_t ks3x[8], int *n);

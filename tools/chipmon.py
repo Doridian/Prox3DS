@@ -18,7 +18,7 @@ import nfcnet
 
 CHIP = __file__.rsplit("/", 2)[0] + "/chip/"
 (OP_READ8, OP_WRITE8, OP_CALL, OP_READ32, OP_WRITE32, OP_CAPTURE, OP_TXRAW, OP_AUTH, OP_TXSCHED,
- OP_NESTED, OP_SNAP) = range(11)
+ OP_NESTED, OP_SNAP, OP_CHKKEYS, OP_DARKSIDE) = range(13)
 CHUNK = 0xF0
 
 
@@ -144,6 +144,31 @@ class Mon:
         except MonError:
             return None
         return struct.unpack("<I", p)[0]
+
+    def darkside(self, steps, acode, aframe, nrar_frames, sync, sfracq=0, maxiter=4000, atw=5000,
+                 nrar_tx=0):
+        """One darkside run (memrw OP_DARKSIDE): fire AUTHs on an absolute grid averaging
+        sync + sfracq/256 ticks (the fractional part cancels the systematic per-fire nonce drift).
+        steps: list of (r574, code, rx, bytes) re-select frames (parity on); acode/aframe: the AUTH
+        frame (parity off, packed); nrar_frames: 8 packed 9-byte {nr}{ar} frames (parity off, nt_diff
+        0..7). Returns (nt0, nt1, ks[8], mask): nt0/nt1 are the first two nonce samples (for period
+        calibration), mask has a bit per filled nt_diff (0xFF = a complete candidate was found)."""
+        arg = struct.pack("<IhHHB", sync, sfracq, maxiter, atw, len(steps))
+        for r574, code, rx, data in steps:
+            arg += bytes([r574, code, rx, len(data)]) + bytes(data)
+        arg += bytes([acode, len(aframe)]) + bytes(aframe)
+        for f in nrar_frames:
+            assert len(f) == 9
+            arg += bytes(f)
+        self.nfc.sock.settimeout(60)
+        try:
+            p = self._do(OP_DARKSIDE, nrar_tx, arg, timeout_ms=45000, grace_ms=45000)
+        finally:
+            self.nfc.sock.settimeout(10)
+        nt0 = struct.unpack_from("<I", p)[0]
+        nt1 = struct.unpack_from("<I", p, 13)[0]
+        ks = list(p[4:12])
+        return nt0, nt1, ks, p[12]
 
     def irqs(self):
         """Framer interrupt log: [(timer, group, status)], oldest first (group 0 = 0x5C5C4,

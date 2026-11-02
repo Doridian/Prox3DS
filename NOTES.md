@@ -1083,6 +1083,45 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   nothing retries once with fresh captures (mfNestedRecover -> nestedOnce x2, only when the window ran).
   Since: 11/11 recovered, dump 69 s.
 
+## Darkside / NACK-bug on the FM11RF32N batch (issue #2) -- 2026-11-01
+- This RF32N batch has the NACK bug: `hf mf darkside` on the pm3 (sister card E928096F, same batch/
+  hardware as the 3DS card 7991086F) recovers FFFFFFFFFFFF in ~4 s. pm3 prints "Parity is all zero.
+  Most likely this card sends NACK on every authentication." -> the always-leak (par_list == 0) path.
+- Recovery math proven in Python (tools/darkside.py): a port of pm3 lfsr_common_prefix + nonce2key.
+  Exact convention, verified against pm3's own crapto1 in C (a known key must come back): feed uid^nt,
+  then the fixed ON-WIRE nr bytes (the keyless reader's bytes) with is_encrypted=1, then ar (input 0),
+  then the 4-bit NACK keystream; ks[c] = NACK ^ 0x05, nibble bit i = i-th keystream bit. Pass the
+  on-wire nr to nonce2key. First try (plaintext nr, enc=0) recovered nothing -- the enc=1 feedback on
+  the on-wire bytes is the whole trick.
+- Always-leak path: nonce2key with par_info=0 returns a large list (~74k-185k candidates per run); the
+  key is the one common to every run. Two synthetic runs (different nt) intersected to exactly the one
+  correct key. So per run the collector must deliver: uid, the locked nt, the on-wire nr, ks[8].
+- On-chip collector WORKS (OP_DARKSIDE in chip/memrw.c, driven by tools/darkside_hw.py): recovered
+  FFFFFFFFFFFF on the 3DS RF32N 7991086F, ~80 s for two runs (reproducible). pm3 does it in 4 s; ours
+  is slower but functional on the 1 MHz timer. The card does NOT reseed its PRNG on HLTA/wake -- it
+  free-runs (consecutive select+auth nonces are all within dist_nt's +-32768, measured host-side), so
+  the nonce is a function of the absolute AUTH time. Mechanism:
+  - Fire each AUTH on an ABSOLUTE timer grid `sync` ticks apart (NOW() = -TIMER counts up; busy-wait to
+    the grid point after the re-select, skipping a grid point if the re-select overran). The nonce then
+    depends on timing only, not on how long HLTA+WUPA+SELECT took. (HLTA is needed -- without it the
+    card doesn't answer AUTH; the first iteration starts from the ROM-selected, non-halted card.)
+  - Host calibrates: a short-spacing call returns two nonces (nt0, nt1); dist_nt(nt0,nt1) over the known
+    spacing gives ticks-per-step, then a closed-loop refine (sync -= advance*tps) drives the per-fire
+    nonce advance to ~0 so sync == one PRNG period (65535 steps, ~78800 ticks here).
+  - Integer sync leaves a small systematic drift (a few steps/fire). The host measures the mean advance
+    and passes a signed fractional per-fire correction (sfracq/256 ticks); the op keeps a fractional
+    accumulator so the grid AVERAGES the true (non-integer) period and the drift cancels.
+  - Even so, tick quantization (~0.6 steps/tick) + TX jitter means an EXACT 32-bit nonce rarely repeats,
+    but the nonce now hovers over only a few values. The op keeps a small table (DS_NCAND=8) and fills
+    each hovered nonce's 8 nt_diff slots independently; the first to complete all 8 wins. No on-chip
+    dist_nt needed.
+  - Per run: op returns the winning nt + ks[8]; host runs nonce2key (crapto1_darkside) and intersects
+    across runs. 1-2 completed runs -> the key.
+- Chip SRAM for the patch is full (~3344/3364 bytes). To fit OP_DARKSIDE: removed the debug IRQ logging
+  (log_irq, rf_filter/tmr_filter -> a single identity pass_filter) and OP_SNAP (the one-time NFC-V
+  framer snapshot, used only by rfpoll.py/chipmon.py, re-addable from git). Darkside not yet wired into
+  the app dump (mfDumpCard) -- prototype lives in tools/ (chipmon.darkside + darkside_hw.py).
+
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
 - nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
   parser (SR / long, IL, chunk flag), descriptions for URI (prefix codes), Text (lang, UTF-8 / UTF-16),

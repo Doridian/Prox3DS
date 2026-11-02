@@ -384,3 +384,82 @@ uint64_t crapto1_nested_any(uint32_t uid, uint32_t nt1, uint32_t ks1, const uint
 	free(sv.a);
 	return found;
 }
+
+// --- Darkside / common-prefix recovery (pm3 lfsr_common_prefix + nonce2key), always-leak path ---
+// The card leaks a 4-bit encrypted NACK regardless of parity (par_info == 0). With nt held fixed and
+// only the top 3 bits of the last nr byte swept (nt_diff 0..7), the 8 NACK keystreams pin the cipher
+// state down; one run gives a large candidate list, the key is the one common to several runs. See
+// NOTES.md and tools/darkside.py (the validated reference).
+
+// crapto1 fast-forward tables: advance a 21-bit half-state by the cipher's run over nt_diff = c.
+static const uint32_t fastfwd[2][8] = {
+	{ 0, 0x4BC53, 0x0ECB1, 0x450E2, 0x25E29, 0x6E27A, 0x2B298, 0x60ECB }, // even (isodd 0)
+	{ 0, 0x1D962, 0x4BC53, 0x56531, 0x0ECB1, 0x135D3, 0x450E2, 0x58980 }, // odd  (isodd 1)
+};
+
+// 21-bit partial states of one LFSR half consistent with the 8 observed NACK keystreams.
+static void prefix_ks(const uint8_t ks[8], int isodd, Vec *out)
+{
+	out->n = 0;
+	for (uint32_t i = 0; i < (1u << 21); i++) {
+		tickMore();
+		int good = 1;
+		for (int c = 0; good && c < 8; c++) {
+			uint32_t e = i ^ fastfwd[isodd][c];
+			good &= ((ks[c] >> isodd) & 1) == filter(e >> 1);
+			good &= ((ks[c] >> (isodd + 2)) & 1) == filter(e);
+		}
+		if (good) vpush(out, i);
+	}
+}
+
+static int cmp_u64(const void *a, const void *b)
+{
+	uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+	return x < y ? -1 : x > y ? 1 : 0;
+}
+
+uint64_t *crapto1_darkside(uint32_t uid, uint32_t nt, uint32_t nrWire, const uint8_t ks3x[8], int *n)
+{
+	*n = 0;
+	Vec odd = {0}, even = {0};
+	prefix_ks(ks3x, 1, &odd);
+	prefix_ks(ks3x, 0, &even);
+	// no_par: every (o, e, top) yields one post-nt state (the parity filter is skipped); roll it back
+	// over uid ^ nt and read the key.
+	size_t cap = odd.n * even.n * 64 + 1;
+	uint64_t *keys = malloc(cap * sizeof(uint64_t));
+	if (keys && odd.a && even.a) {
+		uint32_t inn = uid ^ nt, cnt = 0;
+		for (size_t oi = 0; oi < odd.n; oi++)
+			for (size_t ei = 0; ei < even.n; ei++) {
+				tickMore();
+				uint32_t o = odd.a[oi], e = even.a[ei];
+				for (int top = 0; top < 64; top++) {
+					o += 1u << 21;
+					e += ((top & 7 ? 0 : 1) + 1) << 21;
+					// check_pfx_parity, no_par: advance to nt_diff 0, roll back to the post-nt state.
+					uint32_t s[2] = { o ^ fastfwd[1][0], e ^ fastfwd[0][0] };
+					rollback_bit(s, 0, 0);
+					rollback_bit(s, 0, 0);
+					rollback_bit(s, 0, 0);
+					rollback_word(s, 0, 0);
+					rollback_word(s, nrWire, 1);
+					rollback_word(s, inn, 0);
+					keys[cnt++] = get_lfsr(s[0], s[1]);
+				}
+			}
+		// sort + unique so the caller can intersect runs by a merge.
+		qsort(keys, cnt, sizeof(uint64_t), cmp_u64);
+		uint32_t u = 0;
+		for (uint32_t i = 0; i < cnt; i++)
+			if (!u || keys[i] != keys[u - 1]) keys[u++] = keys[i];
+		*n = u;
+	} else {
+		free(keys);
+		keys = NULL;
+	}
+	free(odd.a);
+	free(even.a);
+	return keys;
+}
