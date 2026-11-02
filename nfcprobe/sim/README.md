@@ -18,9 +18,10 @@ screenshots its text widths came within ~5% of the system font, with digits set 
 17. `gen_metrics.py` writes the per-glyph advances to `metrics.h`. Within that margin the report
 says "tight", not "ok":
 
-- offscreen: text past the screen edge
+- offscreen: text past the screen edge (any side)
+- clipped: text partly or wholly under a rect drawn after it on the same layer (the footer, a panel)
 - overflow: text running out of the panel, bar or box it starts on
-- overlap: two visible texts on top of each other (dialogs are a layer of their own)
+- overlap: two visible texts on top of each other (dialogs and toasts are a layer of their own)
 - tight: the same within the font error
 
 Wrapped (`uiTextWrap`) and fitted (`uiFit`, headers, file names) text is measured on the console

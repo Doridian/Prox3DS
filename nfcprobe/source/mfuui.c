@@ -752,10 +752,10 @@ static const MenuEntry mfuEntries[] = {
 	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card, or clone them onto a Gen4 GTU.", openFiles },
 };
 
-static void mfuExtra(float y)
+static void mfuExtra(float x, float y, float w)
 {
-	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Dumps: " MFU_DIR " (pm3 hf mfu .bin)");
-	if (sc.uidLen) menuLastCard(y + SMALL_H, &sc, sm.info.type ? sm.info.type->name : cardTypeName(&sc));
+	uiText(x, y, S_SMALL, uiCol[COL_DIM], "Dumps: " MFU_DIR " (pm3 hf mfu .bin)");
+	if (sc.uidLen) menuLastCard(x, y + SMALL_H, w, &sc, sm.info.type ? sm.info.type->name : cardTypeName(&sc));
 }
 
 static Menu mfuMenu = { "Ultralight / NTAG", mfuEntries, sizeof(mfuEntries) / sizeof(mfuEntries[0]), mfuExtra };

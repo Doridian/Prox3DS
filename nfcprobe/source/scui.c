@@ -63,7 +63,7 @@ static void save(void)
 
 // --- card screen ---
 
-#define APP_ROWS 5
+#define APP_ROWS 4 // what fits between the ATS panel and the footer
 
 static void cardDraw(void)
 {
@@ -80,7 +80,7 @@ static void cardDraw(void)
 	else snprintf(s, sizeof(s), "%s", cardTypeName(&sc));
 	uiText(12, y, S_BODY, txt, "%s", uiFit(s, UI_W - 24, S_BODY));
 	y += LINE_H + 4;
-	uiRect(8, y, UI_W - 16, 4 * SMALL_H + 6, uiCol[COL_PANEL]);
+	uiRect(8, y, UI_W - 16, 4 * SMALL_H + 4, uiCol[COL_PANEL]);
 	y += 3;
 	strcpy(s, "ATS ");
 	scHex(s + 4, si.ats, si.atsLen);
@@ -112,7 +112,7 @@ static void cardDraw(void)
 	} else {
 		uiText(14, y, S_SMALL, dim, si.hasGp ? "No CPLC" : "No GlobalPlatform security domain answered");
 	}
-	y += 2 * SMALL_H + 6;
+	y += 2 * SMALL_H + 4;
 
 	int n = si.nfound;
 	if (!n) {
@@ -121,7 +121,7 @@ static void cardDraw(void)
 		uiText(12, y, S_SMALL, dim, "%d applet%s answered", n, n == 1 ? "" : "s");
 		if (n > APP_ROWS) uiTextRight(UI_W - 12, y, S_SMALL, dim, "%d-%d of %d", al.top + 1,
 			al.top + APP_ROWS < n ? al.top + APP_ROWS : n, n);
-		y += SMALL_H + 1;
+		y += SMALL_H;
 		for (int i = 0; i < APP_ROWS && al.top + i < n; i++, y += LINE_H) {
 			const ScFound *f = &si.found[al.top + i];
 			if (al.top + i == al.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
@@ -384,13 +384,13 @@ void apduConsole(void)
 // --- menu and family ---
 
 static MenuEntry scEntries[4 + 8];
-static void scExtra(float y);
+static void scExtra(float x, float y, float w);
 static Menu scMenu = { "Smart card", scEntries, 0, scExtra };
 
-static void scExtra(float y)
+static void scExtra(float x, float y, float w)
 {
-	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Info files: " SC_DIR " (" BTN_Y " on the card screen)");
-	if (sc.uidLen) menuLastCard(y + SMALL_H, &sc, si.hasGp ? "GlobalPlatform card" : cardTypeName(&sc));
+	uiText(x, y, S_SMALL, uiCol[COL_DIM], "Info files: " SC_DIR " (" BTN_Y " on the card screen)");
+	if (sc.uidLen) menuLastCard(x, y + SMALL_H, w, &sc, si.hasGp ? "GlobalPlatform card" : cardTypeName(&sc));
 }
 
 static void scMenuInput(u32 kDown, u32 kRepeat)

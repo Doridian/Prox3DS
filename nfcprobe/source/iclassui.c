@@ -211,13 +211,13 @@ static const MenuEntry icEntries[] = {
 	                   "iclass_decryptionkey.bin, the transport key that decrypts credentials.", startDownload },
 };
 
-static void icExtra(float y)
+static void icExtra(float x, float y, float w)
 {
-	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Dumps: " ICLASS_DIR " (pm3 hf iclass .bin)");
+	uiText(x, y, S_SMALL, uiCol[COL_DIM], "Dumps: " ICLASS_DIR " (pm3 hf iclass .bin)");
 	const IcDicts *d = icDicts();
-	uiText(12, y + SMALL_H, S_SMALL, uiCol[d->transport ? COL_DIM : COL_WARN], "Credential decryption: %s",
+	uiText(x, y + SMALL_H, S_SMALL, uiCol[d->transport ? COL_DIM : COL_WARN], "Credential decryption: %s",
 		d->transport ? "pm3's transport key (iclass_decryptionkey.bin)" : "no iclass_decryptionkey.bin (download it)");
-	uiText(12, y + 2 * SMALL_H, S_SMALL, uiCol[COL_DIM], "Dictionaries: %d default (%s), %d elite (%s)", d->ndef,
+	uiText(x, y + 2 * SMALL_H, S_SMALL, uiCol[COL_DIM], "Dictionaries: %d default (%s), %d elite (%s)", d->ndef,
 		d->dlDef ? "downloaded" : "built in", d->nelite, d->dlElite ? "downloaded" : "built in");
 }
 

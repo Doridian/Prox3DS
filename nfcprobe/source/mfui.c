@@ -578,11 +578,11 @@ static const MenuEntry mfcEntries[] = {
 	{ "GTU password", "Set the Gen4 GTU password the magic card operations use (default 00000000).", gtuPwd },
 };
 
-static void mfcExtra(float y)
+static void mfcExtra(float x, float y, float w)
 {
-	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Dictionary: %d keys (defaults + " MF_KEYS ")", dictKeys);
-	if (sc.uidLen) menuLastCard(y + SMALL_H, &sc, cardTypeName(&sc));
-	if (memcmp(mfGen4Pwd, mfGen4DefaultPwd, 4)) uiText(12, y + 2 * SMALL_H, S_SMALL, uiCol[COL_WARN], "GTU password %02X%02X%02X%02X",
+	uiText(x, y, S_SMALL, uiCol[COL_DIM], "Dictionary: %d keys (defaults + " MF_KEYS ")", dictKeys);
+	if (sc.uidLen) menuLastCard(x, y += SMALL_H, w, &sc, cardTypeName(&sc));
+	if (memcmp(mfGen4Pwd, mfGen4DefaultPwd, 4)) uiText(x, y + SMALL_H, S_SMALL, uiCol[COL_WARN], "GTU password %02X%02X%02X%02X",
 		mfGen4Pwd[0], mfGen4Pwd[1], mfGen4Pwd[2], mfGen4Pwd[3]);
 }
 

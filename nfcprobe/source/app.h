@@ -56,12 +56,12 @@ typedef struct {
 	const char *title;
 	const MenuEntry *entries;
 	int n;
-	void (*extra)(float y); // draws status lines under the menu; may be NULL
+	void (*extra)(float x, float y, float w); // draws status lines in that area (under the menu); may be NULL
 	UiList l;
 } Menu;
 void menuInput(Menu *m, u32 kDown, u32 kRepeat);
 void menuDraw(Menu *m);
-void menuLastCard(float y, const Card *c, const char *type); // a status line for the menu's extra()
+void menuLastCard(float x, float y, float w, const Card *c, const char *type); // a status line for the menu's extra()
 
 // A form screen: a field per row (A edits it), the last row runs it.
 typedef struct {

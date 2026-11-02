@@ -6,6 +6,7 @@ Text is drawn with the stand-in font from gen_metrics.py. Widths match the 3DS s
 
 Checks per shot (report in OUT/report.txt, problems boxed in red in OUT/<shot>.png):
   offscreen  text past the screen edge
+  clipped    text partly under a rect drawn after it (a footer, a panel)
   overflow   text running out of the panel / bar / box it starts on
   overlap    two visible texts on top of each other
   tight      the same within the metric error
@@ -102,17 +103,20 @@ def slack(op, side):
 def check(ops, W=400):
     issues = []
     # A translucent full-screen rect (a dialog's backdrop) starts a new layer: texts behind it are
-    # only compared with each other.
+    # only compared with each other. So does a toast (app.c: a 20 px bar at UI_H - 44, over the screen
+    # for a few seconds).
     layer, layers = 0, []
     for op in ops:
-        if op[0] == "R" and op[3] >= W and op[4] >= 240 and op[5][3] < 0xF0:
+        if op[0] == "R" and (op[3] >= W and op[4] >= 240 and op[5][3] < 0xF0 or op[2] == 196 and op[4] == 20):
             layer += 1
         layers.append(layer)
 
-    def covered(i, box):
+    def covered(i, box):  # hidden by a later layer (a dialog); in its own layer that's "clipped"
         cx, cy = (box[0] + box[1]) / 2, (box[2] + box[3]) / 2
-        for op in ops[i + 1:]:
-            if op[0] == "R" and op[5][3] >= 0xF0 and op[1] <= cx <= op[1] + op[3] and op[2] <= cy <= op[2] + op[4]:
+        for j in range(i + 1, len(ops)):
+            op = ops[j]
+            if layers[j] != layers[i] and op[0] == "R" and op[5][3] >= 0xF0 and op[1] <= cx <= op[1] + op[3] \
+                    and op[2] <= cy <= op[2] + op[4]:
                 return True
         return False
 
@@ -123,8 +127,19 @@ def check(ops, W=400):
         r = max(1.0, slack(op, "right"))
         if x0 < 0 or x1 > W:
             issues.append(("offscreen", text, (x0, y0, x1, y1), f"{x1 - W:+.0f}px"))
+        elif y0 < 0 or y1 > 240:
+            issues.append(("offscreen", text, (x0, y0, x1, y1), f"{y1 - 240:+.0f}px below"))
         elif x1 > W - r:
             issues.append(("tight", text, (x0, y0, x1, y1), f"{W - x1:.0f}px to the screen edge"))
+        for j in range(i + 1, len(ops)):  # dialogs (a later layer) may cover anything
+            op2 = ops[j]
+            if layers[j] != layers[i] or op2[0] != "R" or op2[5][3] < 0xF0 or op2[3] >= W and op2[4] >= 240:
+                continue
+            rx, ry, rw, rh = op2[1:5]
+            ox, oy = min(x1, rx + rw) - max(x0, rx), min(y1, ry + rh) - max(y0, ry)
+            if ox > 2 and oy > 2:
+                issues.append(("clipped", text, (x0, y0, x1, y1), f"{oy:.0f}px under a {rw:.0f}x{rh:.0f} rect"))
+                break
         host = None  # the latest rect (not full screen) under the text's start
         for op2 in reversed(ops[:i]):
             if op2[0] != "R" or (op2[3] >= W and op2[4] >= 240):

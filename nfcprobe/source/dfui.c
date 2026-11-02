@@ -1613,10 +1613,10 @@ static const MenuEntry dfEntries[] = {
 	                    "keys open protected lists and files, in plain, MAC and full (encrypted) mode.", startKeyScan },
 };
 
-static void dfExtra(float y)
+static void dfExtra(float x, float y, float w)
 {
-	uiText(12, y, S_SMALL, uiCol[COL_DIM], "Info files: " DF_DIR " (" BTN_Y " on the card screen)");
-	if (sc.uidLen) menuLastCard(y + SMALL_H, &sc, diResult > 0 ? dfVersionName(&di) : cardTypeName(&sc));
+	uiText(x, y, S_SMALL, uiCol[COL_DIM], "Info files: " DF_DIR " (" BTN_Y " on the card screen)");
+	if (sc.uidLen) menuLastCard(x, y + SMALL_H, w, &sc, diResult > 0 ? dfVersionName(&di) : cardTypeName(&sc));
 }
 
 static Menu dfMenu = { "DESFire", dfEntries, sizeof(dfEntries) / sizeof(dfEntries[0]), dfExtra };

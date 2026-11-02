@@ -384,27 +384,42 @@ void menuInput(Menu *m, u32 kDown, u32 kRepeat)
 void menuDraw(Menu *m)
 {
 	uiHeader(m->title, *netAddr ? netAddr : "no network");
+	// 20 px rows; a longer list closes up to end above the footer, and the status lines go beside it
+	float pitch = m->n > 1 && 30 + (m->n - 1) * 20 > 196 ? (float)(166 / (m->n - 1)) : 20;
 	for (int i = 0; i < m->n; i++) {
-		float y = 30 + i * 20;
+		float y = 30 + i * pitch;
 		if (i == m->l.sel) {
 			uiRect(8, y - 3, 180, 19, uiCol[COL_SEL]);
 			uiRect(8, y - 3, 3, 19, uiCol[COL_ACCENT]);
 		}
 		uiText(20, y, S_BODY, uiCol[i == m->l.sel ? COL_TEXT : COL_DIM], "%s", m->entries[i].label);
 	}
-	uiRect(200, 27, UI_W - 208, 140, uiCol[COL_PANEL]);
+	float h = 140;
+	bool beside = 30 + m->n * pitch > 176;
+	if (beside) { // the panel as tall as the longest help, the status lines under it
+		int lines = 0;
+		for (int i = 0; i < m->n; i++) {
+			int k = uiWrapLines(UI_W - 224, S_SMALL, m->entries[i].help);
+			if (k > lines) lines = k;
+		}
+		h = 12 + lines * SMALL_H;
+	}
+	uiRect(200, 27, UI_W - 208, h, uiCol[COL_PANEL]);
 	uiTextWrap(208, 32, UI_W - 224, S_SMALL, uiCol[COL_TEXT], m->entries[m->l.sel].help);
-	if (m->extra) m->extra(30 + m->n * 20 > 176 ? 30 + m->n * 20 + 2 : 178); // under the last entry
+	if (m->extra) {
+		if (beside) m->extra(204, 27 + h + 6, UI_W - 212);
+		else m->extra(12, 178, UI_W - 24);
+	}
 	uiFooter(depth > 1 ? BTN_A " select   " BTN_B " back   SELECT log   START exit"
 	                   : BTN_A " select   SELECT log   START exit");
 }
 
-void menuLastCard(float y, const Card *c, const char *type)
+void menuLastCard(float x, float y, float w, const Card *c, const char *type)
 {
 	char uid[32], s[96];
 	uidHex(c, uid, "");
 	snprintf(s, sizeof(s), "Last card: %s, %s", uid, type);
-	uiText(12, y, S_SMALL, uiCol[COL_DIM], "%s", uiFit(s, UI_W - 24, S_SMALL));
+	uiText(x, y, S_SMALL, uiCol[COL_DIM], "%s", uiFit(s, w, S_SMALL));
 }
 
 // --- a form: fields, A edits one, the last row runs it ---
@@ -598,13 +613,18 @@ static void menuExit(void)
 }
 
 static MenuEntry rootEntries[6 + NFAMILIES + 1];
-static void rootExtra(float y);
+static void rootExtra(float x, float y, float w);
 static Menu rootMenu = { "nfcprobe", rootEntries, 0, rootExtra };
 
-static void rootExtra(float y)
+static void rootExtra(float x, float y, float w)
 {
-	if (tag.uidLen) menuLastCard(y, &tag, cardTypeName(&tag));
-	uiText(12, y + SMALL_H, S_SMALL, uiCol[COL_DIM], "Cards go on the bottom screen. HOME is off while NFC is ours.");
+	y = uiTextWrap(x, y, w, S_SMALL, uiCol[COL_DIM], "Cards go on the bottom screen. HOME is off while NFC is ours.");
+	if (tag.uidLen) {
+		char uid[32], s[96];
+		uidHex(&tag, uid, "");
+		snprintf(s, sizeof(s), "Last card: %s, %s", uid, cardTypeName(&tag));
+		uiTextWrap(x, y + 4, w, S_SMALL, uiCol[COL_DIM], s);
+	}
 }
 
 static void rootInput(u32 kDown, u32 kRepeat)

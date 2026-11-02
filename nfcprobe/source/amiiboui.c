@@ -561,11 +561,11 @@ static const MenuEntry amEntries[] = {
 	                          "names on the Amiibo screen, and the list new ones are made from.", startDownload },
 };
 
-static void amExtra(float y)
+static void amExtra(float x, float y, float w)
 {
 	dbEnsure();
-	if (amiiboDbCount()) uiText(12, y, S_SMALL, uiCol[COL_DIM], "Figure list: %d figures (" AMIIBO_DB ")", amiiboDbCount());
-	else uiText(12, y, S_SMALL, uiCol[COL_WARN], "No figure list yet: download it (needs Wi-Fi).");
+	if (amiiboDbCount()) uiText(x, y, S_SMALL, uiCol[COL_DIM], "Figure list: %d figures (" AMIIBO_DB ")", amiiboDbCount());
+	else uiText(x, y, S_SMALL, uiCol[COL_WARN], "No figure list yet: download it (needs Wi-Fi).");
 }
 
 static Menu amMenu = { "Amiibo", amEntries, sizeof(amEntries) / sizeof(amEntries[0]), amExtra };

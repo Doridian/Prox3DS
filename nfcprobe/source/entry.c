@@ -9,7 +9,7 @@
 #include "ui.h"
 
 static struct {
-	char title[64], what[160];
+	char title[64], what[384];
 	int radix, n, cur, top; // digits (hex: 2 per byte), the cursor, the first grid row shown
 	u8 dig[2 * ENTRY_MAX];
 	s64 min, max;
