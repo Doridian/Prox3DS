@@ -1474,3 +1474,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   - Same reason for ATQA 0000 on its scan line: the ROM leaves it in ISO-DEP, iso14aStart's select fails.
   10 reads in a row OK after that; UI scan -> tool -> read OK. Each read counts the card's ATC up (about
   55 reads during the debugging).
+- Regression check of 51b0e1c on the other families: DESFire reference EV3 (3 keyed info reads
+  byte-identical, EV2 auth + 64-byte full read chained, UI scan: ATQA 0344, signature valid); J3H145
+  (test applet 255 / 256-byte answers, 200-byte chained echo, 8.8 s WTX command, all x3; UI scan + GP list
+  with the default keys, 18 entries); Fudan Classic 4ACF2F0C (scan x3, two dumps identical, 64 blocks, UI
+  scan). All its keys are FF now, sector 5 included (the A0B1C2D3E4F5 / B1C2D3E4F5A6 test keys are gone).
