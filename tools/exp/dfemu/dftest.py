@@ -62,7 +62,7 @@ def d40_mac(sk, d):
 
 reset()
 check("select 778899", tx(bytes.fromhex("5A998877"))[0] == 0)
-st, sk = d40_auth(0, bytes.fromhex("0001020304050607") * 2)
+st, sk = d40_auth(0, bytes.fromhex("1122334455667788") * 2)
 check("D40 auth key 0 (DES)", st == 0)
 st, d = xchg(bytes.fromhex("BD01000000000000"))
 dec = Cipher(TripleDES(sk), modes.CBC(bytes(8))).decryptor().update(d)
@@ -136,4 +136,85 @@ check("EV2 on a DES app refused", tx(bytes.fromhex("710000"))[0] == 0xAE)
 # PICC GetCardUID over EV2 isn't possible (DES PICC key); EV1 still works:
 reset(); tx(bytes.fromhex("5A332211"))
 st, e = tx(bytes.fromhex("AA01")); check("EV1 AES still answers", st == 0xAF and len(e) == 16)
+
+# ---- writes (pm3 framing: 1 + 54 bytes, then AF + 54) ----
+def send(b):
+    st, d = tx(b[:55]); b = b[55:]
+    while b and st == 0xAF:
+        st, d = tx(b"\xAF" + b[:54]); b = b[54:]
+    return st, d
+def d40_send(sk, x):
+    y, out = bytes(8), b""
+    for i in range(0, len(x), 8):
+        y = des(sk, xor(x[i:i+8], y), False); out += y
+    return out
+def d40_read_full(sk, fid, n):
+    st, d = xchg(bytes([0xBD, fid, 0, 0, 0, 0, 0, 0]))
+    dec = Cipher(TripleDES(sk), modes.CBC(bytes(8))).decryptor().update(d)
+    return st, dec[:n] if dec[n:n+2] == crcA(dec[:n]) else None
+
+reset(); tx(bytes.fromhex("5A998877"))
+st, sk = d40_auth(0, bytes.fromhex("1122334455667788") * 2)
+data = b"pm3-D40-written!"
+x = data + crcA(data); x += bytes(-len(x) % 8)
+st, _ = send(bytes.fromhex("3D01000000100000") + d40_send(sk, x))
+check("D40 full write", st == 0)
+st, got = d40_read_full(sk, 1, 16)
+check(f"  read back {got!r}", st == 0 and got == data)
+st, sk = d40_auth(1, bytes.fromhex("00112233445566778899AABBCCDDEEFF"))
+st, _ = send(bytes.fromhex("3D02000000040000") + b"mac!" + d40_mac(sk, b"mac!"))
+check("D40 MAC write", st == 0)
+st, _ = send(bytes.fromhex("3D02000000040000") + b"mac!" + b"\0\0\0\0")
+check("D40 MAC write with a bad MAC refused (1E)", st == 0x1E)
+
+reset(); tx(bytes.fromhex("5A332211"))
+ev2_auth(1, KEY1)
+def ev2_write(fid, data, full):
+    hdr = bytes([0x3D, fid, 0, 0, 0, len(data), 0, 0])
+    body = data
+    if full:
+        iv = aes(ev.ke, b"\xA5\x5A" + ev.ti + bytes([ev.ctr & 0xFF, ev.ctr >> 8]) + bytes(8), True)
+        p = data + b"\x80"; p += bytes(-len(p) % 16)
+        body = Cipher(algorithms.AES(ev.ke), modes.CBC(iv)).encryptor().update(p)
+    cmd = hdr + body
+    st, d = send(cmd + mact(cmd[0], cmd[1:]))
+    ev.ctr += 1
+    if st: return st
+    return 0 if d == mact(0, b"") else 0xFD
+check("EV2 full write", ev2_write(1, b"EV2 full written", True) == 0)
+st, d = ev2_cmd(bytes.fromhex("BD01000000000000"), full=True)
+check(f"  read back {d!r}", st == 0 and d == b"EV2 full written")
+check("EV2 MAC write", ev2_write(2, b"ev2-mac!", False) == 0)
+st, d = ev2_cmd(bytes.fromhex("BD02000000000000"))
+check(f"  read back {d!r}", st == 0 and d == b"ev2-mac!")
+
+reset(); tx(bytes.fromhex("5A665544"))
+big = bytes(range(0x40, 0x60))
+st, _ = send(bytes.fromhex("3D01000000200000") + big)   # 40 bytes: one frame
+check("plain write 32", st == 0)
+st, d = xchg(bytes.fromhex("BD01000000000000"))
+check("  read back", d == big)
+st, _ = send(bytes.fromhex("3B03000000080000") + b"\x09" * 8)
+st2, _ = tx(bytes.fromhex("C7"))
+st3, d = xchg(bytes.fromhex("BB03000000000000"))
+check(f"record + commit: {len(d) // 8} records", st == st2 == st3 == 0 and d[-8:] == b"\x09" * 8 and len(d) == 32)
+st, _ = send(bytes.fromhex("0C0205000000")); tx(bytes.fromhex("A7"))
+st2, d = xchg(bytes.fromhex("6C02"))
+check("credit then abort: value unchanged", st == 0 and d == bytes([100, 0, 0, 0]))
+
+# a write in AF frames (a small frame size forces them)
+reset(); tx(bytes.fromhex("5A332211")); ev2_auth(1, KEY1)
+def send_small(b, n=20):
+    st, d = tx(b[:n]); b = b[n:]
+    while b and st == 0xAF:
+        st, d = tx(b"\xAF" + b[:n]); b = b[n:]
+    return st, d
+hdr = bytes.fromhex("3D01000000100000")
+iv = aes(ev.ke, b"\xA5\x5A" + ev.ti + bytes([ev.ctr & 0xFF, ev.ctr >> 8]) + bytes(8), True)
+body = Cipher(algorithms.AES(ev.ke), modes.CBC(iv)).encryptor().update(b"chained frames!!" + b"\x80" + bytes(15))
+cmd = hdr + body
+st, d = send_small(cmd + mact(cmd[0], cmd[1:])); ev.ctr += 1
+check("EV2 full write in 20-byte AF frames", st == 0 and d == mact(0, b""))
+st, d = ev2_cmd(bytes.fromhex("BD01000000000000"), full=True)
+check(f"  read back {d!r}", st == 0 and d == b"chained frames!!")
 print("ALL OK" if ok else "FAILURES")

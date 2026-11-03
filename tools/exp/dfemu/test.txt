@@ -58,7 +58,7 @@ Application 445566
 Application 778899
   key settings 0F, 2 DES/2K3DES keys
   key versions 0000
-  key 0: DES 0001020304050607
+  key 0: DES 1122334455667788
   key 1: 2K3DES 00112233445566778899AABBCCDDEEFF
   file 01: standard, full, 16 bytes
     read key 0, write key 0, read/write key 0, change key 0

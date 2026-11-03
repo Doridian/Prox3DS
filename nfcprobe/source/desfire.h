@@ -59,6 +59,7 @@ typedef struct {
 	DfKey piccKey;
 	bool keyed; // read with the dictionary
 	bool ev2;   // AES keys used EV2 authentication / secure messaging
+	bool d40;   // an MF3ICD40: legacy D40 authentication (0A) / secure messaging
 	int dictKeys;
 	bool hasSig;
 	u8 sig[56];
@@ -86,10 +87,11 @@ int dfReadInfo(DfInfo *d, bool keys);
 // in full mode). The answer's data into out, the last status in *st. Data length, -1 = no answer
 // (dfWhy), -2 = monitor error.
 int dfCmd(const u8 *c, u32 len, u32 hdr, u8 comm, u8 *out, u32 max, u8 *st);
-// Authentication of key k of the selected application (or the PICC): EV1 (1A, AES: AA), or with ev2 an
-// AES key AuthenticateEV2First (71) and EV2 secure messaging. 1 = ok, 0 = refused (*st), -1 = no answer /
-// monitor error (dfWhy).
-int dfAuth(u8 k, const DfKey *key, bool ev2, u8 *st);
+// Authentication of key k of the selected application (or the PICC), how = DF_AUTH_*: EV1 (1A, AES: AA);
+// EV2: an AES key AuthenticateEV2First (71) and EV2 secure messaging; D40: a DES / 2K3DES key the legacy way
+// (0A) and D40 secure messaging (MF3ICD40). 1 = ok, 0 = refused (*st), -1 = no answer / monitor error (dfWhy).
+enum { DF_AUTH_EV1, DF_AUTH_EV2, DF_AUTH_D40 };
+int dfAuth(u8 k, const DfKey *key, u8 how, u8 *st);
 // AuthenticateEV2NonFirst (77): another AES key in the running EV2 session (TI and counter go on).
 int dfAuthEv2NonFirst(u8 k, const DfKey *key, u8 *st);
 // ChangeKey (C4) of key k, authenticated: with the key being changed (old unused) or with the change key
@@ -112,6 +114,7 @@ typedef struct {
 int dfIsoRead(DfInfo *d, const DfApp *a, DfIsoEf *efs, int max);
 void dfKeyHex(const DfKey *k, char *out); // hex, 16 digits for a DES key
 bool dfUsesEv2(const DfInfo *d);          // EV2 or later (not Light): AES keys go over EV2
+u8 dfAuthHow(const DfInfo *d);            // DF_AUTH_*: D40 on an MF3ICD40, EV2 as dfUsesEv2, else EV1
 bool dfRandomUid(const Card *c);          // a random ID: 4 bytes, 08 first (not a card to match by UID)
 // Appends a key to DF_KEYS unless the dictionary has it already (entered and newly set keys).
 bool dfRememberKey(const DfKey *k);

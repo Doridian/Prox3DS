@@ -25,6 +25,7 @@
 *.ncd
 /tools/exp/**/*.bin
 /tools/exp/dfemu/dfh
+/tools/exp/dfemu/dfh2
 # nfcprobe (devkitPro)
 /nfcprobe/build/
 /nfcprobe/*.3dsx

@@ -1625,6 +1625,11 @@ static void filesScan(void)
 	if (fl.sel >= infos.n) fl.sel = infos.n ? infos.n - 1 : 0;
 }
 
+void dfFilesChanged(void)
+{
+	filesScan();
+}
+
 static void filePath(char *out, u32 max)
 {
 	snprintf(out, max, DF_DIR "/%s", infos.ent[fl.sel].name);
@@ -1716,7 +1721,7 @@ static const MenuEntry dfEntries[] = {
 	               "signature, PICC and application key settings, applications and their files. Any other "
 	               "ISO14443-4 card shows its ATS.", startScan },
 	{ "Scan with keys", "The same, then the key dictionary (built in, " DF_KEYS ", pm3's if downloaded) on the PICC master key and "
-	                    "every application key (DES, 2K3DES, 3K3DES, AES; AES over EV2 on EV2 / EV3 cards). Found "
+	                    "every application key (DES, 2K3DES, 3K3DES, AES; AES over EV2 on EV2 / EV3 cards, D40 on MF3ICD40). Found "
 	                    "keys open protected lists and files, in plain, MAC and full (encrypted) mode.", startKeyScan },
 	{ "Saved cards", "Info files saved from the card screen (" BTN_Y "): emulate one, the 3DS answering as that card "
 	                 "with what the file holds (and its keys).", openFiles },

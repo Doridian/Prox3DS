@@ -68,6 +68,15 @@ static void saveDump(void)
 	else msgBox("Emulate", "Could not save the dump.");
 }
 
+static void saveDf(void)
+{
+	char path[128];
+	if (dfEmuSave(path, sizeof(path))) {
+		dfFilesChanged();
+		toast("Saved %s", path + strlen(MF_DIR "/"));
+	} else msgBox("Emulate", "Could not save the info file.");
+}
+
 static void doneEmu(void)
 {
 	if (!emuOk) {
@@ -82,6 +91,12 @@ static void doneEmu(void)
 				runName);
 		else toast("Stopped: %lu reader field%s, %lu command%s", (unsigned long)emu.fields, emu.fields == 1 ? "" : "s",
 			(unsigned long)emu.frames, emu.frames == 1 ? "" : "s");
+		return;
+	}
+	if (mode == MODE_DF && dfEmuWrites()) {
+		u32 n = dfEmuWrites();
+		confirm("Emulate", saveDf, "Readers changed %lu file%s (committed writes) of %s.\nSave the card as it is "
+			"now as a new info file?", (unsigned long)n, n == 1 ? "" : "s", runName);
 		return;
 	}
 	if (mode == MODE_NDEF && emuNdefWrites()) {
@@ -168,9 +183,12 @@ static float emuView(float x, float y, float w)
 		uiText(x, y, S_SMALL, txt, "%d app%s, %d file%s from %s", d->napps, d->napps == 1 ? "" : "s", files,
 			files == 1 ? "" : "s", uiFit(nm, w - 170, S_SMALL));
 		y += SMALL_H;
-		if (keys) uiText(x, y, S_SMALL, dim, "Authentication (D40 / EV1 / EV2) with its %d known key%s; read only", keys,
+		if (dfEmuWrites())
+			uiText(x, y, S_SMALL, uiCol[COL_WARN], "%lu file write%s by readers (saved on stop if you like)",
+				(unsigned long)dfEmuWrites(), dfEmuWrites() == 1 ? "" : "s");
+		else if (keys) uiText(x, y, S_SMALL, dim, "D40 / EV1 / EV2 authentication with its %d known key%s", keys,
 			keys == 1 ? "" : "s");
-		else uiText(x, y, S_SMALL, dim, "No keys in the file: what reads without one; read only");
+		else uiText(x, y, S_SMALL, dim, "No keys in the file: what reads and writes without one");
 	} else if (mode == MODE_NDEF) {
 		u32 len;
 		const u8 *msg = emuNdefGet(&len);

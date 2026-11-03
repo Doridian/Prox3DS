@@ -121,6 +121,7 @@ void mfuCloneStart(const MfuDump *d);                 // clone onto the Gen4 GTU
 void mfuCloneAsk(const MfuDump *d, const char *name); // confirm, then mfuCloneStart
 void mfuFilesChanged(void); // a dump was saved behind the saved dumps list: rescan it
 void mfFilesChanged(void);  // the same for Classic
+void dfFilesChanged(void);  // and for the saved DESFire info files
 void mfuFilesWarm(void);    // scan the saved dumps list once, if nothing has yet (app start, background)
 void mfFilesWarm(void);
 int mfuDumpActions(MenuItem *items, const MfuDump *d, const char *name); // a dump's card actions (X menus)

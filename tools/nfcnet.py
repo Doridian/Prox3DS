@@ -49,6 +49,7 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                      auth:K:TYPE:KEY       TYPE des/2k3des/3k3des/aes (EV1)
                                                      ev2:K:aes:KEY         AuthenticateEV2First
                                                      ev2n:K:aes:KEY        AuthenticateEV2NonFirst
+                                                     d40:K:des|2k3des:KEY  legacy Authenticate (0A), D40 messaging
                                                      cmd:COMM:HDR:HEX      COMM plain/mac/full/enc/full80, HDR = plain
                                                                            bytes after the command byte
                                                      ck:K:TYPE:KEY[:OTYPE:OKEY][:picc][:vN]  ChangeKey
@@ -642,8 +643,8 @@ def main():
             print(f"ATS {r.hex().upper()}")
         for step in (a for a in args if a != "-a"):
             f = step.split(":")
-            if f[0] in ("auth", "ev2", "ev2n"):
-                r = nfc.df({"auth": 0, "ev2": 4, "ev2n": 5}[f[0]], bytes([int(f[1], 0)]) + df_key(f[2], f[3]))
+            if f[0] in ("auth", "ev2", "ev2n", "d40"):
+                r = nfc.df({"auth": 0, "ev2": 4, "ev2n": 5, "d40": 6}[f[0]], bytes([int(f[1], 0)]) + df_key(f[2], f[3]))
             elif f[0] == "cmd":
                 c = bytes.fromhex(f[3])
                 r = nfc.df(1, bytes([DF_COMM[f[1]], int(f[2], 0)]) + c)

@@ -618,11 +618,12 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		u8 st = 0;
 		int r;
 		DfKey k = { true }, old = { true };
-		if ((in[0] == 0 || in[0] == 4 || in[0] == 5) && inLen >= 4) {
+		if ((in[0] == 0 || in[0] == 4 || in[0] == 5 || in[0] == 6) && inLen >= 4) {
 			k.type = in[2];
 			if (k.type > DF_AES || inLen != 3 + dfKeyLen(k.type)) return -3;
 			memcpy(k.key, in + 3, dfKeyLen(k.type));
-			r = in[0] == 5 ? dfAuthEv2NonFirst(in[1], &k, &st) : dfAuth(in[1], &k, in[0] == 4, &st);
+			r = in[0] == 5 ? dfAuthEv2NonFirst(in[1], &k, &st) : dfAuth(in[1], &k, in[0] == 4 ? DF_AUTH_EV2 :
+				in[0] == 6 ? DF_AUTH_D40 : DF_AUTH_EV1, &st);
 			*outLen = 1;
 		} else if (in[0] == 1 && inLen >= 4) {
 			r = dfCmd(in + 3, inLen - 3, in[2], in[1], out + 1, OUT_MAX - 1, &st);

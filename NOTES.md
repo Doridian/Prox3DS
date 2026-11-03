@@ -1552,6 +1552,23 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   On air with pm3 (test.txt): `--schann d40` auth DES + 2K3DES, read full (CRC16 OK) + MAC, getuid; `--schann
   ev2` auth (TI shown), read full + MAC, getfilesettings -m mac, no MAC warnings; wrong keys refused at the
   second frame; EV1 getuid + encrypted read unchanged.
+- Writes, same day: WriteData / WriteRecord / Credit / Debit / ClearRecordFile / Commit / AbortTransaction.
+  Two copies of the info (committed + pending, one pool layout with room for each file to grow: dfEmuSet);
+  standard files change at once, backup / value / record files on commit; select, auth and a new field abort.
+  Incoming data per file comm mode and session: D40 MAC4 over the data / send-mode-deciphered data || CRC16;
+  EV1 CMAC appended (stripped when it checks, the IV taken from it) / E(data || CRC32(code || hdr || data))
+  with the running IV (no CMAC pass over that command); EV2 MACt / E(A55A IV, data || 80 ..). Writes longer
+  than a frame arrive in AF frames: the card works out the length from the header and answers AF until it has
+  it. Access: write / read-write key (Debit also read, Credit and Clear read-write only); LimitedCredit and
+  key / settings / application changes stay refused (9D). On stop the app offers a new info file (dfSaveInfo:
+  -N.txt). dfLoadInfo now takes the "key dictionary" header back, or that save dropped the keys.
+- Reader side D40 (issue #10, no MF3ICD40 here): desfire.c dfAuth(how = DF_AUTH_D40, picked by dfAuthHow for
+  hardware major 0): 0A, D40 secure messaging for reads / writes (MAC4, CRC16), ChangeKey with CRC16s (pm3
+  DesfireChangeKey). Checked only against the emulation: tools/exp/dfemu/dfh2.c runs desfire.c's key scan and
+  dfOp writes in every comm mode against dfemu.c (isoDepTx wrapped), the card taken as MF3ICD40 / EV1 / EV3:
+  75 checks pass. dftest.py grew D40 / EV2 / plain / chained writes (33 checks). pm3 on air: write + read back
+  plain std, credit (pm3 commits), record append, D40 full + MAC, EV2 full, EV1 MAC + full; a keyed file without
+  auth refused; stop -> save prompt -> new info file listed.
 
 ## Listen-mode parity: raw 9-bit frames (chip/ptest.c, tools/exp/parity/) -- 2026-11-02
 - Found by a bit sweep on air (ptest.c: the ROM's listen TX rebuilt, one register write per answered E5 frame,
