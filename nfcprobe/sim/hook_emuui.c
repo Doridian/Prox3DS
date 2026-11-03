@@ -30,7 +30,7 @@ void simEmuRun(bool written)
 	emu.field = emu.active = written;
 	emu.fields = 16, emu.sessions = 8, emu.apdus = 40;
 	for (int i = 0; i < (written ? 6 : 5); i++) snprintf(emu.log[emu.nlog++ % EMU_LOG_N], 48, "%s", log[i]);
-	jobNextHint("Lay the 3DS on the reader, bottom screen down.");
+	jobNextHint("Tap a phone on the bottom screen.");
 	simBusy("Emulating a tag", true, false);
 	simBusyView(emuView);
 }

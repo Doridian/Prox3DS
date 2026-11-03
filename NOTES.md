@@ -1432,6 +1432,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   - pm3 `hf 14a ndefread` (and the DESFire-only `ndefwrite`) leave the field on: the chip stays in the
     session, and the next pm3 command's field reset lands in the deactivation -> "No card" on every
     other run. Add `; hw fpgaoff` when testing.
+  - Android phone (user, 2026-11-02): reads the emulated tag with a quick tap on the bottom screen, no
+    special placement. The weak card side only matters for strong readers like the pm3 RDV4.
 - Nintendo's nfc module only carries reader-side vendor config (TLV list at .code 0x13B1A1:
   CB 01 01, A5 01 01, CA [20 bytes], C5 01 01), so card mode was never configured on the 3DS.
 - lmon (chip/lmon.c, own SRAM image, ~3.3 KB): memrw ops 0-4 + op 5 IRQLOG (wrap IRQ0..7, 5 watched

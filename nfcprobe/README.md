@@ -66,8 +66,8 @@ Card emulation (`source/emu.c`, `source/emuui.c`): the 3DS as an ISO14443-4A car
 listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answered by the app as NCI DATA).
 - NDEF tag: an NFC Forum Type 4 tag (T4T 2.0: NDEF application, CC file E103, NDEF file E104) with a URL,
   a text or an empty message. Writable: what a reader writes with UPDATE BINARY shows up on the screen.
-- A weak card: the reader has to lie under the 3DS (bottom screen down onto it). A new emulated card type is
-  an `EmuApdu` handler passed to `emuRun`.
+- A phone reads it with a quick tap on the bottom screen. A Proxmark only gets it with the 3DS lying on it,
+  bottom screen down. A new emulated card type is an `EmuApdu` handler passed to `emuRun`.
 
 - Chip info: reset / init / patch version.
 

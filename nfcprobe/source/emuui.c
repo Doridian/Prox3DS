@@ -87,7 +87,7 @@ static float emuView(float x, float y, float w)
 static void start(const u8 *msg, u32 len)
 {
 	emuNdefSet(msg, len);
-	jobNextHint("Lay the 3DS on the reader, bottom screen down.");
+	jobNextHint("Tap a phone on the bottom screen.");
 	jobStartView("Emulating a tag", runEmu, doneEmu, true, emuView);
 }
 
@@ -141,7 +141,8 @@ static const MenuEntry emuEntries[] = {
 static void emuExtra(float x, float y, float w)
 {
 	uiTextWrap(x, y, w, S_SMALL, uiCol[COL_DIM], "The 3DS answers as a card through its NFC antenna under the bottom "
-		"screen. It is a weak card: lay the 3DS flat on the reader or the phone, bottom screen down.");
+		"screen. A phone works with a quick tap on the bottom screen. Readers like a Proxmark want the 3DS lying "
+		"on them, bottom screen down.");
 }
 
 static Menu emuMenu = { "Emulate (card mode)", emuEntries, sizeof(emuEntries) / sizeof(emuEntries[0]), emuExtra };
