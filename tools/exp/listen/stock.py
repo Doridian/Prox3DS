@@ -66,6 +66,8 @@ def main():
             if p[0] == 0x10 and p[1] >> 5 == 0 and len(p) > 4:  # DATA: answer echo + 9000
                 ans = p[4:] + b"\x90\x00"
                 nfc.write(bytes([0x10, 0x00, 0x00, len(ans)]) + ans)
+            if p[:3] == b"\x10\x61\x06" and p[4] == 0:  # deactivated to idle: listen again
+                nfc.write(bytes.fromhex("10" "2103030180" "01"))
     for a, v in pokes:
         print(f"  poke {a:05X}={v:X} now {mon.read32(a, 1)[0]:X}")
     for p in nfc.cmd(bytes.fromhex("1021060100")):

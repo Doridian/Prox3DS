@@ -1410,6 +1410,18 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
     card (anticollision + MFC/MFU/ISO-DEP in our own chip firmware) would be unusable with real
     readers, so card mode is not pursued further. Tools left in place: stock.py env CFG (extra
     SET_CONFIG TLVs) / POKE (register writes after setup); sample.py / snap.py env PRE.
+- 2026-11-02 retry, REVERSED: card mode works with the pm3 UNDER the 3DS (how a 3DS would be held on a
+  reader; 46 V there, the same spot reads a MIFARE Classic card fine). Custom pm3 fw reflashed.
+  - Stock NCI listen (stock.py, no patch): REQA 6/6 ATQA `04 00`, `hf 14a reader` 3/3 (UID 01020304,
+    SAK 20), RATS -> ATS `05 78 80 80 02`, RF_INTF_ACTIVATED (ISO-DEP) and the I-block reaches the host
+    as NCI DATA; the host's DATA answer goes back on air: `hf 14a apdu` got the echo + 9000, about 7/10
+    sessions, and 3 APDUs in one session all answered. Latency over nfcnet is within FWT (FWI 8).
+  - With the memrw patch loaded (FRAME_LOG on), host DATA is never sent: the chip keeps sending WTX
+    (`F2 01`, the pm3 answers each) until the reader gives up, and returns the credit only on deactivate.
+    Use the unpatched ROM (or find what memrw's hook breaks) for host-answered ISO-DEP.
+  - After field loss the chip deactivates to IDLE (`61 06 00 02`): RF_DISCOVER has to be re-sent to
+    listen again (stock.py does this now).
+  - So the earlier "TX too weak" verdict was a placement problem (pm3 lying ON TOP of the 3DS).
 - Nintendo's nfc module only carries reader-side vendor config (TLV list at .code 0x13B1A1:
   CB 01 01, A5 01 01, CA [20 bytes], C5 01 01), so card mode was never configured on the 3DS.
 - lmon (chip/lmon.c, own SRAM image, ~3.3 KB): memrw ops 0-4 + op 5 IRQLOG (wrap IRQ0..7, 5 watched
