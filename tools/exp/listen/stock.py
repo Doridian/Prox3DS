@@ -25,8 +25,8 @@ def main():
     mapping = sys.argv[3] if len(sys.argv) > 3 else "040202"  # ISO-DEP, listen, ISO-DEP intf
     nfc = nfcnet.Nfc(host)
     mon = chipmon.Mon(nfc)
-    patch = sys.argv[4] if len(sys.argv) > 4 else "memrw"
-    if patch == "memrw":
+    patch = sys.argv[4] if len(sys.argv) > 4 else "reader"
+    if patch == "reader":
         mon.load()
     else:
         nfc.takeover()
@@ -50,14 +50,14 @@ def main():
         "21010C" "0002" "000300" "0100" "010300" "0104",
         "2103030180" "01",
     ]
-    if patch == "memrw" and __import__("os").environ.get("FLOG", "1") == "1":
+    if patch == "reader" and __import__("os").environ.get("FLOG", "1") == "1":
         mon.write(0x380A0, b"\1\1")  # FRAME_LOG TX + RX (env FLOG=0: off)
     for c in cmds:
         for p in nfc.cmd(bytes.fromhex("10" + c)):
             print("  " + nfcnet.describe(p))
     pokes = [(int(a, 16), int(v, 16)) for a, v in
              (x.split("=") for x in __import__("os").environ.get("POKE", "").split())]
-    for a, v in pokes:  # env POKE: addr=val 32-bit register writes after the listen setup (memrw)
+    for a, v in pokes:  # env POKE: addr=val 32-bit register writes after the listen setup (reader image)
         mon.write32(a, [v])
     end = time.time() + secs
     while time.time() < end:

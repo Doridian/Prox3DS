@@ -1,4 +1,4 @@
-// Host side of the chip debug monitor (chip/memrw.c), the C version of tools/chipmon.py.
+// Host side of the chip debug monitor (chip/reader.c), the C version of tools/chipmon.py.
 
 #include <string.h>
 
@@ -7,7 +7,7 @@
 #include "probe.h"
 #include "emu_mfc_ncd_bin.h"
 #include "emu_mfu_ncd_bin.h"
-#include "memrw_ncd_bin.h"
+#include "reader_ncd_bin.h"
 
 #define N_FRAMES   8
 #define FRAME_SIZE 64 // seq, regs[5], len, data[36], pad[3]
@@ -66,7 +66,7 @@ static bool loadImage(const u8 *ncd, u32 size)
 
 bool monLoad(void)
 {
-	return loadImage(memrw_ncd_bin, memrw_ncd_bin_size);
+	return loadImage(reader_ncd_bin, reader_ncd_bin_size);
 }
 
 bool monLoadEmu(bool classic)

@@ -1,4 +1,4 @@
-"""Reader-mode length sweep (memrw, a card activated on the 3DS): flip each bit of each register in the ranges
+"""Reader-mode length sweep (reader.c, a card activated on the 3DS): flip each bit of each register in the ranges
 around a 21-byte parity-off bit-mode TX with length code 0x42 (160 bits: the last byte is dropped, its index
 20 doesn't fit [6:4]) and log the TX busy time; looking for 162 bits (~1539 ticks), i.e. a register holding
 the index's upper bits.   rsweep.py OUT START-END[,...] [SKIP,...]"""

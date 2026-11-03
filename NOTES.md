@@ -115,7 +115,9 @@ Ops: 0 ping, 1 takeover, 2 power (0 off / 1 cycle), 3 i2c write, 4 read packet (
   (two full passes identical). dump/ram_38000_40000_dumper4.bin = RAM with dumper4 loaded.
 - BT HCI (HCIT 01) is parsed (Read_RAM 0xFC4D -> status 01 unknown cmd).
 
-## ROM: NCI command path, debug monitor (chip/memrw.c, tools/chipmon.py) -- 2026-10-29
+## ROM: NCI command path, debug monitor (chip/reader.c, tools/chipmon.py) -- 2026-10-29
+- (2026-11-02) chip/memrw.c was renamed chip/reader.c (the reader-mode image, as against the card-mode emu_*);
+  older entries still say memrw.
 - NCI command dispatcher 0x189A2(msg): msg = [MT|PBF|GID][OID][len][payload].
   index = base[gid] (bytes @0x1F3EC) + oid, must be < 0x4C, gid valid flag @0x1F3DC, else reject.
   Then the patch-mode filter 0x3742 (during download only CORE_RESET/INIT, 2F/04, 2F/2D, 2F/2E pass),
@@ -253,7 +255,7 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
   to zeros after.
 - Pairs ending on byte 17 leave 0x5C560 = 0 (parity on): reset it to 8 before the next raw TX.
 - Experimental monitor (memrw_auth.c) = memrw + op 8 TXTIME (prototype, kept for reference).
-- Implemented: chip/memrw.c op 8 TXSCHED (TX + up to n timed stores, delays from the last FIFO
+- Implemented: chip/reader.c op 8 TXSCHED (TX + up to n timed stores, delays from the last FIFO
   write, waits for TX busy to clear; txraw/auth pacing removed, IRQ log 32 -> 16; 3256 bytes).
   Verified from the host (chipmon.txsched): 2/2 encrypted writes read back. App: mfc.c
   mfWriteBlock / mfWrite (pair picked on a cipher copy before A0; no pair -> re-auth, up to 16),
@@ -305,7 +307,7 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
   Then port crapto1 recover to C on the ARM11 (Proxmark does it <1 s) + net op + app.
 
 ## Nested attack WORKS end-to-end (on-chip OP_NESTED + crapto1) -- 2026-10-30
-- memrw.c OP_NESTED (op 9): auth1 with the known key on-chip, wait for {at}, advance the cipher 32
+- reader.c OP_NESTED (op 9): auth1 with the known key on-chip, wait for {at}, advance the cipher 32
   bits, then send the nested AUTH command (4 plaintext bytes, encrypted with the session cipher) at
   fixed cycles. Returns nt0; host reads the encrypted nested nonce from the ring (RX offset 4).
   (N_FRAMES cut 16->8 to fit; power-of-two required -- % N_FRAMES must be a mask, not a divide.)
@@ -398,7 +400,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - A wrong password mutes the card completely (no answer to WUPA/SELECT either) until the field
   resets; rescan (iso14aStart) to recover.
 - Capture ring frames were 28 data bytes: the config read (32 incl. CRC) got cut. FRAME_DATA is now
-  36 (chip/memrw.c, mon.c FRAME_SIZE 64, chipmon.py); memrw.bin 3148 of 3364 bytes. The RX FIFO
+  36 (chip/reader.c, mon.c FRAME_SIZE 64, chipmon.py); reader.bin 3148 of 3364 bytes. The RX FIFO
   itself delivers all 32 bytes.
 - App: mfGen4Read / mfGen4Write (read-back verified) / mfGen4Config, mfMagicDetect (Gen4 config,
   Gen1a unlock, Gen2 optional: rewrites block 0 with its own data through a normal encrypted WRITE,
@@ -610,7 +612,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   sniff our own frames with pm3 `hf iclass sniff` and look for the card's SOF answer to ACTALL (0A).
 - memrw OP_SNAP (10, addr = frame-log RF mode [, base u32, words u8 <= 128]): the NCI send hook
   0x38714 snapshots 0x5C540-5BC, 0x5C640-6CC, 0x5C780-7BC (or the given range) into the capture ring on the next frame-log TX NTF of that mode (FRAME_LOG
-  on). memrw.bin 3356 of 3364 bytes. At TX time A / B / V differ only in: 0x5C554 16 / 13 / 18,
+  on). reader.bin 3356 of 3364 bytes. At TX time A / B / V differ only in: 0x5C554 16 / 13 / 18,
   0x5C570 0 / 0 / 1, 0x5C574 1 / 2 / 5 (0x5C568 length code 7 / 0 / 0). The rest is the same: 0x5C550
   8, 0x5C55C 22 (post-TX), 0x5C5B8 1C (idle: C), 0x5C5BC 3, 0x5C640 42, 0x5C64C 9, 0x5C674 4, 0x5C678 3,
   0x5C6AC 80, 0x5C6C4 2, 0x5C7A8 1C, 0x5C7AC 8 (all 0 when idle).
@@ -1031,7 +1033,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Speed. Host-driven auth was 11 keys/s: per attempt select 30 ms, parity + drain 9, monAuth 5, {at}
   wait 40 ms -- every monitor request is an I2C write + IRQ + 2 reads through the i2c sysmodule,
   ~6-8 ms. Also iso14aSelect waited 4 polls for an answer to HLTA (it has none): fixed (fire and forget).
-- OP_CHKKEYS (chip/memrw.c, mfChkKeys, net op 0x26 / nfcnet mfchk): host packs HLTA / WUPA / SELECT
+- OP_CHKKEYS (chip/reader.c, mfChkKeys, net op 0x26 / nfcnet mfchk): host packs HLTA / WUPA / SELECT
   frames + the AUTH frame + up to ~34 keys per request; the chip does per key: parity on, the select
   steps (wait for each answer), parity off, auth() ({nr}{ar}), waits MF_AT_WAIT (1800 ticks; the
   right key's {at} came 1.16 ms after) and checks {at} == suc96(nt) with its own Crypto1 state.
@@ -1140,7 +1142,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Always-leak path: nonce2key with par_info=0 returns a large list (~74k-185k candidates per run); the
   key is the one common to every run. Two synthetic runs (different nt) intersected to exactly the one
   correct key. So per run the collector must deliver: uid, the locked nt, the on-wire nr, ks[8].
-- On-chip collector (OP_DARKSIDE in chip/memrw.c). The card does NOT reseed its PRNG on HLTA/wake: it
+- On-chip collector (OP_DARKSIDE in chip/reader.c). The card does NOT reseed its PRNG on HLTA/wake: it
   free-runs, so the nonce is set by WHEN the AUTH arrives. Mechanism:
   - Fire each AUTH on an ABSOLUTE timer grid `sync` ticks apart (NOW() = -TIMER counts up; busy-wait to
     the grid point after the re-select, skipping a grid point if the re-select overran). HLTA is needed

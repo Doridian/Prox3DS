@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Raw ISO14443A through the debug monitor (chip/memrw.c): our frames go straight to the
+"""Raw ISO14443A through the debug monitor (chip/reader.c): our frames go straight to the
 framer (OP_TXRAW) and answers come from the capture ring (OP_CAPTURE), with the ROM's RF state
 machine shut out. The ROM still does the first activation (field on, card selected).
 

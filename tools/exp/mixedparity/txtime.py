@@ -4,7 +4,7 @@ sys.path.insert(0, __file__.rsplit('/', 3)[0])
 import chipmon, dumpchip, mkpatch, nfcnet
 from mfc import *
 
-EXP = __file__.rsplit('/', 1)[0] + '/memrw_auth.bin'
+EXP = __file__.rsplit('/', 1)[0] + '/reader_auth.bin'
 def load(self):
     self.nfc.takeover()
     if dumpchip.load(self.nfc, mkpatch.build(open(EXP, 'rb').read())) is None:

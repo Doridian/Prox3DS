@@ -1,4 +1,4 @@
-// Listen-mode exploration monitor (BCM20791B5): memrw's basic ops (same 2F 2C protocol and
+// Listen-mode exploration monitor (BCM20791B5): reader.c's basic ops (same 2F 2C protocol and
 // opcodes 0-4, so tools/chipmon.py drives it) plus an interrupt log for card emulation work.
 //   op 5 IRQLOG  irq mask u8, only-changes u8, 5 x register u32 [, unused u8 [, swallow u8]]
 //                -> 4F 2C | 00 | log address u32
@@ -39,7 +39,7 @@ struct ent {
 	u8 irq, pad;
 	u16 val[N_WATCH];
 };
-// In the SRAM image (downloaded as zeros): AON RAM above memrw's 0x68410 is not free.
+// In the SRAM image (downloaded as zeros): AON RAM above reader.c's 0x68410 is not free.
 static struct {
 	u32 count;
 	struct ent ring[N_LOG];

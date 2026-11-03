@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Darkside on hardware via the chip collector (memrw OP_DARKSIDE) + the recovery in darkside.py.
+"""Darkside on hardware via the chip collector (reader.c OP_DARKSIDE) + the recovery in darkside.py.
 The prototype of the app's mfDarkside (nfcprobe mfc.c; `nfcnet.py HOST darkside BLOCK` runs that):
 the on-chip loop steers onto a repeating tag nonce and collects the 8 NACK keystreams.
 
@@ -85,7 +85,7 @@ def main():
             break
         sync -= round(a * tps)
 
-    # The card's clock stops in the reader's pauses, so each AUTH costs `pause` PRNG steps on top of
+    # The card's clock stops in the reader.c's pauses, so each AUTH costs `pause` PRNG steps on top of
     # the time between AUTHs: PROBE ticks = probe steps, sync ticks = 65535 + a. Real ticks per step,
     # and the grid for SLOTS slots per period.
     tps = (sync - PROBE) / (65535 + (a or 0) - probe)

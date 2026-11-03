@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Talk to the chip-side debug monitor (chip/memrw.c, vendor command 2F 2C).
+"""Talk to the chip-side debug monitor (chip/reader.c, vendor command 2F 2C).
 
-    chipmon.py HOST load                       power cycle, download memrw, check it answers
+    chipmon.py HOST load                       power cycle, download the reader image, check it answers
     chipmon.py HOST read ADDR LEN [OUT]        byte reads (hex dump, or raw to OUT)
     chipmon.py HOST read32 ADDR WORDS          32-bit loads (MMIO)
     chipmon.py HOST write ADDR HEX             byte writes
@@ -33,7 +33,7 @@ class Mon:
         # Packets that arrive in place of a monitor answer (RF notifications while polling).
         self.on_other = on_other or (lambda pkt: print("  (other) " + nfcnet.describe(pkt)))
 
-    def load(self, image="memrw.bin"):
+    def load(self, image="reader.bin"):
         nfc = self.nfc
         nfc.takeover()
         aon = CHIP + image[:-4] + ".aon.bin"
@@ -94,7 +94,7 @@ class Mon:
         self._do(OP_WRITE32, addr, struct.pack(f"<{len(words)}I", *words))
 
     def capture(self, on=True):
-        """Start/stop RX capture (memrw OP_CAPTURE); remembers the ring address."""
+        """Start/stop RX capture (reader.c OP_CAPTURE); remembers the ring address."""
         self.ring = struct.unpack("<I", self._do(OP_CAPTURE, 0, bytes([1 if on else 0])))[0]
         self.seen = struct.unpack("<I", self.read(self.ring, 4))[0]
 
@@ -112,20 +112,20 @@ class Mon:
         return out
 
     def txraw(self, data, code=None, r570=0, r574=1, r55c=0x88, pace=0):
-        """Raw framer TX (memrw OP_TXRAW); code = bytes << 4 | extra bits, default whole bytes.
+        """Raw framer TX (reader.c OP_TXRAW); code = bytes << 4 | extra bits, default whole bytes.
         pace is ignored (the FIFO takes a whole frame; kept for old scripts)."""
         code = len(data) << 4 if code is None else code
         self._do(OP_TXRAW, 0, bytes([r570, r574, code, r55c]) + data)
 
     def txsched(self, data, code, sched, r570=0, r574=1, r55c=0x88):
-        """TX with timed register stores (memrw OP_TXSCHED): sched = [(ticks after the last FIFO
+        """TX with timed register stores (reader.c OP_TXSCHED): sched = [(ticks after the last FIFO
         write, reg, val)] ascending. Returns the TX busy time in ticks (1 MHz)."""
         p = bytes([r570, r574, code, r55c, len(sched)])
         p += b"".join(struct.pack("<HII", *e) for e in sched)
         return struct.unpack("<I", self._do(OP_TXSCHED, 0, p + data))[0]
 
     def auth(self, key, uid, nr, frame, code, nrar_tx=0):
-        """On-chip Mifare Classic auth (memrw OP_AUTH): sends the parity-packed AUTH frame,
+        """On-chip Mifare Classic auth (reader.c OP_AUTH): sends the parity-packed AUTH frame,
         answers nt with {nr}{ar} (sent with nrar_tx = r574 << 8 | length code, 0 = chip default).
         Returns (nt, cipher odd, cipher even) or None if no nt."""
         try:
@@ -137,7 +137,7 @@ class Mon:
         return struct.unpack("<III", p)
 
     def nested(self, key, uid, nr, frame, code, nested_cmd, nrar_tx=0):
-        """On-chip nested auth (memrw OP_NESTED): auth1 with the known key, then the nested AUTH
+        """On-chip nested auth (reader.c OP_NESTED): auth1 with the known key, then the nested AUTH
         command (nested_cmd = 4 plaintext bytes, 60/61 target + CRC) encrypted with the session
         cipher and sent at fixed cycles so the PRNG distance is stable. Returns nt0 (the known
         auth's plaintext nonce) or None; read the encrypted nested nonce from frames()."""
@@ -150,7 +150,7 @@ class Mon:
 
     def darkside(self, steps, acode, aframe, nrar_frames, sync, tq=0, maxiter=40, atw=5000, nrar_tx=0,
                  nslot=1, need=None, sfr=0):
-        """Darkside runs (memrw OP_DARKSIDE): fire AUTHs on a grid sync ticks apart, slot i taking every
+        """Darkside runs (reader.c OP_DARKSIDE): fire AUTHs on a grid sync ticks apart, slot i taking every
         nslot-th grid point (sync * nslot = one PRNG period), each slot steering onto its own nonce
         (tq = ticks per PRNG step * 256; 0 = no steering, for calibration); stops when `need` slots
         (default all) are complete. steps: list of (r574, code, rx, bytes) re-select frames (parity
@@ -172,7 +172,7 @@ class Mon:
         finally:
             self.nfc.sock.settimeout(10)
         slots = []
-        for i in range(nslot):  # memrw struct dslot: target, ph, ks[8], mask, hits, lost, pad
+        for i in range(nslot):  # reader.c struct dslot: target, ph, ks[8], mask, hits, lost, pad
             o = 20 * i
             slots.append((struct.unpack_from("<I", p, o)[0], list(p[o + 8:o + 16]), p[o + 16], p[o + 17]))
         return slots

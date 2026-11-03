@@ -113,7 +113,7 @@ static bool chipUp(int chipImage) // 0: the monitor, else CM_MFU / CM_MFC's imag
 		logp("NFC takeover failed\n");
 		return false;
 	}
-	// For APDUs the memrw monitor stays loaded but unused: it doesn't get in the way. (The ROM's FRAME_LOG
+	// For APDUs the reader image stays loaded but unused: it doesn't get in the way. (The ROM's FRAME_LOG
 	// does: with it on, our DATA answers never go out.)
 	return chipImage ? monLoadEmu(chipImage == CM_MFC) : monLoad();
 }

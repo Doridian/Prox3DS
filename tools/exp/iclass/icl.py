@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""iClass reader prototype on the BCM20791 through memrw: 1-of-4 V TX (0x5C558 = 5) from a
+"""iClass reader prototype on the BCM20791 through the reader image: 1-of-4 V TX (0x5C558 = 5) from a
 stalled V poll, RX with the V analog setup, iClass anticollision / select / read / auth.
 
     icl.py HOST [KD_HEX]     read blocks 0-2 and 5 plain; with the diversified Kd, auth and read all

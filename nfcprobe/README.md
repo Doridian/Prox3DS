@@ -3,12 +3,12 @@
 Mifare Classic and Ultralight / NTAG tool for the New3DS NFC controller (BCM20791). Build with `make` (devkitPro, needs
 citro2d), run the .3dsx from the Homebrew Launcher. NFC is handed back to the system on exit (START).
 
-The app loads its own chip patch (chip/memrw.c, embedded as `data/memrw_ncd.bin`, rebuilt by
+The app loads its own chip patch (chip/reader.c, embedded as `data/reader_ncd.bin`, rebuilt by
 `make` in `chip/`) and drives the RF framer through it: raw ISO14443A with our own parity and
 Mifare Classic Crypto1 (`source/mon.c`, `source/mfc.c`, `source/crypto1.c`).
 
 `data/` is not in git; populate it before building the app by running `make` in `chip/`
-(builds `data/memrw_ncd.bin`). No Nintendo or Broadcom files are needed: `tools/mkpatch.py`
+(builds `data/reader_ncd.bin`). No Nintendo or Broadcom files are needed: `tools/mkpatch.py`
 generates the whole patch (header, a 4-instruction AON thunk into ROM, our SRAM image).
 
 The UI is on the top screen and driven by buttons only: a card on the reader covers the whole
@@ -72,7 +72,7 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
 - UID: any 4, 7 or 10-byte UID with its ATQA and SAK, typed, copied from a scanned card or from a saved
   Classic dump. Anticollision only (readers that check nothing but the UID).
 - Ultralight / NTAG: a saved dump as the card itself ("Emulate this card" in the saved dumps), answered by
-  our own chip image (`chip/emu.c`, loaded instead of memrw: no WTX outside ISO-DEP, the host is far too
+  our own chip image (`chip/emu.c`, loaded instead of the reader image: no WTX outside ISO-DEP, the host is far too
   slow for a READ). READ, FAST_READ, GET_VERSION (made up from the page count for dumps without one),
   READ_SIG, READ_CNT, PWD_AUTH (the dump's password if it has one, else any), WRITE / COMPATIBILITY WRITE.
   What readers wrote can be saved as a new dump afterwards. No UL-C 3DES, no AUTH0 protection.

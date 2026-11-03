@@ -1,6 +1,6 @@
 // nfcprobe: Mifare Classic tool on the New3DS NFC controller (BCM20791B5).
 // Kills the nfc sysmodule, takes over its GPIO/I2C, and either just queries the
-// controller or loads our own patch (chip/memrw.c) and runs card operations through it.
+// controller or loads our own patch (chip/reader.c) and runs card operations through it.
 // The nfc module is relaunched on exit. The UI is in app.c / editor.c.
 
 #include <stdarg.h>

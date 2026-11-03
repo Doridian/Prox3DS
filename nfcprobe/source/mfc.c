@@ -919,7 +919,7 @@ static int dsRun(u8 *a, u32 len, double grid, u32 tq, u16 maxiter, int nslot, Ds
 	a[10] = tq, a[11] = tq >> 8;
 	a[12] = a[13] = nslot;
 	if (monDarkside(a, len, NRAR_TX, nslot, out) < 0) FAIL(-1, "darkside: monitor");
-	for (int i = 0; i < nslot; i++) { // memrw struct dslot: target, ph, ks[8], mask, hits, lost, pad
+	for (int i = 0; i < nslot; i++) { // reader.c struct dslot: target, ph, ks[8], mask, hits, lost, pad
 		const u8 *q = out + MON_DARKSIDE_SLOT * i;
 		o[i].nt = q[0] | q[1] << 8 | q[2] << 16 | (u32)q[3] << 24;
 		memcpy(o[i].ks, q + 8, 8);
@@ -1113,7 +1113,7 @@ int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 		logp("  darkside: the last calibration is off\n");
 	}
 	dsUid = uid, dsProbe = probe, dsSync = sync;
-	// The card's clock stops in the reader's modulation pauses, so each AUTH (re-select, AUTH, {nr}{ar})
+	// The card's clock stops in the reader.c's modulation pauses, so each AUTH (re-select, AUTH, {nr}{ar})
 	// costs F PRNG steps on top of the time between them: DS_PROBE ticks = probe steps, sync ticks =
 	// 65535 + d. Hence the real ticks per step (what moving one AUTH does; probe / DS_PROBE alone is
 	// ~30% off, which made the steering overshoot) and F, and the grid for DS_SLOTS slots per period.

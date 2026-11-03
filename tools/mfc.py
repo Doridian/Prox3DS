@@ -103,7 +103,7 @@ class Session(rawa.RawA):
         return self.answer(b"\x52", 0x07)
 
     def auth(self, block, key, key_b=False, nr=0x12345678):
-        """Select, then first (plaintext nt) auth via memrw OP_AUTH. Returns the Crypto1 state
+        """Select, then first (plaintext nt) auth via reader.c OP_AUTH. Returns the Crypto1 state
         positioned after {at}, or None (wrong key: the card stays silent or {at} mismatches).
         Leaves parity off; the card is in the authenticated state."""
         self.parity(True)

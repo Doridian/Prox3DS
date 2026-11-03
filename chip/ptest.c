@@ -1,4 +1,4 @@
-// Experiment (not in the app): look for a parity control in listen-mode TX. memrw's READ8 / WRITE8 /
+// Experiment (not in the app): look for a parity control in listen-mode TX. reader.c's READ8 / WRITE8 /
 // READ32 (tools/chipmon.py drives it), plus
 //   op 5 PT  -> 4F 2C | 00 | address (u32) of struct pt
 //   op 6 RUN -> 4F 2C | 00 | pt.reps u32 TX times (ticks), sent from the command context while a reader

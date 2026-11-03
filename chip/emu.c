@@ -1,6 +1,6 @@
-// Card emulation image (BCM20791B5): loaded instead of memrw while the 3DS listens as a card whose
+// Card emulation image (BCM20791B5): loaded instead of the reader image while the 3DS listens as a card whose
 // protocol the ROM can't hand to the host in time (no WTX outside ISO-DEP: an Ultralight answers a READ
-// within ~100 us). memrw's protocol (2F 2C) with READ8 0, WRITE8 1 and READ32 3 only (no room for
+// within ~100 us). reader.c's protocol (2F 2C) with READ8 0, WRITE8 1 and READ32 3 only (no room for
 // CALL / WRITE32), so tools/chipmon.py and the app's mon.c drive it, plus:
 //   op 5 EMU     -> 4F 2C | 00 | addresses (u32) of struct emu, the frame log, the page / block memory,
 //                   and (Classic) where blocks 64 and 173 start
@@ -203,7 +203,7 @@ nack:
 
 #ifdef EMU_MFC
 // --- MIFARE Classic, card side ---
-// Crypto1 as in chip/memrw.c (crapto1's odd/even halves). The reader's frames arrive with the parity
+// Crypto1 as in chip/reader.c (crapto1's odd/even halves). The reader.c's frames arrive with the parity
 // bits stripped (encrypted parity or not); ours go out with their encrypted parity as a raw bit stream
 // (tx_par).
 static u32 c1_odd, c1_even;

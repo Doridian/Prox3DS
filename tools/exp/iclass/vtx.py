@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Raw ISO15693-coded TX for iClass: stall the ROM in a V poll (capture on before RF_DISCOVER 76,
 I93_DATARATE B7 = 2), set the V coder (0x5C554 = 18) at high rate (0x5C558), no CRC (0x5C560 = 0C),
-then send the given frames through memrw's txsched; check with pm3 `hf iclass sniff -t`.
+then send the given frames through reader.c's txsched; check with pm3 `hf iclass sniff -t`.
 
     vtx.py HOST FRAME_HEX... (default 0A = ACTALL, 0C = IDENTIFY)
 env: R558 (default 5), R560 (default C), R55C (default 88), REPEAT (default 5), GAP (s, default 0.3),

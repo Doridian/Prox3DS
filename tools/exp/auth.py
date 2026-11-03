@@ -1,4 +1,4 @@
-# On-chip Crypto1 auth (memrw OP_AUTH) with several {nr}{ar} TX settings; then an encrypted READ.
+# On-chip Crypto1 auth (reader.c OP_AUTH) with several {nr}{ar} TX settings; then an encrypted READ.
 #   auth.py HOST KEY BLOCK [r574<<8|code ...]
 import struct, sys
 sys.path.insert(0, __file__.rsplit('/', 2)[0])

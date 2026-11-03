@@ -2,12 +2,12 @@
 PREFIX  := /opt/devkitpro/devkitARM/bin/arm-none-eabi-
 CFLAGS  := -mcpu=cortex-m0 -mthumb -Os -ffreestanding -nostdlib -fno-builtin \
            -fno-tree-loop-distribute-patterns -fno-jump-tables -Wall -Wl,--no-warn-rwx-segments
-TARGETS := null dumper1 dumper2 dumper3 dumper4 memrw lmon emu_mfu emu_mfc
+TARGETS := null dumper1 dumper2 dumper3 dumper4 reader lmon emu_mfu emu_mfc
 
-all: $(TARGETS:=.bin) ../nfcprobe/data/memrw_ncd.bin ../nfcprobe/data/emu_mfu_ncd.bin ../nfcprobe/data/emu_mfc_ncd.bin
+all: $(TARGETS:=.bin) ../nfcprobe/data/reader_ncd.bin ../nfcprobe/data/emu_mfu_ncd.bin ../nfcprobe/data/emu_mfc_ncd.bin
 
 # The monitor as an SPD patch, embedded in the app.
-../nfcprobe/data/memrw_ncd.bin: memrw.bin ../tools/mkpatch.py
+../nfcprobe/data/reader_ncd.bin: reader.bin ../tools/mkpatch.py
 	python3 ../tools/mkpatch.py $< $@
 
 # The card emulation images (one per card family, emu.c built twice), loaded in its place for chip-answered
