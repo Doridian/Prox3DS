@@ -14,7 +14,7 @@ import chipmon
 import nfcnet
 
 OP_EMU = 5
-O_MODE, O_FRAMES, O_LOG, O_MEM = 0, 60, 72, 200
+O_MODE, O_FRAMES = 0, 60  # struct emu; the frame log and the pages are elsewhere (op 5)
 
 
 def main():
@@ -31,14 +31,14 @@ def main():
     mem[8] = mem[4] ^ mem[5] ^ mem[6] ^ mem[7]  # BCC1
     npages = len(mem) // 4
     nfc = nfcnet.Nfc(host)
-    mon = chipmon.Mon(nfc)
+    mon = chipmon.Mon(nfc, on_other=lambda p: None)
     mon.load("emu.bin")
-    base = struct.unpack("<I", mon._do(OP_EMU, 0))[0]
+    base, logp, memp = struct.unpack("<III", mon._do(OP_EMU, 0))
     print(f"struct emu at {base:05X}, {npages} pages")
     hdr = bytes([0, npages, 3, 0]) + version + sig + cnt + bytes(2)
     mon.write(base, hdr)
     for i in range(0, len(mem), chipmon.CHUNK):
-        mon.write(base + O_MEM + i, bytes(mem[i:i + chipmon.CHUNK]))
+        mon.write(memp + i, bytes(mem[i:i + chipmon.CHUNK]))
     mon.write(base + O_MODE, b"\1")
     uid = bytes(mem[0:3] + mem[4:8])
     tl = bytes.fromhex("300104" "310100" "320100") + bytes([0x33, 7]) + uid
@@ -52,7 +52,7 @@ def main():
     while time.time() < end:
         if time.time() > poll:  # live counters while listening
             poll = time.time() + 2
-            print("  live frames/writes/nlog", struct.unpack("<III", mon.read(base + O_FRAMES, 12)))
+            print("  live frames/writes/nlog", struct.unpack("<III", mon._do(chipmon.OP_READ8, base + O_FRAMES, bytes([12]))))
         for p in nfc.drain(100):
             print(f"{time.time() % 100:6.2f} " + nfcnet.describe(p))
             if p[:3] == b"\x10\x61\x06" and p[4] == 0:
@@ -60,13 +60,13 @@ def main():
                 nfc.write(bytes.fromhex("10" "2103030180" "01"))
     for p in nfc.cmd(bytes.fromhex("1021060100")):
         print("  " + nfcnet.describe(p))
-    frames, writes, nlog = struct.unpack("<III", mon.read(base + O_FRAMES, 12))
-    log = mon.read(base + O_LOG, 128)
+    frames, writes, nlog = struct.unpack("<III", mon._do(chipmon.OP_READ8, base + O_FRAMES, bytes([12])))
+    log = mon._do(chipmon.OP_READ8, logp, bytes([128]))
     print(f"frames {frames} writes {writes} log {nlog}")
     for i in range(max(0, nlog - 16), nlog):
         e = log[(i % 16) * 8:(i % 16) * 8 + 8]
         print(f"  state {e[0]} len {e[1]:2} {e[2:2 + min(e[1], 6)].hex(' ')}")
-    after = mon.read(base + O_MEM, min(len(mem), chipmon.CHUNK))
+    after = mon._do(chipmon.OP_READ8, memp, bytes([min(len(mem), chipmon.CHUNK)]))
     if after != bytes(mem[:len(after)]):
         print("mem changed:", after.hex())
 

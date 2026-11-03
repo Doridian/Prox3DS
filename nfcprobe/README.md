@@ -74,6 +74,9 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   slow for a READ). READ, FAST_READ, GET_VERSION (made up from the page count for dumps without one),
   READ_SIG, READ_CNT, PWD_AUTH (the dump's password if it has one, else any), WRITE / COMPATIBILITY WRITE.
   What readers wrote can be saved as a new dump afterwards. No UL-C 3DES, no AUTH0 protection.
+- MIFARE Classic 1K / Mini: a saved dump the same way, Crypto1 on the chip (AUTH, nested AUTH, READ, WRITE,
+  HALT). The encrypted answers carry the hardware's plain parity, not the encrypted one: readers that check it
+  (phones, NXP reader chips) refuse them, pm3 takes them. 4K doesn't fit the chip.
 - APDU log: an empty ISO-DEP card answering from `sdmc:/nfcprobe/emu/apdu.txt` ("<command prefix>
   <response>" in hex per line, first match wins, else 6A82 for a SELECT / 6D00), every APDU appended to
   `sdmc:/nfcprobe/emu/apdu.log`.

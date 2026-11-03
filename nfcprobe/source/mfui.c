@@ -466,6 +466,11 @@ static void fileEmuUid(void)
 	emuStartUid(&c);
 }
 
+static void fileEmu(void)
+{
+	emuStartMfc(&cl, files[fl.sel].name);
+}
+
 static void filesInput(u32 kDown, u32 kRepeat)
 {
 	uiListNav(&fl, nfiles, 12, kRepeat);
@@ -485,8 +490,9 @@ static void filesInput(u32 kDown, u32 kRepeat)
 			return;
 		}
 		cl = d;
-		static const MenuItem items[] = { { "Write to magic card", fileCloneAsk }, { "Emulate its UID", fileEmuUid } };
-		popup(files[fl.sel].name, items, cl.valid[0] ? 2 : 1);
+		static const MenuItem items[] = { { "Write to magic card", fileCloneAsk }, { "Emulate this card", fileEmu },
+			{ "Emulate its UID", fileEmuUid } };
+		popup(files[fl.sel].name, items, cl.valid[0] ? 3 : 1);
 	}
 	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s and its key file?", files[fl.sel].name);
 }
@@ -526,6 +532,11 @@ static void filesDraw(void)
 }
 
 static const Screen filesScreen = { filesScan, filesInput, filesDraw }; // rescanned: the editor may have saved one
+
+void mfFilesChanged(void)
+{
+	filesScan();
+}
 
 // --- menu and family ---
 

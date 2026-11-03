@@ -103,6 +103,7 @@ void emuStartNdef(const u8 *msg, u32 len);                // a Type 4 tag with t
 void emuStartUid(const Card *c);                          // its UID, ATQA and SAK
 void emuStartMfuNdef(const MfuDump *d, const char *name); // a Type 4 tag with the dump's NDEF message
 void emuStartMfu(const MfuDump *d, const char *name);     // the dump's card itself (chip-answered)
+void emuStartMfc(const MfDump *d, const char *name);      // the same for Classic 1K / Mini
 
 // HID iClass / PicoPass (iclassui.c)
 void iclassOpenMenu(void);
@@ -117,6 +118,7 @@ void mfuEditorOpen(const MfuDump *d, const char *path);
 void mfuCloneStart(const MfuDump *d);                 // clone onto the Gen4 GTU on the reader
 void mfuCloneAsk(const MfuDump *d, const char *name); // confirm, then mfuCloneStart
 void mfuFilesChanged(void); // a dump was saved behind the saved dumps list: rescan it
+void mfFilesChanged(void);  // the same for Classic
 void ndefOpenMfu(void); // read the card on the reader, then its NDEF screen (ndefui.c)
 void mfuTearMenu(void);  // tear-off: write scan, EV1 counter reset (mfutear.c)
 void amiiboOpenCard(void); // read the NTAG215 on the reader, then the Amiibo screen (amiiboui.c)

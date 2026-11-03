@@ -871,6 +871,7 @@ static const SimStep script[] = {
 	CALL(reset), CALL(scnEmuUid), SHOT("emu_uid"), CALL(simBusyEnd), CALL(reset), CALL(scnEmuLog), SHOT("emu_log"), CALL(simBusyEnd),
 	CALL(reset), CALL(simEmuForm), SHOT("emu_form"), B,
 	CALL(reset), CALL(scnEmuMfu), SHOT("emu_mfu"), CALL(simBusyEnd), CALL(reset), CALL(scnEmuMfuDone), SHOT("emu_mfu_save"), B,
+	CALL(reset), CALL(simEmuMfc), SHOT("emu_mfc"), CALL(simBusyEnd),
 	// tear-off
 	CALL(reset), CALL(scnTear), SHOT("tear_scan"), D, D, D, D, D, D, D, D, D, D, SHOT("tear_scan_end"),
 	CALL(reset), CALL(scnTearCnt), SHOT("tear_counter"), CALL(simBusyEnd),

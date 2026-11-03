@@ -1480,6 +1480,34 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   signature: "Signature verification: successful", 4 dumps with identical pages (one run's GET_VERSION was
   lost: zero version in pm3's header).
 
+## MIFARE Classic emulation on the chip (chip/emu.c MODE_MFC, tools/exp/listen/mfcemu.py) -- 2026-11-02
+- The data has to be on the chip: a reader wants nt, {at} and every encrypted answer within a few ms, and the
+  cipher state lives there anyway. 1K (1024 bytes, keys in the trailers) and Mini fit; 4K doesn't.
+- RX: the reader's encrypted frames reach the listen-A hook with the parity bits stripped, whatever their
+  parity ({nr}{ar}: 8 bytes, encrypted commands 4, WRITE data 18). So the card side never sees reader parity.
+- TX: no way found to send chosen parity bits in listen mode. 0x5C560 is a set/clear register (0x40 | mask
+  sets, 0x80 | mask clears, other values plain writes; listen value 2); none of its bits, plain 8 (reader-mode
+  parity off) or 0x5C574 = 1 (bit mode) changes the listen TX: always 9 bits per byte with plain odd parity.
+  0x5C578 bit 0 appends a CRC in listen (bits 1, 6: no TX), 0x5C57C bits 0/1 hang the chip. 0x5C55C bit 1:
+  garbled frame. Phones emulate Classic through an SE over SWP (CLT mode, raw frames with parity from the SE),
+  so the RF block can probably do it, but the ROM never feeds the TX port from anywhere but 0x11DE/0x1280
+  (reader) and 0xF8E0 (listen): CLT is likely wired in hardware.
+- So the answers carry the hardware's parity: right for plain frames, a coin toss per byte for encrypted ones.
+  pm3 doesn't check the parity of card answers (mifareutil.c only records it), NXP reader chips with Crypto1
+  in hardware (and phones) do.
+- Card side: AUTH (first: plain nt; nested: nt encrypted with the new key's stream), {nr}{ar} (nr fed in
+  encrypted, ar = suc64(nt) checked, wrong key: silence and state 0), {at} = suc96(nt), then encrypted READ
+  (trailer: key A as zeros, key B only for trailer access 000 / 001 / 010), WRITE (encrypted 4-bit ACK, block 0
+  refused), HALT (state 5). nt from a running PRNG state, 16-79 steps per AUTH: stepping the PRNG to a random
+  index (up to 65535 steps) took longer than the reader waits. AUTH -> nt 0.33 ms, {nr}{ar} -> {at} 0.77 ms,
+  READ -> data 1.0 ms. The log entries of encrypted frames get the plaintext (state | 0x80).
+- Image space: the code is ~2.3 KB, so struct emu and the frame log moved to zeroed AON RAM (0x68100-0x682F4,
+  below the 0x68410 limit) and only the 1 KB page / block memory is in the image; CALL / WRITE32 dropped.
+  3360 of 3364 bytes. RAM after 0x3C530 holds data: the image can't grow.
+- pm3 under the 3DS: hf mf rdbl / rdsc with each sector's key, wrbl + read back, hf mf chk --1k (dozens of
+  wrong-key auths, all silent, every key found), hf mf dump twice identical; a few single reads NACKed or
+  auth errors, retried by pm3.
+
 ## pm3 dictionaries for MFC / DESFire / UL-C (nfcprobe pm3dict.c) -- 2026-11-02
 
 - Besides iClass, pm3's client/dictionaries has lists for families the app reads: mfc_default_keys.dic

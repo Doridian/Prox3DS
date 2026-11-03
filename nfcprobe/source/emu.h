@@ -1,6 +1,7 @@
 #pragma once
 #include <3ds.h>
 
+#include "mfc.h"
 #include "mfu.h"
 
 // Card emulation: the 3DS as an ISO14443-A card (NCI listen A through the ROM), see NOTES.md "Card mode".
@@ -44,6 +45,13 @@ bool emuRun(const EmuId *id, EmuApdu fn);
 // password if known, else any; PACK from the dump), WRITE, COMPATIBILITY WRITE. No UL-C 3DES, no AUTH0
 // protection. Pages readers wrote end up in *d (emu.changed).
 bool emuRunMfu(MfuDump *d);
+// MIFARE Classic 1K / Mini from a dump, the same way (Crypto1 on the chip): its UID / ATQA / SAK from block
+// 0, AUTH (first and nested) with the keys the dump found, READ (key A reads as zeros, key B where the
+// access bits let it), WRITE (not block 0 or trailers into the dump), HALT. Access bits otherwise not
+// enforced, no value blocks. The answers carry the hardware's parity, not the encrypted parity: readers
+// that check it (most phones, NXP reader chips) reject them; pm3 doesn't check. 4K doesn't fit the chip.
+int emuMfcBlocks(const MfDump *d); // 64 / 20, 0 = can't
+bool emuRunMfc(MfDump *d);
 
 // NFC Forum Type 4 tag (T4T 2.0): the NDEF application, CC file E103 and NDEF file E104, readable
 // and writable (UPDATE BINARY), up to EMU_NDEF_MAX bytes of message.

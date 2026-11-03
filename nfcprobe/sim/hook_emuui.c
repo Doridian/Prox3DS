@@ -81,6 +81,21 @@ void simEmuMfu(bool done)
 	simBusyView(emuView);
 }
 
+// A Classic 1K dump being read by a reader
+void simEmuMfc(void)
+{
+	static const char *log[] = { "AUTH A 4", "{nr}{ar}", "READ 4", "READ 5", "nested AUTH B 8", "HALT" };
+	snprintf(runName, sizeof(runName), "4ACF2F0C-3.bin");
+	memset(&emu, 0, sizeof(emu));
+	mode = MODE_MFC;
+	emu.id = (EmuId){ { 0x4A, 0xCF, 0x2F, 0x0C }, 4, { 0x04, 0x00 }, 0x08 };
+	emu.field = true, emu.fields = 3, emu.frames = 41, emu.chipPages = 64;
+	for (int i = 0; i < 6; i++) snprintf(emu.log[emu.nlog++ % EMU_LOG_N], 48, "%s", log[i]);
+	jobNextHint("Tap a phone on the bottom screen.");
+	simBusy("Emulating a card", true, false);
+	simBusyView(emuView);
+}
+
 void simEmuForm(void)
 {
 	card = (Card){ .atqa = { 0x44, 0x00 }, .uid = { 0x04, 0x6B, 0x21, 0x9A, 0x3C, 0x5D, 0x80 }, .uidLen = 7, .sak = 0 };
