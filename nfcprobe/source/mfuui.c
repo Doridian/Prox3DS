@@ -684,12 +684,9 @@ static void fileEmuNdef(void)
 	emuStartMfuNdef(&ld, files[fl.sel].name);
 }
 
-static void fileEmuUid(void)
+static void fileEmu(void)
 {
-	Card c = { .atqa = { 0x44, 0x00 }, .uidLen = 7, .sak = 0x00 };
-	memcpy(c.uid, ld.data[0], 3);
-	memcpy(c.uid + 3, ld.data[1], 4);
-	emuStartUid(&c);
+	emuStartMfu(&ld, files[fl.sel].name);
 }
 
 static void filesInput(u32 kDown, u32 kRepeat)
@@ -709,8 +706,8 @@ static void filesInput(u32 kDown, u32 kRepeat)
 			return;
 		}
 		static const MenuItem items[] = { { "Write user pages to card", fileRestoreAsk },
-			{ "Clone onto magic card (GTU)", fileCloneAsk }, { "Emulate its NDEF message", fileEmuNdef },
-			{ "Emulate its UID", fileEmuUid }, { "Amiibo (decrypt, copy)", fileAmiibo } };
+			{ "Clone onto magic card (GTU)", fileCloneAsk }, { "Emulate this card", fileEmu },
+			{ "Emulate its NDEF message (Type 4)", fileEmuNdef }, { "Amiibo (decrypt, copy)", fileAmiibo } };
 		popup(files[fl.sel].name, items, ld.pages == 135 ? 5 : 4);
 	}
 	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s?", files[fl.sel].name);
@@ -748,6 +745,11 @@ static void filesDraw(void)
 }
 
 static const Screen filesScreen = { filesScan, filesInput, filesDraw };
+
+void mfuFilesChanged(void)
+{
+	filesScan();
+}
 
 // --- menu and family ---
 

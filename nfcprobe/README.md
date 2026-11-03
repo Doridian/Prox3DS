@@ -68,13 +68,18 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   a text or an empty message, the message of a saved Ultralight / NTAG dump, or the one on the NDEF screen.
   Writable: what a reader writes with UPDATE BINARY shows up on the screen.
 - UID: any 4, 7 or 10-byte UID with its ATQA and SAK, typed, copied from a scanned card or from a saved
-  Classic / Ultralight dump. Anticollision only (readers that check nothing but the UID); the ROM never
-  sends our answers to Ultralight / Classic frames, so memory and keys need chip code.
+  Classic dump. Anticollision only (readers that check nothing but the UID).
+- Ultralight / NTAG: a saved dump as the card itself ("Emulate this card" in the saved dumps), answered by
+  our own chip image (`chip/emu.c`, loaded instead of memrw: no WTX outside ISO-DEP, the host is far too
+  slow for a READ). READ, FAST_READ, GET_VERSION (made up from the page count for dumps without one),
+  READ_SIG, READ_CNT, PWD_AUTH (the dump's password if it has one, else any), WRITE / COMPATIBILITY WRITE.
+  What readers wrote can be saved as a new dump afterwards. No UL-C 3DES, no AUTH0 protection.
 - APDU log: an empty ISO-DEP card answering from `sdmc:/nfcprobe/emu/apdu.txt` ("<command prefix>
   <response>" in hex per line, first match wins, else 6A82 for a SELECT / 6D00), every APDU appended to
   `sdmc:/nfcprobe/emu/apdu.log`.
 - A phone reads it with a quick tap on the bottom screen. A Proxmark only gets it with the 3DS lying on it,
-  bottom screen down. A new emulated card type is an `EmuApdu` handler passed to `emuRun`.
+  bottom screen down. A new APDU card type is an `EmuApdu` handler passed to `emuRun`; one that needs
+  answers within the frame delay goes into `chip/emu.c` (the ROM's listen-A RX hook, see NOTES.md).
 
 - Chip info: reset / init / patch version.
 

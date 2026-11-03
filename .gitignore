@@ -30,6 +30,7 @@
 /nfcprobe/*.elf
 /nfcprobe/*.smdh
 /nfcprobe/data/memrw_ncd.bin
+/nfcprobe/data/emu_ncd.bin
 
 # --- Logs ---
 *.log

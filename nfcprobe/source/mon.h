@@ -18,11 +18,15 @@ typedef struct {
 } MonFrame;
 
 bool monLoad(void); // power cycle, download memrw, CORE_RESET / GET_PATCH_VERSION / CORE_INIT
+// The same with the card emulation image (chip/emu.c): ops 0-4 only, plus MON_EMU (-> struct emu address).
+bool monLoadEmu(void);
+#define MON_EMU 5
 // One request; returns the answer payload length or MON_NO_ANSWER / MON_STATUS(s).
 int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax);
 // The same for an op that keeps the chip busy longer: waits up to waitMs for its answer.
 int monDoWait(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax, u32 waitMs);
 bool monRead(u32 addr, void *buf, u32 len);
+bool monWrite(u32 addr, const void *buf, u32 len); // byte writes, any length
 bool monWrite32(u32 addr, u32 value);
 bool monCapture(bool on);                 // also resets the frames() position
 int monFrames(MonFrame *out, int max);    // new frames since the last call, -1 on error

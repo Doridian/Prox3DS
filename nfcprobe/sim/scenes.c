@@ -641,6 +641,8 @@ static void scnEmuIdle(void) { simEmuRun(false); }
 static void scnEmuWritten(void) { simEmuRun(true); }
 static void scnEmuUid(void) { simEmuMode(0); }
 static void scnEmuLog(void) { simEmuMode(1); }
+static void scnEmuMfu(void) { simEmuMfu(false); }
+static void scnEmuMfuDone(void) { simEmuMfu(true); }
 static void scnTear(void) { simTearScan(); }
 static void scnTearCnt(void) { simTearCounter(); }
 
@@ -868,6 +870,7 @@ static const SimStep script[] = {
 	CALL(reset), CALL(scnEmuWritten), SHOT("emu_written"), CALL(simBusyEnd), CALL(simEmuDone), SHOT("emu_done"),
 	CALL(reset), CALL(scnEmuUid), SHOT("emu_uid"), CALL(simBusyEnd), CALL(reset), CALL(scnEmuLog), SHOT("emu_log"), CALL(simBusyEnd),
 	CALL(reset), CALL(simEmuForm), SHOT("emu_form"), B,
+	CALL(reset), CALL(scnEmuMfu), SHOT("emu_mfu"), CALL(simBusyEnd), CALL(reset), CALL(scnEmuMfuDone), SHOT("emu_mfu_save"), B,
 	// tear-off
 	CALL(reset), CALL(scnTear), SHOT("tear_scan"), D, D, D, D, D, D, D, D, D, D, SHOT("tear_scan_end"),
 	CALL(reset), CALL(scnTearCnt), SHOT("tear_counter"), CALL(simBusyEnd),

@@ -1,5 +1,6 @@
 // Card emulation screens (emu.c): an NFC Forum Type 4 tag carrying an NDEF message, a card's UID for
-// UID-only readers, and an APDU log that shows what a reader sends.
+// UID-only readers, an APDU log that shows what a reader sends, and Ultralight / NTAG dumps (answered
+// on the chip).
 
 #include <stdio.h>
 #include <string.h>
@@ -12,8 +13,10 @@
 #include "probe.h"
 #include "ui.h"
 
-static enum { MODE_NDEF, MODE_UID, MODE_LOG } mode;
+static enum { MODE_NDEF, MODE_UID, MODE_LOG, MODE_MFU } mode;
 static EmuId runId; // MODE_UID: what to be
+static MfuDump runDump; // MODE_MFU: the card, with what readers wrote afterwards
+static char runName[64];
 static bool emuOk;
 static int nrules;
 
@@ -38,15 +41,37 @@ static void describeMsg(const u8 *msg, u32 len, char *out, u32 max)
 
 static void runEmu(void)
 {
+	if (mode == MODE_MFU) {
+		emuOk = emuRunMfu(&runDump);
+		return;
+	}
 	if (mode == MODE_LOG) nrules = emuLogLoad();
 	emuOk = emuRun(mode == MODE_UID ? &runId : NULL, mode == MODE_NDEF ? emuNdefApdu : emuLogApdu);
 	emuLogClose();
+}
+
+static void saveDump(void)
+{
+	char path[128];
+	if (mfuSaveDump(&runDump, path, sizeof(path))) {
+		mfuFilesChanged();
+		toast("Saved %s", path);
+	}
+	else msgBox("Emulate", "Could not save the dump.");
 }
 
 static void doneEmu(void)
 {
 	if (!emuOk) {
 		msgBox("Emulate", "The chip did not take the card mode setup.");
+		return;
+	}
+	if (mode == MODE_MFU) {
+		if (emu.changed)
+			confirm("Emulate", saveDump, "Readers wrote %lu page%s; %lu now differ from %s.\nSave the result as a "
+				"new dump?", (unsigned long)emu.writes, emu.writes == 1 ? "" : "s", (unsigned long)emu.changed, runName);
+		else toast("Stopped: %lu reader field%s, %lu command%s", (unsigned long)emu.fields, emu.fields == 1 ? "" : "s",
+			(unsigned long)emu.frames, emu.frames == 1 ? "" : "s");
 		return;
 	}
 	if (mode == MODE_NDEF && emuNdefWrites()) {
@@ -74,8 +99,11 @@ static float emuView(float x, float y, float w)
 	float y0 = y;
 	char u[32], s[300];
 	emuUidHex(&emu.id, u);
-	const char *what = mode == MODE_NDEF ? "Type 4 tag" : mode == MODE_LOG ? "APDU log" : "UID only";
-	uiText(x, y, S_SMALL, dim, "%s, UID %s, ATQA %02X%02X, SAK %02X", what, u, emu.id.atqa[1], emu.id.atqa[0], emu.id.sak);
+	snprintf(s, sizeof(s), "%s", mode == MODE_NDEF ? "Type 4 tag" : mode == MODE_LOG ? "APDU log" : mode == MODE_MFU ?
+		(runDump.info.type ? runDump.info.type->name : "Ultralight") : "UID only");
+	uiText(x, y, S_SMALL, dim, "%s", uiFit(s, w, S_SMALL));
+	y += SMALL_H;
+	uiText(x, y, S_SMALL, dim, "UID %s, ATQA %02X%02X, SAK %02X", u, emu.id.atqa[1], emu.id.atqa[0], emu.id.sak);
 	y += SMALL_H + 2;
 	bool iso = emu.id.sak & 0x20;
 	const char *st = emu.active ? "Reader connected" : emu.field ? (iso ? "Reader field, not connected" : "Reader field")
@@ -85,9 +113,23 @@ static float emuView(float x, float y, float w)
 		uiTextRight(x + w, y + 2, S_SMALL, dim, "%lu field%s, %lu session%s, %lu APDU%s", (unsigned long)emu.fields,
 			emu.fields == 1 ? "" : "s", (unsigned long)emu.sessions, emu.sessions == 1 ? "" : "s",
 			(unsigned long)emu.apdus, emu.apdus == 1 ? "" : "s");
+	else if (mode == MODE_MFU)
+		uiTextRight(x + w, y + 2, S_SMALL, dim, "%lu field%s, %lu command%s", (unsigned long)emu.fields,
+			emu.fields == 1 ? "" : "s", (unsigned long)emu.frames, emu.frames == 1 ? "" : "s");
 	else uiTextRight(x + w, y + 2, S_SMALL, dim, "%lu field%s", (unsigned long)emu.fields, emu.fields == 1 ? "" : "s");
 	y += LINE_H + 2;
-	if (mode == MODE_NDEF) {
+	if (mode == MODE_MFU) {
+		char nm[64];
+		snprintf(nm, sizeof(nm), "%s", runName);
+		uiText(x, y, S_SMALL, txt, "%lu pages from %s, answered on the chip", (unsigned long)emu.chipPages,
+			uiFit(nm, w - 190, S_SMALL));
+		y += SMALL_H;
+		if (emu.writes)
+			uiText(x, y, S_SMALL, uiCol[COL_WARN], "%lu page%s written by readers (saved on stop if you like)",
+				(unsigned long)emu.writes, emu.writes == 1 ? "" : "s");
+		else uiText(x, y, S_SMALL, dim, runDump.pwdOk ? "PWD_AUTH takes the dump's password only" :
+			"PWD_AUTH takes any password (none in the dump)");
+	} else if (mode == MODE_NDEF) {
 		u32 len;
 		const u8 *msg = emuNdefGet(&len);
 		describeMsg(msg, len, s, sizeof(s));
@@ -119,8 +161,17 @@ static float emuView(float x, float y, float w)
 static void start(void)
 {
 	jobNextHint("Tap a phone on the bottom screen.");
-	jobStartView(mode == MODE_NDEF ? "Emulating a tag" : mode == MODE_LOG ? "APDU log" : "Emulating a UID", runEmu,
-		doneEmu, true, emuView);
+	jobStartView(mode == MODE_NDEF ? "Emulating a tag" : mode == MODE_LOG ? "APDU log" : mode == MODE_MFU ?
+		"Emulating a card" : "Emulating a UID", runEmu, doneEmu, true, emuView);
+}
+
+void emuStartMfu(const MfuDump *d, const char *name)
+{
+	if (d->pages < 4) return;
+	mode = MODE_MFU;
+	runDump = *d;
+	snprintf(runName, sizeof(runName), "%s", name);
+	start();
 }
 
 void emuStartNdef(const u8 *msg, u32 len)

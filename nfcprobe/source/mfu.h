@@ -123,4 +123,5 @@ bool mfuLoadDump(MfuDump *d, const char *path);              // pm3 .bin (with o
 bool mfuParseDump(MfuDump *d, const u8 *raw, int n);         // the same, from memory
 const MfuType *mfuTypeFromVersion(const u8 version[8]);
 const MfuType *mfuTypeForPages(int pages); // a dump without a version: guess from its size
+bool mfuVersionForType(const MfuType *t, u8 v[8]); // NXP's GET_VERSION for it; false: it has none
 extern const MfuType mfuTypeULC; // config in pages 0x28-0x2B, 3DES key in 0x2C-0x2F

@@ -1,6 +1,8 @@
 #pragma once
 #include <3ds.h>
 
+#include "mfu.h"
+
 // Card emulation: the 3DS as an ISO14443-A card (NCI listen A through the ROM), see NOTES.md "Card mode".
 // The ROM does anticollision, RATS / ATS and the ISO-DEP blocks; every APDU comes to us as NCI DATA and
 // the answer goes back the same way, well inside the reader's frame waiting time. Phones read it with a
@@ -25,14 +27,23 @@ typedef struct {
 	EmuId id;
 	bool field, active;    // a reader field / an ISO-DEP session right now
 	u32 fields, sessions, apdus;
-	char log[EMU_LOG_N][48]; // the last APDUs, "> 00A40400 07 .. < 9000", newest last
+	char log[EMU_LOG_N][48]; // the last APDUs, "> 00A40400 07 .. < 9000", newest last (chip: frames)
 	u32 nlog;
+	// Answered on the chip (emuRunMfu): pages, frames in the active state, pages written, dump pages
+	// that differ afterwards
+	u32 chipPages, frames, writes, changed;
 } EmuState;
 extern EmuState emu; // the worker writes it, the UI only shows it
 
 // In a job: listen as a card until mfCancel; id NULL: a random UID (08 xx xx xx), ATQA 0004, SAK 20.
 // false = the chip failed.
 bool emuRun(const EmuId *id, EmuApdu fn);
+
+// An Ultralight / NTAG from a dump, answered by our chip image (chip/emu.c, the ROM can't: NOTES.md): its
+// UID (ATQA 0044, SAK 00), READ, FAST_READ, GET_VERSION, READ_SIG, READ_CNT, PWD_AUTH (the dump's
+// password if known, else any; PACK from the dump), WRITE, COMPATIBILITY WRITE. No UL-C 3DES, no AUTH0
+// protection. Pages readers wrote end up in *d (emu.changed).
+bool emuRunMfu(MfuDump *d);
 
 // NFC Forum Type 4 tag (T4T 2.0): the NDEF application, CC file E103 and NDEF file E104, readable
 // and writable (UPDATE BINARY), up to EMU_NDEF_MAX bytes of message.

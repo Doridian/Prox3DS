@@ -1449,6 +1449,37 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   the SRAM image. chipmon.Mon.load(image) loads another chip image. While RF_DISCOVER polls with no card, the
   chip stops answering monitor requests (memrw too).
 
+## Ultralight / NTAG emulation on the chip (chip/emu.c, tools/exp/listen/mfuemu.py) -- 2026-11-02
+- Host answers can't work for Type 2: the reader's READ reaches the host (frame interface, map 02 02 01) and
+  our DATA answer was sent ~10 ms later, by when pm3 had dropped its field (a real tag answers in ~90 us,
+  and there is no WTX outside ISO-DEP). A CRC appended to the answer changes nothing.
+- The ROM's listen-A frame handler 0xFF84 (RX done 0x10114 -> tech A, interrupt context) first calls the RAM
+  hook *(0x38518) (part of a patch hook table at 0x38514: +4 here, +0x24 in the listen TX 0xF8E0, +0xC in
+  0xF56E, ...); nonzero = consumed. The frame, CRC included, is at *(0x38534), its length at u16 0x393AC,
+  the listen state at byte 0x39369: 0 idle (REQA / WUPA -> ATQA via 0xF8E0, state 1), 1-3 anticollision,
+  4 active, 5 halted (only WUPA, -> 6), 6-8 anticollision again, 9 active, 10 frame passed to the host
+  (nothing answered until the host does). In state 4 the ROM halts on REQA / WUPA / 93..97 unless the
+  frame is 4 bytes long (HLTA 50 00 + CRC -> 0); other frames go to the host (0x15488, state 10).
+- Listen TX 0xF8E0(data, len, crc): 0x5C56C = 2, 0x5C560 = 0x84 (CRC) / 0x44 (none), 0x5C55C = 0x88, the
+  bytes into the TX port 0x5C600, busy-wait on 0x5C594 bit 0 (up to 30000 ticks), 0x5C560 back to 0x84.
+  4-bit answers: 0x5C568 = 4 (bytes << 4 | bits, as in reader mode) around a 1-byte TX gives a start bit
+  plus 4 bits on air (pm3 trace: 0A(3) for ACK, 00(4) for NACK, both 4 bits long; pm3 takes the ACK);
+  3, 5 and 0x14 send the whole byte. The ROM's own TX leaves 0x5C568 alone.
+- chip/emu.c: memrw ops 0-4 + op 5 (address of struct emu), installs the hook at init. The hook leaves
+  states other than 4 / 9, REQA / WUPA / anticollision / HLTA to the ROM, checks the CRC (a bad frame gets no
+  answer) and answers READ (rolls over), FAST_READ, GET_VERSION, READ_SIG, READ_CNT, PWD_AUTH, WRITE,
+  COMPATIBILITY WRITE from the struct (version, signature, counters, PWD / PACK, up to 256 pages), keeps a
+  16-entry frame log. After a NACK it sets the state to 0: a real tag goes IDLE and the reader reselects;
+  left in state 4 the ROM halts on that WUPA and pm3's type detection (UL-C AUTH probe, NACKed) failed.
+  2360 bytes of the 3364-byte image.
+- The monitor answers during listen: the app polls the counters + log every 300 ms (its own 2F 2C READ8,
+  the answer picked up with the NTFs) for the job view. With map 04 02 02 and SAK 00 there is no
+  RF_INTF_ACTIVATED, only field NTFs.
+- pm3 under the 3DS, NTAG213 test dump: hf mfu info (type from GET_VERSION, counters, signature, config),
+  hf mfu dump 7/7 identical to the source, wrbl ACK + rdbl back, ndefread. A real NTAG215 dump with its NXP
+  signature: "Signature verification: successful", 4 dumps with identical pages (one run's GET_VERSION was
+  lost: zero version in pm3's header).
+
 ## pm3 dictionaries for MFC / DESFire / UL-C (nfcprobe pm3dict.c) -- 2026-11-02
 
 - Besides iClass, pm3's client/dictionaries has lists for families the app reads: mfc_default_keys.dic

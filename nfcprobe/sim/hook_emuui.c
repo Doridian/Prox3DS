@@ -58,6 +58,29 @@ void simEmuMode(int which)
 	simBusyView(emuView);
 }
 
+// A dump emulated on the chip, after a reader read it and wrote a page; then the save question
+void simEmuMfu(bool done)
+{
+	static const char *log[] = { "GET_VERSION", "READ_SIG", "READ 04", "READ 08", "WRITE 06: CAFEBABE", "HLTA" };
+	memset(&runDump, 0, sizeof(runDump));
+	runDump.info.type = mfuTypeForPages(135);
+	runDump.pages = 135;
+	snprintf(runName, sizeof(runName), "04A1B2C3D4E5F6-16.bin");
+	memset(&emu, 0, sizeof(emu));
+	mode = MODE_MFU;
+	emu.id = (EmuId){ { 0x04, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6 }, 7, { 0x44, 0x00 }, 0x00 };
+	emu.field = true, emu.fields = 12, emu.frames = 87, emu.writes = 1, emu.changed = 1, emu.chipPages = 135;
+	for (int i = 0; i < 6; i++) snprintf(emu.log[emu.nlog++ % EMU_LOG_N], 48, "%s", log[i]);
+	if (done) {
+		emuOk = true;
+		doneEmu();
+		return;
+	}
+	jobNextHint("Tap a phone on the bottom screen.");
+	simBusy("Emulating a card", true, false);
+	simBusyView(emuView);
+}
+
 void simEmuForm(void)
 {
 	card = (Card){ .atqa = { 0x44, 0x00 }, .uid = { 0x04, 0x6B, 0x21, 0x9A, 0x3C, 0x5D, 0x80 }, .uidLen = 7, .sak = 0 };

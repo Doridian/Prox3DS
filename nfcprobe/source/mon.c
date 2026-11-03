@@ -5,6 +5,7 @@
 #include "mon.h"
 #include "nfchw.h"
 #include "probe.h"
+#include "emu_ncd_bin.h"
 #include "memrw_ncd_bin.h"
 
 #define N_FRAMES   8
@@ -41,7 +42,7 @@ static void drainQuiet(void)
 	while (nciRecv(pkt, sizeof(pkt), 3, false));
 }
 
-bool monLoad(void)
+static bool loadImage(const u8 *ncd, u32 size)
 {
 	static const u8 coreReset[] = { NCI_HCIT, 0x20, 0x00, 0x01, 0x01 };
 	static const u8 coreInit[]  = { NCI_HCIT, 0x20, 0x01, 0x00 };
@@ -50,7 +51,7 @@ bool monLoad(void)
 	for (int t = 0; t < 3; t++) {
 		chipPowerUp();
 		drainQuiet();
-		if (!spdDownload(memrw_ncd_bin, memrw_ncd_bin_size, false)) continue;
+		if (!spdDownload(ncd, size, false)) continue;
 		nciExpect(coreReset, sizeof(coreReset), 0x40, 0x00, 500);
 		drainQuiet();
 		if (!nciExpect(patchVer, sizeof(patchVer), 0x4F, 0x2D, 500)) continue;
@@ -60,6 +61,16 @@ bool monLoad(void)
 		return true;
 	}
 	return false;
+}
+
+bool monLoad(void)
+{
+	return loadImage(memrw_ncd_bin, memrw_ncd_bin_size);
+}
+
+bool monLoadEmu(void)
+{
+	return loadImage(emu_ncd_bin, emu_ncd_bin_size);
 }
 
 int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax)
@@ -102,6 +113,14 @@ bool monRead(u32 addr, void *buf, u32 len)
 		u8 n = len - o < MON_CHUNK ? len - o : MON_CHUNK;
 		if (monDo(MON_READ8, addr + o, &n, 1, p + o, n) != n) return false;
 	}
+	return true;
+}
+
+bool monWrite(u32 addr, const void *buf, u32 len)
+{
+	const u8 *p = buf;
+	for (u32 o = 0; o < len; o += MON_CHUNK)
+		if (monDo(MON_WRITE8, addr + o, p + o, len - o < MON_CHUNK ? len - o : MON_CHUNK, NULL, 0) != 0) return false;
 	return true;
 }
 

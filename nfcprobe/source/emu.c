@@ -43,7 +43,7 @@ static void control(const u8 *p, u32 len, EmuApdu fn)
 		credits = p[9];
 		emu.active = true;
 		emu.sessions++;
-		fn(NULL, 0, NULL, 0);
+		if (fn) fn(NULL, 0, NULL, 0);
 		logp("emu: session %lu\n", (unsigned long)emu.sessions);
 	} else if (p[1] == 0x61 && p[2] == 0x06) {
 		emu.active = false;
@@ -95,29 +95,98 @@ void emuUidHex(const EmuId *id, char *out)
 	*out = 0;
 }
 
-bool emuRun(const EmuId *id, EmuApdu fn)
+// The ATQA bytes as the LA_* parameters take them; id NULL: a random ISO-DEP card.
+static void setId(const EmuId *id)
 {
-	static u8 cmd[0x400], resp[0x200];
-	u8 pkt[4 + 0x100];
-	memset(&emu, 0, sizeof(emu));
 	if (id) emu.id = *id;
 	else { // random UID (ISO14443-3: 08 first), an ISO-DEP card
 		u32 r = svcGetSystemTick() ^ osGetTime() * 2654435761u;
 		emu.id = (EmuId){ { 0x08, r >> 8, r >> 16, r >> 24 }, 4, { 0x04, 0x00 }, 0x20 };
 	}
+}
+
+static bool chipUp(bool chipImage)
+{
+	if (!chipEnsure()) {
+		logp("NFC takeover failed\n");
+		return false;
+	}
+	// For APDUs the memrw monitor stays loaded but unused: it doesn't get in the way. (The ROM's FRAME_LOG
+	// does: with it on, our DATA answers never go out.)
+	return chipImage ? monLoadEmu() : monLoad();
+}
+
+// struct emu in the chip image (chip/emu.c): keep in step.
+enum { CE_MODE = 0, CE_NPAGES = 1, CE_FLAGS = 2, CE_VERSION = 4, CE_SIG = 12, CE_CNT = 44, CE_PACK = 53, CE_PWD = 56,
+	CE_FRAMES = 60, CE_WRITES = 64, CE_NLOG = 68, CE_LOG = 72, CE_MEM = 200 };
+#define CE_LOG_N 16
+static u32 chipBase; // struct emu, 0 = APDUs answered here
+static u32 chipSeen; // chip log entries shown so far
+
+// A frame from the chip's log in words, for the job view.
+static void chipLogLine(const u8 *e)
+{
+	char *s = emu.log[emu.nlog++ % EMU_LOG_N];
+	const u8 *f = e + 2;
+	u32 n = e[1];
+	switch (n >= 1 ? f[0] : 0) {
+	case 0x30: sprintf(s, "READ %02X", f[1]); break;
+	case 0x3A: sprintf(s, "FAST_READ %02X-%02X", f[1], f[2]); break;
+	case 0x60: sprintf(s, "GET_VERSION"); break;
+	case 0x3C: sprintf(s, "READ_SIG"); break;
+	case 0x39: sprintf(s, "READ_CNT %d", f[1]); break;
+	case 0x1B: sprintf(s, "PWD_AUTH %02X%02X%02X%02X", f[1], f[2], f[3], f[4]); break;
+	case 0xA2: sprintf(s, "WRITE %02X: %02X%02X%02X%02X", f[1], f[2], f[3], f[4], f[5]); break;
+	case 0xA0: sprintf(s, "COMPATIBILITY_WRITE %02X", f[1]); break;
+	case 0x50: sprintf(s, "HLTA"); break;
+	case 0x26: case 0x52: sprintf(s, "%s", f[0] == 0x26 ? "REQA" : "WUPA"); break;
+	default: {
+		int o = 0;
+		for (u32 i = 0; i < n && i < 6; i++) o += sprintf(s + o, "%02X", f[i]);
+		if (n > 6) sprintf(s + o, "..");
+	}
+	}
+}
+
+// The chip's counters and log (READ8 of frames .. log), sent without waiting: the answer comes in the
+// loop with the NTFs (monDo would drop those).
+static void chipPoll(void)
+{
+	u8 req[] = { NCI_HCIT, 0x2F, 0x2C, 6, MON_READ8, 0, 0, 0, 0, CE_MEM - CE_FRAMES };
+	u32 a = chipBase + CE_FRAMES;
+	for (int i = 0; i < 4; i++) req[5 + i] = a >> (8 * i);
+	i2cNfcWrite(req, sizeof(req));
+}
+
+static u32 get32(const u8 *p)
+{
+	return p[0] | (p[1] << 8) | (p[2] << 16) | ((u32)p[3] << 24);
+}
+
+static void chipStats(const u8 *p, u32 len)
+{
+	if (len < 5 + CE_MEM - CE_FRAMES || p[4]) return;
+	const u8 *d = p + 5;
+	emu.frames = get32(d);
+	emu.writes = get32(d + CE_WRITES - CE_FRAMES);
+	u32 nlog = get32(d + CE_NLOG - CE_FRAMES);
+	if (nlog - chipSeen > CE_LOG_N) chipSeen = nlog - CE_LOG_N;
+	for (; chipSeen < nlog; chipSeen++) chipLogLine(d + CE_LOG - CE_FRAMES + (chipSeen % CE_LOG_N) * 8);
+}
+
+#define POLL_MS 300
+
+// Listens as emu.id until mfCancel; APDUs go to fn, or (fn NULL, chipBase) the chip answers by itself.
+static bool listenAs(EmuApdu fn)
+{
+	static u8 cmd[0x400], resp[0x200];
+	u8 pkt[4 + 0x100];
 	const EmuId *e = &emu.id;
 	// LA_BIT_FRAME_SDD and LA_PLATFORM_CONFIG: the ATQA (the ROM adds the UID size bits), LA_SEL_INFO: the
 	// SAK, LA_NFCID1: the UID (4, 7 or 10 bytes)
 	u8 laConfig[4 + 12 + 10] = { NCI_HCIT, 0x20, 0x02, 12 + e->uidLen, 0x04, 0x30, 0x01, e->atqa[0] & 0x1F, 0x31, 0x01,
 		e->atqa[1] & 0x0F, 0x32, 0x01, e->sak, 0x33, e->uidLen };
 	memcpy(laConfig + 4 + 12, e->uid, e->uidLen);
-	// The memrw monitor stays loaded but unused: it doesn't get in the way. (The ROM's FRAME_LOG does:
-	// with it on, our DATA answers never go out.)
-	if (!chipEnsure()) {
-		logp("NFC takeover failed\n");
-		return false;
-	}
-	if (!monLoad()) return false;
 	if (!nciOk(laConfig, 4 + 12 + e->uidLen) || !nciOk(fieldInfo, sizeof(fieldInfo)) ||
 		!nciOk(discoverMap, sizeof(discoverMap)) || !nciOk(listenA, sizeof(listenA))) {
 		logp("emu: listen setup refused\n");
@@ -129,17 +198,27 @@ bool emuRun(const EmuId *id, EmuApdu fn)
 	u32 clen = 0;
 	bool over = false;
 	rearmAt = 0;
+	u64 pollAt = osGetTime() + POLL_MS;
 	while (!mfCancel) {
 		if (rearmAt && osGetTime() >= rearmAt) {
 			i2cNfcWrite(listenA, sizeof(listenA)); // its RSP comes through control(), ignored
 			rearmAt = 0;
 		}
+		if (chipBase && osGetTime() >= pollAt) {
+			chipPoll();
+			pollAt = osGetTime() + POLL_MS;
+		}
 		u32 len = nciRecv(pkt, sizeof(pkt), 5, false);
 		if (len < 4 || pkt[0] != NCI_HCIT) continue;
+		if (pkt[1] == 0x4F && pkt[2] == 0x2C) {
+			chipStats(pkt, len);
+			continue;
+		}
 		if (pkt[1] >> 5) {
 			control(pkt, len, fn);
 			continue;
 		}
+		if (!fn) continue;
 		// DATA, conn 0: an APDU, maybe in segments (PBF)
 		u32 n = pkt[3];
 		if (clen + n > sizeof(cmd)) over = true;
@@ -159,6 +238,74 @@ bool emuRun(const EmuId *id, EmuApdu fn)
 	}
 	nciOk(deactivate, sizeof(deactivate));
 	emu.active = emu.field = false;
+	return true;
+}
+
+bool emuRun(const EmuId *id, EmuApdu fn)
+{
+	memset(&emu, 0, sizeof(emu));
+	setId(id);
+	chipBase = 0;
+	return chipUp(false) && listenAs(fn);
+}
+
+bool emuRunMfu(MfuDump *d)
+{
+	static u8 hdr[CE_MEM], mem[4 * 255];
+	const MfuType *t = d->info.type;
+	int np = d->pages > 255 ? 255 : d->pages;
+	memset(&emu, 0, sizeof(emu));
+	EmuId id = { .uidLen = 7, .atqa = { 0x44, 0x00 }, .sak = 0x00 };
+	memcpy(id.uid, d->data[0], 3);
+	memcpy(id.uid + 3, d->data[1], 4);
+	setId(&id);
+	emu.chipPages = np;
+	if (!chipUp(true)) return false;
+	u8 a[4];
+	if (monDo(MON_EMU, 0, NULL, 0, a, 4) != 4) return false;
+	chipBase = get32(a);
+	chipSeen = 0;
+	memset(hdr, 0, sizeof(hdr));
+	hdr[CE_NPAGES] = np;
+	hdr[CE_FLAGS] = (d->info.hasVersion ? 1 : 0) | (d->info.hasSig ? 2 : 0);
+	memcpy(hdr + CE_VERSION, d->info.version, 8);
+	if (!d->info.hasVersion && t && mfuVersionForType(t, hdr + CE_VERSION)) hdr[CE_FLAGS] |= 1; // a dump without one
+	memcpy(hdr + CE_SIG, d->info.sig, 32);
+	for (int i = 0; i < 3; i++) memcpy(hdr + CE_CNT + 3 * i, d->info.cnt[i], 3);
+	for (int p = 0; p < np; p++) {
+		if (d->valid[p]) memcpy(mem + 4 * p, d->data[p], 4);
+		else memset(mem + 4 * p, 0, 4);
+	}
+	int cfg = t && t->pwd ? t->cfg : 0;
+	if (cfg && cfg + 3 < np) { // PWD and PACK: answers, not memory (they read as zeros)
+		if (d->valid[cfg + 2] && d->pwdOk) {
+			memcpy(hdr + CE_PWD, d->data[cfg + 2], 4);
+			hdr[CE_FLAGS] |= 4; // a known password: only that one gets the PACK
+		}
+		if (d->valid[cfg + 3]) memcpy(hdr + CE_PACK, d->data[cfg + 3], 2);
+		memset(mem + 4 * (cfg + 2), 0, 8);
+	}
+	// The mode byte last: the chip starts answering with everything in place.
+	if (!monWrite(chipBase + 1, hdr + 1, CE_MEM - 1) || !monWrite(chipBase + CE_MEM, mem, 4 * np)) return false;
+	u8 on = 1;
+	if (!monWrite(chipBase + CE_MODE, &on, 1)) return false;
+	if (!listenAs(NULL)) return false;
+	// What readers wrote goes back into the dump (PWD / PACK stay as they were).
+	u8 st[CE_MEM - CE_FRAMES];
+	if (monRead(chipBase + CE_FRAMES, st, sizeof(st))) {
+		u8 fake[5 + sizeof(st)] = { 0 };
+		memcpy(fake + 5, st, sizeof(st));
+		chipStats(fake, sizeof(fake));
+	}
+	if (emu.writes && monRead(chipBase + CE_MEM, mem, 4 * np))
+		for (int p = 2; p < np; p++) {
+			if (cfg && (p == cfg + 2 || p == cfg + 3)) continue;
+			if (memcmp(d->data[p], mem + 4 * p, 4) || !d->valid[p]) {
+				memcpy(d->data[p], mem + 4 * p, 4);
+				d->valid[p] = true;
+				emu.changed++;
+			}
+		}
 	return true;
 }
 
