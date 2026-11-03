@@ -38,8 +38,15 @@ extern LightLock hwLock;
 // Self-update (netsrv OP_UPDATE*): the running .3dsx, and the request to exit and relaunch it.
 extern char appPath[256];
 extern volatile bool restartRequested;
+#ifndef NFCPROBE_RELEASE
 extern char netAddr[32]; // "ip:port" while the server listens, else empty
 // Debug: buttons a network client pressed, taken by the UI loop.
 extern volatile u32 netKeys;
 void netStart(void);
 void netStop(void);
+#else // the release build has no network server (netsrv.c isn't built)
+#define netAddr ""
+#define netKeys 0
+static inline void netStart(void) {}
+static inline void netStop(void) {}
+#endif

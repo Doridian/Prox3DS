@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <3ds.h>
 
@@ -336,6 +337,40 @@ static int logMax(void)
 	return top;
 }
 
+#define LOG_DIR MF_DIR "/logs"
+#ifdef NFCPROBE_RELEASE
+#define LOG_HELP "Everything the card operations logged, kept in memory only. " BTN_Y " saves it to sdmc:/nfcprobe/logs."
+#else
+#define LOG_HELP "Everything the card operations logged (also in sdmc:/nfcprobe.log). " BTN_Y " saves a copy to sdmc:/nfcprobe/logs."
+#endif
+
+// The RAM log to LOG_DIR/<console time>.log
+static void logSave(void)
+{
+	char path[64];
+	time_t now = time(NULL);
+	struct tm *tm = gmtime(&now);
+	mkdir(MF_DIR, 0777);
+	mkdir(LOG_DIR, 0777);
+	snprintf(path, sizeof(path), LOG_DIR "/%04d%02d%02d-%02d%02d%02d.log", tm->tm_year + 1900, tm->tm_mon + 1,
+		tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+	FILE *f = fopen(path, "w");
+	if (!f) {
+		toast("Can't write %s", path);
+		return;
+	}
+	int n = uiLogCount();
+	char line[100];
+	for (int i = 0; i < n; i++) {
+		uiLogLine(i, line, sizeof(line));
+		fputs(line, f);
+		fputc('\n', f);
+	}
+	bool ok = !ferror(f);
+	ok &= !fclose(f);
+	toast(ok ? "Saved %s" : "Can't write %s", path + 5);
+}
+
 static void logInput(u32 kDown, u32 kRepeat)
 {
 	int vis = LOG_ROWS, max = logMax();
@@ -348,6 +383,7 @@ static void logInput(u32 kDown, u32 kRepeat)
 	if (kRepeat & (KEY_R)) top = max;
 	top = top < 0 ? 0 : top > max ? max : top;
 	logTop = top == max ? -1 : top;
+	if (kDown & KEY_Y) logSave();
 	if (kDown & (KEY_B | KEY_SELECT)) appBack();
 }
 
@@ -365,7 +401,7 @@ static void logDraw(void)
 		uiTextWrap(6, 23 + rows * 12, UI_W - 12, S_LOG, uiCol[COL_TEXT], line);
 		rows += k;
 	}
-	uiFooter(BTN_UD " scroll   " BTN_LR " page   " BTN_L "/" BTN_R " start/end   " BTN_B " back   (also sdmc:/nfcprobe.log)");
+	uiFooter(BTN_UD " scroll   " BTN_LR " page   " BTN_L "/" BTN_R " start/end   " BTN_Y " save   " BTN_B " back");
 }
 
 static const Screen logScreen = { NULL, logInput, logDraw };
@@ -387,7 +423,11 @@ void menuInput(Menu *m, u32 kDown, u32 kRepeat)
 
 void menuDraw(Menu *m)
 {
+#ifdef NFCPROBE_RELEASE
+	uiHeader(m->title, NULL);
+#else
 	uiHeader(m->title, *netAddr ? netAddr : "no network");
+#endif
 	// 20 px rows; a longer list closes up to end above the footer, and the status lines go beside it
 	float pitch = m->n > 1 && 30 + (m->n - 1) * 20 > 196 ? (float)(166 / (m->n - 1)) : 20;
 	for (int i = 0; i < m->n; i++) {
@@ -655,7 +695,7 @@ static void rootInit(void)
 		"tag with a URL or text a phone can read (and write).", emuOpenMenu };
 	rootEntries[n++] = (MenuEntry){ "Amiibo", "Read and copy Amiibo with this console's own keys, or make new ones "
 		"from the figure list (AmiiboAPI, downloaded over Wi-Fi).", amiiboOpenMenu };
-	rootEntries[n++] = (MenuEntry){ "Log", "Everything the card operations logged (also in sdmc:/nfcprobe.log).", openLog };
+	rootEntries[n++] = (MenuEntry){ "Log", LOG_HELP, openLog };
 	rootEntries[n++] = (MenuEntry){ "Chip info", "Probe the NFC controller: reset, init, firmware patch version.", menuProbe };
 	rootEntries[n++] = (MenuEntry){ "Exit", "Give NFC back to the system and quit.", menuExit };
 	rootMenu.n = n;
@@ -761,7 +801,11 @@ void appRun(void)
 	while (aptMainLoop() && !quit && !restartRequested) {
 		frame++;
 		hidScanInput();
+#ifdef NFCPROBE_RELEASE
+		u32 net = touchKeys;
+#else
 		u32 net = __atomic_exchange_n(&netKeys, 0, __ATOMIC_SEQ_CST) | touchKeys;
+#endif
 		touchKeys = 0;
 		u32 kDown = hidKeysDown() | net, kRepeat = hidKeysDownRepeat() | net;
 		// touch: a new tap, then after a delay repeats while held (for D-pad and digit buttons)

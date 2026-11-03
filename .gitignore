@@ -29,6 +29,7 @@
 /tools/exp/jcvm/jch
 # nfcprobe (devkitPro)
 /nfcprobe/build/
+/nfcprobe/build-release/
 /nfcprobe/*.3dsx
 /nfcprobe/*.elf
 /nfcprobe/*.smdh

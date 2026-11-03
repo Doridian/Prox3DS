@@ -3,6 +3,11 @@
 Mifare Classic and Ultralight / NTAG tool for the New3DS NFC controller (BCM20791). Build with `make` (devkitPro, needs
 citro2d), run the .3dsx from the Homebrew Launcher. NFC is handed back to the system on exit (START).
 
+Two builds: `make` is the debug build (`nfcprobe.3dsx`: the network server below, the log appended to
+`sdmc:/nfcprobe.log`). `make release` builds `nfcprobe-release.3dsx` (in `build-release/`) without the
+network server and without the log file: the log stays in RAM (the last 2000 lines) and Y on the Log
+screen saves it to `sdmc:/nfcprobe/logs/<console time>.log`, as it does in the debug build.
+
 The app loads its own chip patch (chip/reader.c, embedded as `data/reader_ncd.bin`, rebuilt by
 `make` in `chip/`) and drives the RF framer through it: raw ISO14443A with our own parity and
 Mifare Classic Crypto1 (`source/mon.c`, `source/mfc.c`, `source/crypto1.c`).
@@ -12,7 +17,7 @@ Mifare Classic Crypto1 (`source/mon.c`, `source/mfc.c`, `source/crypto1.c`).
 generates the whole patch (header, a 4-instruction AON thunk into ROM, our SRAM image).
 
 The UI is on the top screen and driven by buttons only: a card on the reader covers the whole
-bottom screen, which just mirrors the log (`sdmc:/nfcprobe.log`; SELECT shows it on top). Card
+bottom screen, which just mirrors the log (SELECT shows it on top). Card
 operations ask for confirmation before writing anything and can be stopped with B.
 
 Like the Proxmark's `hf search` / `hf mf`, the root menu's Scan card identifies any ISO14443-A card
@@ -107,7 +112,7 @@ PNG and checks the text for overflows and overlaps (`make -C sim run`, see `sim/
 
 Card jobs keep the chip, so the network side can carry on with the loaded monitor.
 
-Network: with wifi up, the app listens on TCP 8020 (address shown on the top screen) and
+Network (debug build only): with wifi up, the app listens on TCP 8020 (address shown on the top screen) and
 exposes raw takeover / power / I2C / GPIO primitives, plus the app's card operations
 (`scan`, `mfread`, `mfdump`, `gen1awrite`, `mfwrite`, `mfudump`, `mfuwrite`, `mfuclone` in `tools/nfcnet.py`;
 ops 0x10-0x1F and 0x22 in `source/netsrv.c`; `mfwrite` is an encrypted Mifare Classic write, `mfuwrite` an Ultralight

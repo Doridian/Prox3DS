@@ -363,7 +363,7 @@ void uiListNav(UiList *l, int n, int visible, u32 kRepeat)
 	if (l->sel >= l->top + visible) l->top = l->sel - visible + 1;
 }
 
-#define LOG_LINES 400
+#define LOG_LINES 2000 // the release build has no log file: this is all of it
 #define LOG_COLS  96
 static char logRing[LOG_LINES][LOG_COLS];
 static int logHead, logCount, logCol; // logHead: the line being written

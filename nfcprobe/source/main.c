@@ -15,7 +15,7 @@
 #include "probe.h"
 #include "ui.h"
 
-#define LOG_PATH     "sdmc:/nfcprobe.log"
+#define LOG_PATH     "sdmc:/nfcprobe.log" // debug build only; the release keeps the log in RAM (Log: save)
 #define MS(x)        ((s64)(x) * 1000000LL)
 
 static FILE *logFile;
@@ -479,7 +479,9 @@ int main(int argc, char *argv[])
 	osSetSpeedupEnable(true); // New 3DS: 804 MHz + L2, for the key recoveries
 	gfxInitDefault();
 	uiInit();
+#ifndef NFCPROBE_RELEASE
 	logFile = fopen(LOG_PATH, "a");
+#endif
 	logp("--- nfcprobe (built " __DATE__ " " __TIME__ ") ---\n");
 	time_t now = time(NULL);
 	struct tm *tm = gmtime(&now);
