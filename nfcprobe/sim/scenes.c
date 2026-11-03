@@ -632,6 +632,10 @@ static void emvFill(void)
 static void scnEmv(void) { emvFill(); simEmv(&emvCard, false); }
 static void scnEmvFull(void) { simEmv(&emvCard, true); }
 
+static void kbDone(const char *s) { (void)s; }
+static void scnKbText(void) { entryText("Write a URL", "https://..., tel:..., mailto:...", "https://example.org/a?b=c", 511, 0, kbDone); }
+static void scnKbHex(void) { entryText("APDU", "CLA INS P1 P2 [Lc data] [Le], in hex.", "00A4040007A0000000041010", 522, ENTRY_HEX, kbDone); }
+static void scnKbPw(void) { entryText("OATH password", "This applet has a password.", "hunter2", 127, ENTRY_HIDE, kbDone); }
 static void scnTear(void) { simTearScan(); }
 static void scnTearCnt(void) { simTearCounter(); }
 
@@ -849,6 +853,10 @@ static const SimStep script[] = {
 	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
 	CALL(reset), CALL(scnEmv), SHOT("emv_card"), D, D, D, SHOT("emv_card_log_end"), CALL(scnEmvFull), SHOT("emv_card_full"),
 	KEYS(KEY_R), SHOT("emv_app2"),
+
+	// keyboard
+	CALL(reset), CALL(scnKbText), SHOT("kb_text"), CALL(reset), CALL(scnKbHex), SHOT("kb_hex"),
+	CALL(reset), CALL(scnKbPw), SHOT("kb_password"),
 
 	// tear-off
 	CALL(reset), CALL(scnTear), SHOT("tear_scan"), D, D, D, D, D, D, D, D, D, D, SHOT("tear_scan_end"),

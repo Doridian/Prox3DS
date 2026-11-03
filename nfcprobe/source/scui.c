@@ -6,6 +6,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "entry.h"
 #include "probe.h"
 #include "scard.h"
 #include "ui.h"
@@ -257,10 +258,9 @@ static void conSend(void)
 	jobStart("APDU", runCon, doneCon, true);
 }
 
-static void conType(const char *init)
+static void conDone(const char *s)
 {
-	char s[600];
-	if (!textInput("APDU in hex: CLA INS P1 P2 [Lc data] [Le]", init, s, sizeof(s))) return;
+	if (!*s) return;
 	int n = scUnhex(s, conCmd, sizeof(conCmd));
 	if (n < 4) {
 		msgBox("APDU", n < 0 ? "Not hex (or longer than 261 bytes)." : "An APDU takes at least 4 bytes: CLA INS P1 P2.");
@@ -272,6 +272,11 @@ static void conType(const char *init)
 	}
 	conLen = n;
 	conSend();
+}
+
+static void conType(const char *init)
+{
+	entryText("APDU", "CLA INS P1 P2 [Lc data] [Le], in hex.", init, 2 * 261, ENTRY_HEX, conDone);
 }
 
 #define CON_COLS 64 // hex digits per line

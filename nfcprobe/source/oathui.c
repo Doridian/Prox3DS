@@ -179,14 +179,19 @@ void oathOpenTool(void)
 }
 
 // The password: asked when the card wants one, its key kept for that device while the app runs.
-static void pwEntered(void)
+static void pwDone(const char *pw)
 {
-	char pw[128];
-	if (!textInput(pwKnown ? "OATH password" : "OATH password (this applet has one)", "", pw, sizeof(pw))) return;
+	if (!*pw) return;
 	oathKey(pw, &oi, pwKey);
 	memcpy(pwId, oi.id, 8);
 	pwKnown = true;
 	startOp(op);
+}
+
+static void pwEntered(void)
+{
+	entryText("OATH password", pwKnown ? "The password (the one entered before did not work)." :
+		"This applet has a password.", "", 127, ENTRY_HIDE, pwDone);
 }
 
 // --- the screen ---
@@ -262,19 +267,28 @@ static void fLast(char *o)
 	else sprintf(o, "%lu", put.counter);
 }
 
+static void nameDone(const char *s)
+{
+	if (*s) snprintf(put.name, sizeof(put.name), "%s", s);
+}
+
 static void eName(void)
 {
-	char s[65];
-	if (textInput("Account name, issuer:account (e.g. GitHub:me)", put.name, s, sizeof(s))) snprintf(put.name, sizeof(put.name), "%s", s);
+	entryText("Account name", "issuer:account, e.g. GitHub:me", put.name, 64, 0, nameDone);
+}
+
+static void secretDone(const char *s)
+{
+	if (!*s) return;
+	int n = base32Decode(s, put.secret, sizeof(put.secret));
+	if (n <= 0) msgBox("Secret", "Not base32: letters A-Z and digits 2-7 only (spaces don't matter), up to 64 bytes.");
+	else put.len = n;
 }
 
 static void eSecret(void)
 {
-	char s[160];
-	if (!textInput("Secret key (base32, as the site shows it)", "", s, sizeof(s))) return;
-	int n = base32Decode(s, put.secret, sizeof(put.secret));
-	if (n <= 0) msgBox("Secret", "Not base32: letters A-Z and digits 2-7 only (spaces don't matter), up to 64 bytes.");
-	else put.len = n;
+	entryText("Secret key", "Base32, as the site shows it (letters A-Z, digits 2-7; spaces don't matter).", "", 159,
+		ENTRY_CAPS, secretDone);
 }
 
 static void eType(void) { put.type = put.type == OATH_TOTP ? OATH_HOTP : OATH_TOTP; }
@@ -349,18 +363,29 @@ static void newPwSet(void)
 	startOp(OP_SETPW);
 }
 
-static void setPw(void)
+static char newPw[128];
+
+static void setPw2(const char *b)
 {
-	char a[128], b[128];
-	if (!textInput("New OATH password", "", a, sizeof(a))) return;
-	if (!textInput("The same password again", "", b, sizeof(b))) return;
-	if (strcmp(a, b)) {
+	if (strcmp(newPw, b)) {
 		msgBox("Password", "The two didn't match.");
 		return;
 	}
-	oathKey(a, &oi, newKey);
+	oathKey(newPw, &oi, newKey);
 	confirm("Password", newPwSet, "Set this password? Every app reading the codes (Yubico Authenticator too) will "
 		"ask for it.");
+}
+
+static void setPw1(const char *a)
+{
+	if (!*a) return;
+	snprintf(newPw, sizeof(newPw), "%s", a);
+	entryText("New OATH password", "The same password again.", "", 127, ENTRY_HIDE, setPw2);
+}
+
+static void setPw(void)
+{
+	entryText("New OATH password", "The password every app reading the codes will ask for.", "", 127, ENTRY_HIDE, setPw1);
 }
 
 static void clearPwGo(void)

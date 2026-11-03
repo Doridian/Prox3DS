@@ -6,6 +6,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "entry.h"
 #include "mfu.h"
 #include "ndef.h"
 #include "probe.h"
@@ -138,22 +139,30 @@ static void writeAsk(const u8 *msg, u32 len, bool empty)
 		nd.info.type->name, uid, ndWhat, (unsigned long)ndTlvLen);
 }
 
-static void writeUrl(void)
+static void urlDone(const char *s)
 {
-	char s[512];
 	u8 msg[600];
-	if (!textInput("URL (https://..., tel:..., mailto:...)", "https://", s, sizeof(s))) return;
+	if (!*s) return;
 	snprintf(ndWhat, sizeof(ndWhat), "URI %.250s", s);
 	writeAsk(msg, ndefUri(s, msg, sizeof(msg)), false);
 }
 
-static void writeText(void)
+static void writeUrl(void)
 {
-	char s[512];
+	entryText("Write a URL", "https://..., tel:..., mailto:...", "https://", 511, 0, urlDone);
+}
+
+static void textDone(const char *s)
+{
 	u8 msg[600];
-	if (!textInput("Text", "", s, sizeof(s))) return;
+	if (!*s) return;
 	snprintf(ndWhat, sizeof(ndWhat), "Text (en) %.250s", s);
 	writeAsk(msg, ndefText("en", s, msg, sizeof(msg)), false);
+}
+
+static void writeText(void)
+{
+	entryText("Write text", "A text record (language en).", "", 511, 0, textDone);
 }
 
 static void writeEmpty(void)

@@ -1525,3 +1525,17 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   cascade tag 88 was replaced by the SAK frame (04 DA17) and every level copied 4 junk bytes. Since
   51b0e1c (Mastercard select changes). Only reached when selectKnown fails: on this UL-C the first WUPA
   after the ROM's activation gets no answer (the anticollision WUPA right after does).
+
+## Own text keyboard instead of the system one (nfcprobe entry.c entryText) -- 2026-11-02
+- The system keyboard (swkbd applet) hung for good when closed right after opening (Amiibo search):
+  through Rosalina's GDB stub (extended-remote :4000, `info os processes`, attach): our UI thread in
+  swkbdInputText -> aptLaunchLibraryApplet -> aptWaitForWakeUp(TR_LIBAPPLET), the swkbd process (still
+  drawn, no input taken) with its main thread in svc 0x24 WaitSynchronization1 on one handle, no timeout.
+  No way out from our side.
+- entryText (entry.c): our own keyboard screen, the app's theme, no applet. Text: 4 rows of 10 (digits,
+  qwerty + : / . -), shift (once / caps lock), a symbol layer, space, Del, Done, Cancel / Clear; D-pad
+  moves the cursor, Y deletes, X clears. ENTRY_HEX: the 0-F keypad of the hex entry, digits only, shown in
+  pairs (APDU console); ENTRY_HIDE: * (OATH passwords); ENTRY_CAPS: starts in caps lock (base32 secrets).
+  All 9 swkbd callers moved (Amiibo search, NDEF URL / text, OATH password / name / secret / new
+  password x2, APDU). Fixed-length keys keep entryHex. On the 3DS: search opens at once; 5 quick
+  open / cancel cycles leave the UI responsive.

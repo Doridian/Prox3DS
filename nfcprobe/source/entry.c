@@ -206,3 +206,166 @@ void entryDec(const char *title, const char *what, s64 min, s64 max, s64 init, v
 	begin(title, what);
 	e.cur = e.n - 1;
 }
+
+// --- text: an on-screen keyboard (the system one can hang for good when closed during its opening
+// animation, NOTES.md) ---
+
+#define TEXT_MAX 600
+#define TEXT_COLS 52 // characters per line on the top screen
+#define TEXT_ROWS 8
+
+static struct {
+	char title[64], what[256];
+	char s[TEXT_MAX + 1];
+	int n, cur, max;
+	int shift; // 0 off, 1 the next letter, 2 caps lock
+	bool sym;
+	u32 flags; // ENTRY_HEX / ENTRY_HIDE / ENTRY_CAPS
+	void (*done)(const char *s);
+} t;
+
+static void tInsert(char c)
+{
+	if (t.n >= t.max) return;
+	if ((t.flags & ENTRY_HEX) && c >= 'a' && c <= 'f') c -= 32;
+	memmove(t.s + t.cur + 1, t.s + t.cur, t.n - t.cur + 1);
+	t.s[t.cur++] = c;
+	t.n++;
+	if (t.shift == 1) t.shift = 0;
+}
+
+// Hex: pairs of digits a little apart, 40 digits (20 bytes) a line.
+static int tCols(void)
+{
+	return t.flags & ENTRY_HEX ? 40 : TEXT_COLS;
+}
+
+static float tX(int col)
+{
+	return col * MONO_W + (t.flags & ENTRY_HEX ? (col / 2) * MONO_W / 2 : 0);
+}
+
+static void tDel(void)
+{
+	if (!t.cur) return;
+	memmove(t.s + t.cur - 1, t.s + t.cur, t.n - t.cur + 1);
+	t.cur--, t.n--;
+}
+
+static void tDraw(void)
+{
+	char right[40];
+	if (t.flags & ENTRY_HEX) snprintf(right, sizeof(right), "%d byte%s%s", t.n / 2, t.n / 2 == 1 ? "" : "s", t.n & 1 ? " + 1 digit" : "");
+	else snprintf(right, sizeof(right), "%d / %d", t.n, t.max);
+	uiHeader(t.title, right);
+	float y = uiTextWrap(12, 26, UI_W - 24, S_SMALL, uiCol[COL_TEXT], t.what) + 8;
+	int cols = tCols(), lines = t.n / cols + 1, cl = t.cur / cols, top = cl >= TEXT_ROWS ? cl - TEXT_ROWS + 1 : 0;
+	float w = tX(cols - 1) + MONO_W, x0 = (UI_W - w) / 2;
+	uiRect(x0 - 4, y - 3, w + 8, TEXT_ROWS * 13 + 4, uiCol[COL_PANEL]);
+	for (int l = top; l < lines && l < top + TEXT_ROWS; l++, y += 13) {
+		int from = l * cols, k = t.n - from < cols ? t.n - from : cols;
+		for (int i = 0; i < k; i++) {
+			char c[2] = { t.flags & ENTRY_HIDE ? '*' : t.s[from + i], 0 };
+			uiMono(x0 + tX(i), y, uiCol[COL_TEXT], c);
+		}
+		if (cl == l) uiRect(x0 + tX(t.cur % cols) - 1, y - 1, 1.5f, 12, uiCol[COL_CURSOR]);
+	}
+	uiFooter(BTN_LR " cursor   " BTN_Y " delete   " BTN_X " clear   " BTN_A " done   " BTN_B " cancel");
+}
+
+static void tFinish(void)
+{
+	static char out[TEXT_MAX + 1];
+	memcpy(out, t.s, t.n + 1);
+	appBack();
+	t.done(out);
+}
+
+static void tInput(u32 kDown, u32 kRepeat)
+{
+	if ((kRepeat & KEY_LEFT) && t.cur) t.cur--;
+	if ((kRepeat & KEY_RIGHT) && t.cur < t.n) t.cur++;
+	if ((kRepeat & KEY_UP) && t.cur >= tCols()) t.cur -= tCols();
+	if (kRepeat & KEY_DOWN) t.cur = t.cur + tCols() <= t.n ? t.cur + tCols() : t.n;
+	if (kRepeat & KEY_Y) tDel();
+	if (kDown & KEY_X) t.n = t.cur = 0, t.s[0] = 0;
+	if (kDown & KEY_A) tFinish();
+	else if (kDown & KEY_B) appBack();
+}
+
+// Four rows of ten; letters follow shift. The symbol layer keeps the digits.
+static const char *const layers[2][4] = {
+	{ "1234567890", "qwertyuiop", "asdfghjkl:", "zxcvbnm/.-" },
+	{ "1234567890", "!@#$%^&*()", "_=+[]{}~`|", ";'\",<>?\\.-" },
+};
+
+// Hex: the number keypad's look, 0-F in a 4x4 block.
+static void tHexPad(void)
+{
+	u32 key = uiCol[COL_BAR], side = uiCol[COL_PANEL];
+	float w = 58, h = 44, g = 3, x0 = 4, y0 = 6;
+	for (int i = 0; i < 16; i++) {
+		char l[2] = { "0123456789ABCDEF"[i], 0 };
+		if (uiButtonRep(x0 + (i % 4) * (w + g), y0 + (i / 4) * (h + g), w, h, key, l)) tInsert(l[0]);
+	}
+	float sx = x0 + 4 * (w + g) + 6, sw = UI_BW - sx - 4;
+	if (uiButtonRep(sx, y0, sw, h, side, "Del")) tDel();
+	if (uiButton(sx, y0 + (h + g), sw, h, side, "Clear")) appPress(KEY_X);
+	if (uiButton(sx, y0 + 2 * (h + g), sw, h, side, "Cancel")) appPress(KEY_B);
+	if (uiButton(sx, y0 + 3 * (h + g), sw, h, uiCol[COL_SEL], "Done")) appPress(KEY_A);
+	uiTextCenter(UI_BW / 2, UI_H - 18, S_SMALL, uiCol[COL_DIM], "Keys type at the cursor");
+}
+
+static void tBottom(void)
+{
+	if (t.flags & ENTRY_HEX) {
+		tHexPad();
+		return;
+	}
+	u32 key = uiCol[COL_BAR], side = uiCol[COL_PANEL];
+	float w = 30, h = 36, g = 2, x0 = (UI_BW - 10 * w - 9 * g) / 2, y0 = 6;
+	for (int r = 0; r < 4; r++) {
+		const char *row = layers[t.sym][r];
+		for (int c = 0; c < 10 && row[c]; c++) {
+			char ch = row[c];
+			if (!t.sym && t.shift && ch >= 'a' && ch <= 'z') ch -= 32;
+			char l[2] = { ch, 0 };
+			if (uiButtonRep(x0 + c * (w + g), y0 + r * (h + g), w, h, key, l)) tInsert(ch);
+		}
+	}
+	// shift / symbols / space / delete / done
+	float y = y0 + 4 * (h + g), x = x0, bw = 10 * w + 9 * g;
+	float ws[5] = { 46, 46, 0, 46, 54 };
+	ws[2] = bw - ws[0] - ws[1] - ws[3] - ws[4] - 4 * g;
+	const char *shiftL = t.shift == 2 ? "CAPS" : "Shift";
+	if (uiButton(x, y, ws[0], h, t.shift ? uiCol[COL_SEL] : side, t.sym ? "" : shiftL) && !t.sym)
+		t.shift = (t.shift + 1) % 3;
+	x += ws[0] + g;
+	if (uiButton(x, y, ws[1], h, t.sym ? uiCol[COL_SEL] : side, t.sym ? "abc" : "#+=")) t.sym = !t.sym;
+	x += ws[1] + g;
+	if (uiButtonRep(x, y, ws[2], h, key, "space")) tInsert(' ');
+	x += ws[2] + g;
+	if (uiButtonRep(x, y, ws[3], h, side, "Del")) tDel();
+	x += ws[3] + g;
+	if (uiButton(x, y, ws[4], h, uiCol[COL_SEL], "Done")) appPress(KEY_A);
+	if (uiButton(x0, y + h + g + 4, bw / 2 - 1, 24, side, "Cancel")) appPress(KEY_B);
+	if (uiButton(x0 + bw / 2 + 1, y + h + g + 4, bw / 2 - 1, 24, side, "Clear")) appPress(KEY_X);
+}
+
+static const Screen textScreen = { NULL, tInput, tDraw, tBottom };
+
+void entryText(const char *title, const char *what, const char *init, u32 max, u32 flags, void (*done)(const char *s))
+{
+	snprintf(t.title, sizeof(t.title), "%s", title);
+	snprintf(t.what, sizeof(t.what), "%s", what);
+	t.max = max < 1 ? 1 : max > TEXT_MAX ? TEXT_MAX : max;
+	t.n = 0;
+	for (const char *c = init ? init : ""; *c && t.n < t.max; c++) // hex: the digits only
+		if (!(flags & ENTRY_HEX) || (*c >= '0' && *c <= '9') || ((*c | 32) >= 'a' && (*c | 32) <= 'f'))
+			t.s[t.n++] = flags & ENTRY_HEX && *c >= 'a' ? *c - 32 : *c;
+	t.s[t.n] = 0;
+	t.cur = t.n;
+	t.flags = flags;
+	t.shift = flags & ENTRY_CAPS ? 2 : 0, t.sym = false, t.done = done;
+	appScreen(&textScreen);
+}

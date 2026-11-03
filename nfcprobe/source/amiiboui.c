@@ -11,6 +11,7 @@
 #include "amiibo.h"
 #include "amiibodb.h"
 #include "app.h"
+#include "entry.h"
 #include "mfu.h"
 #include "probe.h"
 #include "ui.h"
@@ -454,15 +455,18 @@ static void seriesJump(int dir)
 	if (fl.top > nvis - LIST_ROWS) fl.top = nvis > LIST_ROWS ? nvis - LIST_ROWS : 0;
 }
 
+static void searchDone(const char *s)
+{
+	snprintf(filter, sizeof(filter), "%s", s);
+	listFilter();
+}
+
 static void listInput(u32 kDown, u32 kRepeat)
 {
 	uiListNav(&fl, nvis, LIST_ROWS, kRepeat);
 	if (kDown & KEY_L) seriesJump(-1);
 	if (kDown & KEY_R) seriesJump(1);
-	if (kDown & KEY_Y) {
-		if (!textInput("Name, series or game (empty: all)", filter, filter, sizeof(filter))) filter[0] = 0;
-		listFilter();
-	}
+	if (kDown & KEY_Y) entryText("Search", "Name, series or game (empty: all of them).", filter, sizeof(filter) - 1, 0, searchDone);
 	if ((kDown & KEY_A) && nvis) {
 		static const MenuItem items[] = {
 			{ "Write onto a blank NTAG215", newPlain },

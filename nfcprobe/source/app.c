@@ -169,16 +169,6 @@ static void dialogDraw(void)
 	uiHints(hint);
 }
 
-bool textInput(const char *hint, const char *init, char *out, u32 max)
-{
-	SwkbdState kb;
-	swkbdInit(&kb, SWKBD_TYPE_NORMAL, 2, max - 1);
-	swkbdSetHintText(&kb, hint);
-	swkbdSetInitialText(&kb, init);
-	swkbdSetValidation(&kb, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
-	return swkbdInputText(&kb, out, max) == SWKBD_BUTTON_CONFIRM && out[0];
-}
-
 // --- job worker ---
 
 static Thread worker;

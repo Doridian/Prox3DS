@@ -94,7 +94,6 @@ u64 unixNow(void);       // the console clock as UTC, with the OATH tool's clock
 void emvOpenTool(void);  // EMV payment cards (emvui.c)
 void apduConsole(void);  // raw APDUs (scui.c)
 u32 jobCount(void);      // jobs started so far: tells a tool whether another job touched the card since
-bool textInput(const char *hint, const char *init, char *out, u32 max); // system keyboard; false = cancelled / empty
 
 // HID iClass / PicoPass (iclassui.c)
 void iclassOpenMenu(void);
