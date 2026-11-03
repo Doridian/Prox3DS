@@ -679,6 +679,19 @@ static void fileAmiibo(void)
 	amiiboOpenDump(&ld, files[fl.sel].name);
 }
 
+static void fileEmuNdef(void)
+{
+	emuStartMfuNdef(&ld, files[fl.sel].name);
+}
+
+static void fileEmuUid(void)
+{
+	Card c = { .atqa = { 0x44, 0x00 }, .uidLen = 7, .sak = 0x00 };
+	memcpy(c.uid, ld.data[0], 3);
+	memcpy(c.uid + 3, ld.data[1], 4);
+	emuStartUid(&c);
+}
+
 static void filesInput(u32 kDown, u32 kRepeat)
 {
 	uiListNav(&fl, nfiles, 12, kRepeat);
@@ -696,8 +709,9 @@ static void filesInput(u32 kDown, u32 kRepeat)
 			return;
 		}
 		static const MenuItem items[] = { { "Write user pages to card", fileRestoreAsk },
-			{ "Clone onto magic card (GTU)", fileCloneAsk }, { "Amiibo (decrypt, copy)", fileAmiibo } };
-		popup(files[fl.sel].name, items, ld.pages == 135 ? 3 : 2);
+			{ "Clone onto magic card (GTU)", fileCloneAsk }, { "Emulate its NDEF message", fileEmuNdef },
+			{ "Emulate its UID", fileEmuUid }, { "Amiibo (decrypt, copy)", fileAmiibo } };
+		popup(files[fl.sel].name, items, ld.pages == 135 ? 5 : 4);
 	}
 	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s?", files[fl.sel].name);
 }
@@ -730,7 +744,7 @@ static void filesDraw(void)
 	}
 	if (nfiles > 12) uiTextRight(UI_W - 6, UI_H - 34, S_SMALL, uiCol[COL_DIM], "%d-%d of %d", fl.top + 1,
 		fl.top + 12 < nfiles ? fl.top + 12 : nfiles, nfiles);
-	uiFooter(BTN_A " open   " BTN_X " write to card   " BTN_Y " delete   " BTN_B " back");
+	uiFooter(BTN_A " open   " BTN_X " write, clone, emulate   " BTN_Y " delete   " BTN_B " back");
 }
 
 static const Screen filesScreen = { filesScan, filesInput, filesDraw };

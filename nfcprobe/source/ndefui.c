@@ -171,14 +171,20 @@ static void writeEmpty(void)
 	writeAsk(NULL, 0, true);
 }
 
+static void emulate(void)
+{
+	emuStartNdef(tlvState > 0 ? mem + msgOff : NULL, tlvState > 0 ? msgLen : 0);
+}
+
 static void actions(void)
 {
 	static const MenuItem items[] = {
 		{ "Write a URL", writeUrl },
 		{ "Write text", writeText },
 		{ "Erase (empty message)", writeEmpty },
+		{ "Emulate this message", emulate },
 	};
-	popup("NDEF", items, 3);
+	popup("NDEF", items, 4);
 }
 
 #define VIS 5
@@ -221,7 +227,7 @@ static void ndefDraw(void)
 			(unsigned long)r->idLen, (unsigned long)r->payloadLen, r->chunk ? ", chunked" : "");
 		y += 2 * SMALL_H + 4;
 	}
-	uiFooter(BTN_A " read again   " BTN_X " write   " BTN_B " back");
+	uiFooter(BTN_A " read again   " BTN_X " write, emulate   " BTN_B " back");
 }
 
 static const Screen ndefScreen = { NULL, ndefInput, ndefDraw };

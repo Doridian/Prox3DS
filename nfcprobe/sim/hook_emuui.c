@@ -26,7 +26,8 @@ void simEmuRun(bool written)
 		emuNdefApdu(up, 5 + n + 2, msg, sizeof(msg));
 	}
 	memset(&emu, 0, sizeof(emu));
-	memcpy(emu.uid, (const u8[]){ 0x08, 0xC0, 0x04, 0xDC }, 4);
+	mode = MODE_NDEF;
+	emu.id = (EmuId){ { 0x08, 0xC0, 0x04, 0xDC }, 4, { 0x04, 0x00 }, 0x20 };
 	emu.field = emu.active = written;
 	emu.fields = 16, emu.sessions = 8, emu.apdus = 40;
 	for (int i = 0; i < (written ? 6 : 5); i++) snprintf(emu.log[emu.nlog++ % EMU_LOG_N], 48, "%s", log[i]);
@@ -35,8 +36,37 @@ void simEmuRun(bool written)
 	simBusyView(emuView);
 }
 
+// UID-only (a 7-byte NTAG UID) or the APDU log, mid-session
+void simEmuMode(int which)
+{
+	static const char *log[] = { "> 00A4040007A0000000031010..  < 6A82", "> 00A4040007A0000000041010..  < 6A82",
+		"> 00A404000E325041592E5359..  < .. 9000", "> 80A8000002830000  < 6D00" };
+	memset(&emu, 0, sizeof(emu));
+	if (which == 0) {
+		mode = MODE_UID;
+		emu.id = (EmuId){ { 0x04, 0x6B, 0x21, 0x9A, 0x3C, 0x5D, 0x80 }, 7, { 0x44, 0x00 }, 0x00 };
+		emu.field = true, emu.fields = 3;
+	} else {
+		mode = MODE_LOG;
+		nrules = 2;
+		emu.id = (EmuId){ { 0x08, 0x12, 0x34, 0x56 }, 4, { 0x04, 0x00 }, 0x20 };
+		emu.active = emu.field = true, emu.fields = 2, emu.sessions = 2, emu.apdus = 4;
+		for (int i = 0; i < 4; i++) snprintf(emu.log[emu.nlog++ % EMU_LOG_N], 48, "%s", log[i]);
+	}
+	jobNextHint("Tap a phone on the bottom screen.");
+	simBusy(which ? "APDU log" : "Emulating a UID", true, false);
+	simBusyView(emuView);
+}
+
+void simEmuForm(void)
+{
+	card = (Card){ .atqa = { 0x44, 0x00 }, .uid = { 0x04, 0x6B, 0x21, 0x9A, 0x3C, 0x5D, 0x80 }, .uidLen = 7, .sak = 0 };
+	startTyped();
+}
+
 void simEmuDone(void)
 {
 	emuOk = true;
+	mode = MODE_NDEF;
 	doneEmu();
 }

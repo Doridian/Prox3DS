@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "emu.h"
 #include "mfc.h"
@@ -88,17 +89,28 @@ static void logApdu(const u8 *c, u32 clen, const u8 *r, u32 rlen)
 	logp("emu: %s\n", s);
 }
 
-bool emuRun(EmuApdu fn)
+void emuUidHex(const EmuId *id, char *out)
+{
+	for (int i = 0; i < id->uidLen; i++) out += sprintf(out, "%02X", id->uid[i]);
+	*out = 0;
+}
+
+bool emuRun(const EmuId *id, EmuApdu fn)
 {
 	static u8 cmd[0x400], resp[0x200];
 	u8 pkt[4 + 0x100];
-	u32 r = svcGetSystemTick() ^ osGetTime() * 2654435761u;
 	memset(&emu, 0, sizeof(emu));
-	emu.uid[0] = 0x08; // random UID (ISO14443-3)
-	for (int i = 1; i < 4; i++) emu.uid[i] = r >> (8 * i);
-	// LA_BIT_FRAME_SDD 04 (ATQA 0004), LA_PLATFORM_CONFIG 00, LA_SEL_INFO 20 (ISO-DEP), LA_NFCID1
-	u8 laConfig[] = { NCI_HCIT, 0x20, 0x02, 0x10, 0x04, 0x30, 0x01, 0x04, 0x31, 0x01, 0x00, 0x32, 0x01, 0x20,
-		0x33, 0x04, emu.uid[0], emu.uid[1], emu.uid[2], emu.uid[3] };
+	if (id) emu.id = *id;
+	else { // random UID (ISO14443-3: 08 first), an ISO-DEP card
+		u32 r = svcGetSystemTick() ^ osGetTime() * 2654435761u;
+		emu.id = (EmuId){ { 0x08, r >> 8, r >> 16, r >> 24 }, 4, { 0x04, 0x00 }, 0x20 };
+	}
+	const EmuId *e = &emu.id;
+	// LA_BIT_FRAME_SDD and LA_PLATFORM_CONFIG: the ATQA (the ROM adds the UID size bits), LA_SEL_INFO: the
+	// SAK, LA_NFCID1: the UID (4, 7 or 10 bytes)
+	u8 laConfig[4 + 12 + 10] = { NCI_HCIT, 0x20, 0x02, 12 + e->uidLen, 0x04, 0x30, 0x01, e->atqa[0] & 0x1F, 0x31, 0x01,
+		e->atqa[1] & 0x0F, 0x32, 0x01, e->sak, 0x33, e->uidLen };
+	memcpy(laConfig + 4 + 12, e->uid, e->uidLen);
 	// The memrw monitor stays loaded but unused: it doesn't get in the way. (The ROM's FRAME_LOG does:
 	// with it on, our DATA answers never go out.)
 	if (!chipEnsure()) {
@@ -106,12 +118,14 @@ bool emuRun(EmuApdu fn)
 		return false;
 	}
 	if (!monLoad()) return false;
-	if (!nciOk(laConfig, sizeof(laConfig)) || !nciOk(fieldInfo, sizeof(fieldInfo)) ||
+	if (!nciOk(laConfig, 4 + 12 + e->uidLen) || !nciOk(fieldInfo, sizeof(fieldInfo)) ||
 		!nciOk(discoverMap, sizeof(discoverMap)) || !nciOk(listenA, sizeof(listenA))) {
 		logp("emu: listen setup refused\n");
 		return false;
 	}
-	logp("emu: listening as %02X%02X%02X%02X\n", emu.uid[0], emu.uid[1], emu.uid[2], emu.uid[3]);
+	char u[32];
+	emuUidHex(e, u);
+	logp("emu: listening as %s, ATQA %02X%02X, SAK %02X\n", u, e->atqa[1], e->atqa[0], e->sak);
 	u32 clen = 0;
 	bool over = false;
 	rearmAt = 0;
@@ -233,4 +247,84 @@ u32 emuNdefApdu(const u8 *c, u32 len, u8 *resp, u32 max)
 		return sw(resp, 0, 0x9000);
 	}
 	return sw(resp, 0, 0x6D00);
+}
+
+// --- APDU log ---
+
+#define LOG_RULES 64
+static struct {
+	u8 cmd[32], resp[64];
+	u8 clen, rlen;
+} rules[LOG_RULES];
+static int nrules;
+static FILE *apduLog;
+
+static int unhex(const char *s, u8 *out, int max)
+{
+	int n = 0;
+	while (*s && n < max) {
+		unsigned v;
+		while (*s == ' ' || *s == ':') s++;
+		if (!*s || sscanf(s, "%2x", &v) != 1 || !s[1] || s[1] == ' ') break;
+		out[n++] = v;
+		s += 2;
+	}
+	return n;
+}
+
+int emuLogLoad(void)
+{
+	char line[256];
+	nrules = 0;
+	FILE *f = fopen(EMU_RULES, "r");
+	while (f && fgets(line, sizeof(line), f) && nrules < LOG_RULES) {
+		char *c = strchr(line, '#'), a[128], b[160];
+		if (c) *c = 0;
+		if (sscanf(line, "%127s %159s", a, b) != 2) continue;
+		rules[nrules].clen = unhex(a, rules[nrules].cmd, sizeof(rules[0].cmd));
+		rules[nrules].rlen = unhex(b, rules[nrules].resp, sizeof(rules[0].resp));
+		if (rules[nrules].rlen >= 2) nrules++;
+	}
+	if (f) fclose(f);
+	return nrules;
+}
+
+static void logHexLine(char dir, const u8 *d, u32 len)
+{
+	if (!apduLog) return;
+	fputc(dir, apduLog);
+	fputc(' ', apduLog);
+	for (u32 i = 0; i < len; i++) fprintf(apduLog, "%02X", d[i]);
+	fputc('\n', apduLog);
+}
+
+u32 emuLogApdu(const u8 *c, u32 len, u8 *resp, u32 max)
+{
+	if (!c) { // a new session: the log file gets a header, opened on the first one
+		if (!apduLog) {
+			mkdir(EMU_DIR, 0777);
+			apduLog = fopen(EMU_APDU_LOG, "a");
+		}
+		if (apduLog) fprintf(apduLog, "# session %lu\n", (unsigned long)emu.sessions);
+		return 0;
+	}
+	u32 n = 0;
+	for (int i = 0; i < nrules && !n; i++)
+		if (rules[i].clen <= len && !memcmp(c, rules[i].cmd, rules[i].clen) && rules[i].rlen <= max)
+			memcpy(resp, rules[i].resp, n = rules[i].rlen);
+	if (!n) { // no rule: no such applet / file for a SELECT, else instruction not supported
+		resp[0] = len >= 2 && c[1] == 0xA4 ? 0x6A : 0x6D;
+		resp[1] = len >= 2 && c[1] == 0xA4 ? 0x82 : 0x00;
+		n = 2;
+	}
+	logHexLine('>', c, len);
+	logHexLine('<', resp, n);
+	if (apduLog) fflush(apduLog);
+	return n;
+}
+
+void emuLogClose(void)
+{
+	if (apduLog) fclose(apduLog);
+	apduLog = NULL;
 }

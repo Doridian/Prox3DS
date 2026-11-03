@@ -1434,6 +1434,13 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
     other run. Add `; hw fpgaoff` when testing.
   - Android phone (user, 2026-11-02): reads the emulated tag with a quick tap on the bottom screen, no
     special placement. The weak card side only matters for strong readers like the pm3 RDV4.
+  - UID emulation: LA_NFCID1 takes 4 / 7 bytes (10 untested), LA_SEL_INFO any SAK (08, 00 verified), and
+    the ROM sets the ATQA's UID size bits itself (7 bytes + LA_BIT_FRAME_SDD 04 -> ATQA 0044). Map 04 02 02
+    can stay: a SAK without 0x20 just never gets RATS.
+  - T2T listen (map 02 02 01, frame interface): RF_INTF_ACTIVATED (intf 01, proto 02) and the reader's
+    READ arrives as DATA (`30 00` + a status byte 00), but our DATA answers (16 bytes, sent within ~10 ms)
+    never go out: the credits come back only at deactivation, as with FRAME_LOG on. Host-side
+    Ultralight / NTAG emulation is not possible through the ROM; it needs chip code.
 - Nintendo's nfc module only carries reader-side vendor config (TLV list at .code 0x13B1A1:
   CB 01 01, A5 01 01, CA [20 bytes], C5 01 01), so card mode was never configured on the 3DS.
 - lmon (chip/lmon.c, own SRAM image, ~3.3 KB): memrw ops 0-4 + op 5 IRQLOG (wrap IRQ0..7, 5 watched

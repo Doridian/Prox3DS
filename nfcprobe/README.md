@@ -62,10 +62,17 @@ Smart cards (`source/iso7816.c`, `source/scard.c`, `source/scui.c`): any ISO1444
   offset is a setting (`sdmc:/nfcprobe/oath.txt`). Works with ykneo-oath on a JavaCard (`ant oath` in javacard/).
 - A new applet tool: a screen file, its open function in `app.h`, an entry in `scApplets[]`.
 
-Card emulation (`source/emu.c`, `source/emuui.c`): the 3DS as an ISO14443-4A card through the ROM's NCI
+Card emulation (`source/emu.c`, `source/emuui.c`): the 3DS as an ISO14443-A card through the ROM's NCI
 listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answered by the app as NCI DATA).
 - NDEF tag: an NFC Forum Type 4 tag (T4T 2.0: NDEF application, CC file E103, NDEF file E104) with a URL,
-  a text or an empty message. Writable: what a reader writes with UPDATE BINARY shows up on the screen.
+  a text or an empty message, the message of a saved Ultralight / NTAG dump, or the one on the NDEF screen.
+  Writable: what a reader writes with UPDATE BINARY shows up on the screen.
+- UID: any 4, 7 or 10-byte UID with its ATQA and SAK, typed, copied from a scanned card or from a saved
+  Classic / Ultralight dump. Anticollision only (readers that check nothing but the UID); the ROM never
+  sends our answers to Ultralight / Classic frames, so memory and keys need chip code.
+- APDU log: an empty ISO-DEP card answering from `sdmc:/nfcprobe/emu/apdu.txt` ("<command prefix>
+  <response>" in hex per line, first match wins, else 6A82 for a SELECT / 6D00), every APDU appended to
+  `sdmc:/nfcprobe/emu/apdu.log`.
 - A phone reads it with a quick tap on the bottom screen. A Proxmark only gets it with the 3DS lying on it,
   bottom screen down. A new emulated card type is an `EmuApdu` handler passed to `emuRun`.
 

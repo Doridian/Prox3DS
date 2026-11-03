@@ -448,6 +448,24 @@ static void fileClone(void)
 	cloneStart(&cl, false);
 }
 
+static void fileCloneAsk(void)
+{
+	confirm("Write to magic card", fileClone, "Write %s onto the magic card on the reader?\n"
+		"Everything on that card is overwritten (Gen1a, Gen2, Gen4 GTU, USCUID).", files[fl.sel].name);
+}
+
+// The UID, SAK and ATQA from block 0: 4-byte UID + BCC, SAK, ATQA; else a 7-byte UID, SAK, ATQA.
+static void fileEmuUid(void)
+{
+	const u8 *b = cl.data[0];
+	Card c;
+	c.uidLen = (b[0] ^ b[1] ^ b[2] ^ b[3]) == b[4] ? 4 : 7;
+	memcpy(c.uid, b, c.uidLen);
+	c.sak = b[c.uidLen == 4 ? 5 : 7];
+	memcpy(c.atqa, b + (c.uidLen == 4 ? 6 : 8), 2);
+	emuStartUid(&c);
+}
+
 static void filesInput(u32 kDown, u32 kRepeat)
 {
 	uiListNav(&fl, nfiles, 12, kRepeat);
@@ -467,8 +485,8 @@ static void filesInput(u32 kDown, u32 kRepeat)
 			return;
 		}
 		cl = d;
-		confirm("Write to magic card", fileClone, "Write %s onto the magic card on the reader?\n"
-			"Everything on that card is overwritten (Gen1a, Gen2, Gen4 GTU, USCUID).", files[fl.sel].name);
+		static const MenuItem items[] = { { "Write to magic card", fileCloneAsk }, { "Emulate its UID", fileEmuUid } };
+		popup(files[fl.sel].name, items, cl.valid[0] ? 2 : 1);
 	}
 	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s and its key file?", files[fl.sel].name);
 }
@@ -504,7 +522,7 @@ static void filesDraw(void)
 	}
 	if (nfiles > 12) uiTextRight(UI_W - 6, UI_H - 34, S_SMALL, uiCol[COL_DIM], "%d-%d of %d", fl.top + 1,
 		fl.top + 12 < nfiles ? fl.top + 12 : nfiles, nfiles);
-	uiFooter(BTN_A " open   " BTN_X " write to magic card   " BTN_Y " delete   " BTN_B " back");
+	uiFooter(BTN_A " open   " BTN_X " write, emulate   " BTN_Y " delete   " BTN_B " back");
 }
 
 static const Screen filesScreen = { filesScan, filesInput, filesDraw }; // rescanned: the editor may have saved one

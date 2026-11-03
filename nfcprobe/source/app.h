@@ -99,6 +99,9 @@ u32 jobCount(void);      // jobs started so far: tells a tool whether another jo
 
 // Card emulation (emuui.c)
 void emuOpenMenu(void);
+void emuStartNdef(const u8 *msg, u32 len);                // a Type 4 tag with this message
+void emuStartUid(const Card *c);                          // its UID, ATQA and SAK
+void emuStartMfuNdef(const MfuDump *d, const char *name); // a Type 4 tag with the dump's NDEF message
 
 // HID iClass / PicoPass (iclassui.c)
 void iclassOpenMenu(void);
