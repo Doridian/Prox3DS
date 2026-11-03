@@ -17,6 +17,7 @@
 
 #include "amiibo.h"
 #include "desfire.h"
+#include "emu.h"
 #include "emv.h"
 #include "mfc.h"
 #include "isodep.h"
@@ -117,6 +118,12 @@ enum {
 	OP_MFU_TEAR    = 0x2D, // sub u8, args (mfuTearNet: 0 write scan, 1 EV1 counter reset) -> text. WRITES THE CARD
 	OP_MF_VALUE    = 0x27, // op u8 (C0 dec, C1 inc, C2 restore), block u8, delta s32 LE, dest u8, keyB u8,
 	                       // key[6] -> dest block read back[16]; on failure payload = reason. WRITES THE CARD
+	// APDU relay: the 3DS listens as an ISO-DEP card and the PC answers every APDU (tools/jcvm: a Java
+	// Card VM). Request: 0, [uidLen u8, uid, ATQA[2], SAK] (none: a random UID). Until stopped the server
+	// sends events, replies with result 1: an APDU (empty = a new session, no answer wanted); each APDU
+	// wants a request 1 + the answer (data + SW). Request 2 stops, final reply result 0: fields u32,
+	// sessions u32, APDUs u32. A PC that answers nothing for RELAY_WAIT_MS gets 6F00 sent for it.
+	OP_RELAY       = 0x2E,
 };
 
 #define OUT_MAX 0x2000
@@ -731,6 +738,88 @@ static Result handleDebug(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	return 0;
 }
 
+// --- APDU relay: the emulation on a worker thread, the PC's socket here ---
+
+#define RELAY_WAIT_MS 10000
+
+static struct {
+	LightEvent toNet, fromNet; // an event for the PC waits / its answer (or a stop) is in
+	const u8 *cmd;             // the APDU, NULL: a new session
+	u32 len;
+	u8 resp[0x200];
+	u32 rlen; // 0: no answer
+	EmuId id;
+	bool idSet, ok;
+} relay;
+
+static u32 relayApdu(const u8 *cmd, u32 len, u8 *resp, u32 max)
+{
+	relay.cmd = cmd, relay.len = len, relay.rlen = 0;
+	LightEvent_Clear(&relay.fromNet); // a late answer to the last APDU
+	LightEvent_Signal(&relay.toNet);
+	if (LightEvent_WaitTimeout(&relay.fromNet, MS(cmd ? RELAY_WAIT_MS : 1000)) && cmd)
+		logp("relay: no answer from the PC\n");
+	if (!cmd || relay.rlen > max) return 0;
+	memcpy(resp, relay.resp, relay.rlen);
+	return relay.rlen;
+}
+
+static void relayThread(void *arg)
+{
+	relay.ok = emuRun(relay.idSet ? &relay.id : NULL, relayApdu);
+}
+
+static Result handleRelay(int fd, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
+{
+	relay.idSet = inLen > 1;
+	if (relay.idSet) {
+		u32 n = in[1];
+		if ((n != 4 && n != 7 && n != 10) || inLen != 2 + n + 3) return -3;
+		memcpy(relay.id.uid, in + 2, n);
+		relay.id.uidLen = n;
+		memcpy(relay.id.atqa, in + 2 + n, 2);
+		relay.id.sak = in[2 + n + 2];
+	}
+	LightEvent_Init(&relay.toNet, RESET_ONESHOT);
+	LightEvent_Init(&relay.fromNet, RESET_ONESHOT);
+	mfCancel = false;
+	Thread t = threadCreate(relayThread, NULL, 0x8000, 0x30, -2, false);
+	if (!t) return -1;
+	bool waiting = false, alive = true; // an APDU at the PC
+	while (alive) {
+		if (LightEvent_TryWait(&relay.toNet)) {
+			alive = sendReply(fd, OP_RELAY, 1, relay.cmd, relay.cmd ? relay.len : 0);
+			if (relay.cmd) waiting = true;
+			else LightEvent_Signal(&relay.fromNet);
+			continue;
+		}
+		struct pollfd pfd = { .fd = fd, .events = POLLIN };
+		int r = poll(&pfd, 1, 2);
+		if (r < 0 || netQuit) break;
+		if (!r) continue;
+		static u8 msg[3 + 1 + sizeof(relay.resp)];
+		if (!recvAll(fd, msg, 3)) break;
+		u32 len = msg[1] | (msg[2] << 8);
+		if (msg[0] != OP_RELAY || len < 1 || len > sizeof(msg) - 3 || !recvAll(fd, msg + 3, len)) break;
+		if (msg[3] == 2) break;
+		if (msg[3] == 1 && waiting) {
+			relay.rlen = len - 1;
+			memcpy(relay.resp, msg + 4, relay.rlen);
+			waiting = false;
+			LightEvent_Signal(&relay.fromNet);
+		}
+	}
+	mfCancel = true;
+	LightEvent_Signal(&relay.fromNet);
+	threadJoin(t, U64_MAX);
+	threadFree(t);
+	mfCancel = false;
+	u32 st[3] = { emu.fields, emu.sessions, emu.apdus };
+	memcpy(out, st, sizeof(st));
+	*outLen = sizeof(st);
+	return relay.ok ? 0 : -1;
+}
+
 static Result handleUpdate(u8 op, const u8 *in, u32 inLen)
 {
 	char tmp[sizeof(appPath) + 4];
@@ -849,6 +938,10 @@ static void serveClient(int fd)
 			// no chip access: these answer while a job runs (an emulation holds hwLock until stopped), every
 			// client starts with a ping
 			res = handle(hdr[0], in, len, out, &outLen);
+		} else if (hdr[0] == OP_RELAY) {
+			LightLock_Lock(&hwLock);
+			res = len && in[0] == 0 && chipEnsure() ? handleRelay(fd, in, len, out, &outLen) : -3;
+			LightLock_Unlock(&hwLock);
 		} else {
 			LightLock_Lock(&hwLock);
 			res = handle(hdr[0], in, len, out, &outLen);

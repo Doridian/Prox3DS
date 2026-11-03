@@ -82,7 +82,7 @@ OP_PUT_FILE = 0x0A
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF, OP_MF_CHK = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26
 OP_MF_VALUE, OP_MFU_NDEF, OP_AMIIBO, OP_MF_DARKSIDE = 0x27, 0x28, 0x29, 0x2A
-OP_ICLASS, OP_EMV, OP_MFU_TEAR = 0x2B, 0x2C, 0x2D
+OP_ICLASS, OP_EMV, OP_MFU_TEAR, OP_RELAY = 0x2B, 0x2C, 0x2D, 0x2E
 MF_VAL_OPS = {"dec": 0xC0, "inc": 0xC1, "restore": 0xC2}
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
 DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
@@ -150,6 +150,35 @@ class Nfc:
         if res:
             raise NfcError(f"op {op:#x} failed: {res:08X} {data.decode(errors='replace')}")
         return data
+
+    def relay(self, answer, ident=b""):
+        """The 3DS as an ISO-DEP card (netsrv.c OP_RELAY) until Ctrl-C: answer(apdu) -> response
+        (data + SW) for each APDU, answer(None) on each new session. ident: uidLen + UID + ATQA[2] + SAK,
+        empty for a random UID. -> (fields, sessions, apdus) seen by the 3DS."""
+        self.send_call(OP_RELAY, b"\0" + ident)
+        self.sock.settimeout(None)  # readers come and go
+        stopping = False
+        while True:
+            try:
+                rop, res, ln = struct.unpack("<BIH", self._recv(7))
+                data = self._recv(ln)
+            except KeyboardInterrupt:
+                if stopping:
+                    raise
+                stopping = True
+                self.send_call(OP_RELAY, b"\2")
+                continue
+            if rop != OP_RELAY:
+                raise NfcError(f"reply for op {rop} during the relay")
+            if res != 1:
+                self.sock.settimeout(10)
+                if res:
+                    raise NfcError(f"relay failed: {res:08X}")
+                return struct.unpack("<3I", data)
+            if not data:
+                answer(None)
+            elif not stopping:
+                self.send_call(OP_RELAY, b"\1" + answer(data))
 
     def scan(self):
         """-> (atqa, sak, uid) or None."""
