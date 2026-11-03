@@ -163,8 +163,6 @@ def check(ops, W=400):
                 continue
             if len(oa[7]) == 1 and len(ob[7]) == 1:  # uiMono cells: wide glyphs may touch
                 continue
-            if oa[7] == ob[7] and abs(oa[1] - ob[1]) <= 2 and oa[2] == ob[2]:  # ui.c glitch(): ghosts
-                continue
             if A[0] > B[0]:
                 (ia, oa, A), (ib, ob, B) = (ib, ob, B), (ia, oa, A)
             gap = B[0] - A[1]

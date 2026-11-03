@@ -16,7 +16,6 @@ static C2D_TextBuf frameBuf, monoBuf;
 static C2D_Text mono[95]; // ' ' .. '~'
 static u8 asciiW[128];     // glyph advances, wrapping measures a lot
 
-#define SCANLINES 0x16 // alpha of the CRT scanline every other row, 0 = none
 
 void uiInit(void)
 {
@@ -61,16 +60,8 @@ void uiFrameBegin(void)
 	*hints = 0;
 }
 
-// Over everything, last: a CRT's dark rows
-static void scanlines(float w)
-{
-	if (!SCANLINES) return;
-	for (int y = 1; y < UI_H; y += 2) uiRect(0, y, w, 1, C2D_Color32(0, 0, 0, SCANLINES));
-}
-
 void uiBottom(void)
 {
-	scanlines(UI_W);
 	C2D_SceneBegin(bot);
 }
 
@@ -127,7 +118,6 @@ bool uiButtonRep(float x, float y, float w, float h, u32 color, const char *labe
 
 void uiFrameEnd(void)
 {
-	scanlines(UI_BW);
 	C3D_FrameEnd(0);
 }
 
@@ -303,21 +293,13 @@ void uiMono(float x, float y, u32 color, const char *s)
 	uiMonoS(x, y, S_MONO, MONO_W, color, s);
 }
 
-// Text with a chromatic glitch: purple and yellow ghosts a pixel off either side
-static float glitch(float x, float y, float scale, const char *s)
-{
-	uiText(x + 1, y, scale, C2D_Color32(0x9C, 0x59, 0xD1, 0xC0), "%s", s);
-	uiText(x - 1, y, scale, C2D_Color32(0xFC, 0xF4, 0x34, 0x70), "%s", s);
-	return uiText(x, y, scale, uiCol[COL_TEXT], "%s", s);
-}
-
 void uiHeader(const char *title, const char *right)
 {
 	char t[256];
 	snprintf(t, sizeof(t), "%s", title);
 	uiRect(0, 0, UI_W, 20, uiCol[COL_BAR]);
 	uiRect(0, 19, UI_W, 1, uiCol[COL_ACCENT]);
-	glitch(6, 2, S_BODY, uiFit(t, UI_W - 12 - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
+	uiText(6, 2, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, UI_W - 12 - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
 	if (right) uiTextRight(UI_W - 6, 3, S_SMALL, uiCol[COL_DIM], "%s", right);
 }
 
@@ -362,7 +344,7 @@ float uiBox(float w, float h, const char *title)
 	uiRect(r + 3 - a, b + 1, a, 2, c), uiRect(r + 1, b + 3 - a, 2, a, c);
 	char t[128];
 	snprintf(t, sizeof(t), "%s", title);
-	glitch(x + 6, y + 1, S_BODY, uiFit(t, w - 12, S_BODY));
+	uiText(x + 6, y + 1, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, w - 12, S_BODY));
 	return y + 22;
 }
 
