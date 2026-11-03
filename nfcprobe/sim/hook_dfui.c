@@ -13,6 +13,7 @@ void simDfCard(const Card *c, const DfInfo *d, int result, const char *why)
 
 void simDfMenu(void)
 {
+	dfMenu.l = (UiList){ 0 };
 	dfOpenMenu();
 }
 

@@ -10,8 +10,8 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "dumplist.h"
 #include "entry.h"
-#include "mfcinfo.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -132,6 +132,7 @@ static void save(void)
 		return;
 	}
 	orig = d;
+	dumpForget(path);
 	toast("Saved %s", baseName());
 }
 
@@ -333,18 +334,6 @@ static void valueFormat(void)
 	entryDec("Value block", "Make this block a value block holding", -0x7FFFFFFF, 0x7FFFFFFF, 0, valueFormatDone);
 }
 
-static void cloneDump(void)
-{
-	keysFromTrailers();
-	cloneStart(&d, false);
-}
-
-static void cloneAsk(void)
-{
-	confirm("Write to magic card", cloneDump, "Write this whole dump onto the magic card on the reader?\n"
-		"Everything on it is overwritten (Gen1a, Gen2, Gen4 GTU, USCUID).");
-}
-
 static void copyBlock(void)
 {
 	memcpy(clip, d.data[blk()], 16);
@@ -369,38 +358,6 @@ static void revertAll(void)
 	d = orig;
 }
 
-static void addKeys(void)
-{
-	static u8 have[MF_MAX_KEYS][6];
-	int n = mfKeyList(have, MF_MAX_KEYS, NULL, 0), added = 0;
-	mkdir(MF_DIR, 0777);
-	FILE *f = fopen(MF_KEYS, "a");
-	if (!f) {
-		msgBox("Dictionary", "Could not open " MF_KEYS);
-		return;
-	}
-	for (int s = 0; s < d.sectors; s++)
-		for (int k = 0; k < 2; k++) {
-			if (!d.keyFound[s][k]) continue;
-			bool dup = false;
-			for (int i = 0; i < n && !dup; i++) dup = !memcmp(have[i], d.keys[s][k], 6);
-			if (dup || n >= MF_MAX_KEYS) continue;
-			const u8 *key = d.keys[s][k];
-			fprintf(f, "%02X%02X%02X%02X%02X%02X # %s sector %d %c\n", key[0], key[1], key[2], key[3], key[4],
-				key[5], baseName(), s, "AB"[k]);
-			memcpy(have[n++], key, 6);
-			added++;
-		}
-	fclose(f);
-	msgBox("Dictionary", added ? "%d new key%s added to " MF_KEYS "." : "All of this dump's keys are already known.",
-		added, added == 1 ? "" : "s");
-}
-
-static void cardInfo(void)
-{
-	mfcInfoOpen(&d);
-}
-
 static void back(void)
 {
 	appBack();
@@ -410,11 +367,10 @@ static void actions(void)
 {
 	static char wlabel[32];
 	snprintf(wlabel, sizeof(wlabel), "Write block %d to card", blk());
-	MenuItem items[14];
+	MenuItem items[20];
 	int n = 0;
 	int b = blk();
 	bool data = b && b != trailerOf(sec);
-	items[n++] = (MenuItem){ "Card info (MAD, Saflok, signature)", cardInfo };
 	items[n++] = (MenuItem){ "Save", save };
 	items[n++] = (MenuItem){ "Save as a copy", saveCopy };
 	items[n++] = (MenuItem){ wlabel, writeBlock };
@@ -424,12 +380,12 @@ static void actions(void)
 	} else if (data) {
 		items[n++] = (MenuItem){ "Make a value block", valueFormat };
 	}
-	items[n++] = (MenuItem){ "Write dump to magic card", cloneAsk };
 	items[n++] = (MenuItem){ "Copy block", copyBlock };
 	if (clipOk) items[n++] = (MenuItem){ "Paste block", pasteBlock };
 	items[n++] = (MenuItem){ "Revert block", revertBlock };
 	items[n++] = (MenuItem){ "Revert all changes", revertAll };
-	items[n++] = (MenuItem){ "Add keys to dictionary", addKeys };
+	keysFromTrailers(); // the dump as edited, for the card actions (clone, emulate, keys)
+	n += mfDumpActions(items + n, &d, baseName());
 	popup("Dump", items, n);
 }
 

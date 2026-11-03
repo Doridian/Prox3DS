@@ -10,6 +10,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "dumplist.h"
 #include "entry.h"
 #include "mfu.h"
 #include "mfukeys.h"
@@ -594,57 +595,83 @@ void mfuCloneAsk(const MfuDump *d, const char *name)
 		"It becomes a %s: UID, version, signature,\nevery page. Everything on it is overwritten.", name, cl.info.type->name);
 }
 
+// --- a dump's card actions: the saved dumps list and the editor share them (X) ---
+
+static const MfuDump *act; // the list's ld or the editor's dump: valid while their popup is up
+static char actName[64];
+
+static void actRestore(void)
+{
+	mfuRestoreStart(act);
+}
+
+static void actRestoreAsk(void)
+{
+	int end = act->info.type ? act->info.type->userEnd : act->pages;
+	confirm("Write to card", actRestore, "Write the user pages (4-%d) of %s onto the card on the reader?\n"
+		"Only pages that differ are written. Lock bits, OTP and config are left alone.", end - 1, actName);
+}
+
+static void actCloneAsk(void)
+{
+	mfuCloneAsk(act, actName);
+}
+
+static void actEmu(void)
+{
+	emuStartMfu(act, actName);
+}
+
+static void actEmuNdef(void)
+{
+	emuStartMfuNdef(act, actName);
+}
+
+static void actAmiibo(void)
+{
+	amiiboOpenDump(act, actName);
+}
+
+int mfuDumpActions(MenuItem *items, const MfuDump *d, const char *name)
+{
+	act = d;
+	snprintf(actName, sizeof(actName), "%s", name);
+	int n = 0;
+	items[n++] = (MenuItem){ "Write user pages to card", actRestoreAsk };
+	items[n++] = (MenuItem){ "Clone onto magic card (GTU)", actCloneAsk };
+	items[n++] = (MenuItem){ "Emulate this card", actEmu };
+	items[n++] = (MenuItem){ "Emulate its NDEF message (Type 4)", actEmuNdef };
+	if (d->pages == 135) items[n++] = (MenuItem){ "Amiibo (decrypt, copy)", actAmiibo };
+	return n;
+}
+
 // --- saved dumps ---
 
-typedef struct {
-	char name[64];
-	int size, pages; // pages 0: not a dump
-	u64 mtime;
-} FileEnt;
-static FileEnt files[200];
-static int nfiles;
+// pages from a pm3 header (56 bytes, page count - 1 at byte 11) or a raw dump's size; 0: not a dump
+static int dumpPages(const char *path, u32 size)
+{
+	u8 hdr[12];
+	int pages = 0;
+	FILE *fp = fopen(path, "rb");
+	if (fp && fread(hdr, 1, 12, fp) == 12 && size - MFU_HDR == 4 * (hdr[11] + 1u)) pages = hdr[11] + 1;
+	else if (size % 4 == 0 && size >= 64 && size <= 4 * MFU_MAX_PAGES) pages = size / 4;
+	if (fp) fclose(fp);
+	return pages;
+}
+
+static DumpDir dumps = { .dir = MFU_DIR, .info = dumpPages };
 static UiList fl;
 static MfuDump ld;
 
-static int fileCmp(const void *a, const void *b)
-{
-	const FileEnt *x = a, *y = b;
-	return x->mtime < y->mtime ? 1 : x->mtime > y->mtime ? -1 : strcmp(x->name, y->name);
-}
-
 static void filesScan(void)
 {
-	nfiles = 0;
-	DIR *dir = opendir(MFU_DIR);
-	struct dirent *e;
-	while (dir && (e = readdir(dir)) && nfiles < 200) {
-		int len = strlen(e->d_name);
-		if (len < 5 || len >= 64 || strcasecmp(e->d_name + len - 4, ".bin")) continue;
-		FileEnt *f = &files[nfiles];
-		char path[128];
-		snprintf(path, sizeof(path), MFU_DIR "/%s", e->d_name);
-		struct stat st;
-		if (stat(path, &st)) continue;
-		snprintf(f->name, sizeof(f->name), "%s", e->d_name);
-		f->size = st.st_size;
-		f->pages = 0;
-		u8 hdr[12];
-		FILE *fp = fopen(path, "rb");
-		if (fp && fread(hdr, 1, 12, fp) == 12 && f->size - MFU_HDR == 4 * (hdr[11] + 1)) f->pages = hdr[11] + 1;
-		else if (f->size % 4 == 0 && f->size >= 64 && f->size <= 4 * MFU_MAX_PAGES) f->pages = f->size / 4;
-		if (fp) fclose(fp);
-		f->mtime = 0;
-		archive_getmtime(path, &f->mtime);
-		nfiles++;
-	}
-	if (dir) closedir(dir);
-	qsort(files, nfiles, sizeof(*files), fileCmp);
-	if (fl.sel >= nfiles) fl.sel = nfiles ? nfiles - 1 : 0;
+	dumpScan(&dumps);
+	if (fl.sel >= dumps.n) fl.sel = dumps.n ? dumps.n - 1 : 0;
 }
 
 static void filePath(char *out, u32 max)
 {
-	snprintf(out, max, MFU_DIR "/%s", files[fl.sel].name);
+	snprintf(out, max, MFU_DIR "/%s", dumps.ent[fl.sel].name);
 }
 
 static void fileDelete(void)
@@ -654,94 +681,62 @@ static void fileDelete(void)
 	snprintf(tpath, sizeof(tpath), "%.*s.txt", (int)strlen(path) - 4, path);
 	remove(path);
 	remove(tpath);
-	toast("Deleted %s", files[fl.sel].name);
+	toast("Deleted %s", dumps.ent[fl.sel].name);
 	filesScan();
-}
-
-static void fileRestore(void)
-{
-	mfuRestoreStart(&ld);
-}
-
-static void fileRestoreAsk(void)
-{
-	confirm("Write to card", fileRestore, "Write the user pages of %s\nonto the card on the reader? Its user memory is overwritten.\n"
-		"Lock bits, OTP and config are left alone.", files[fl.sel].name);
-}
-
-static void fileCloneAsk(void)
-{
-	mfuCloneAsk(&ld, files[fl.sel].name);
-}
-
-static void fileAmiibo(void)
-{
-	amiiboOpenDump(&ld, files[fl.sel].name);
-}
-
-static void fileEmuNdef(void)
-{
-	emuStartMfuNdef(&ld, files[fl.sel].name);
-}
-
-static void fileEmu(void)
-{
-	emuStartMfu(&ld, files[fl.sel].name);
 }
 
 static void filesInput(u32 kDown, u32 kRepeat)
 {
-	uiListNav(&fl, nfiles, 12, kRepeat);
+	uiListNav(&fl, dumps.n, 12, kRepeat);
 	if (kDown & KEY_B) appBack();
-	if (!nfiles) return;
+	if (!dumps.n) return;
 	char path[128];
 	filePath(path, sizeof(path));
 	if (kDown & (KEY_A | KEY_X)) {
 		if (!mfuLoadDump(&ld, path)) {
-			msgBox("Saved dumps", "%s is not an Ultralight / NTAG dump\n(%d bytes).", files[fl.sel].name, files[fl.sel].size);
+			msgBox("Saved dumps", "%s is not an Ultralight / NTAG dump\n(%lu bytes).", dumps.ent[fl.sel].name,
+				(unsigned long)dumps.ent[fl.sel].size);
 			return;
 		}
 		if (kDown & KEY_A) {
 			mfuEditorOpen(&ld, path);
 			return;
 		}
-		static const MenuItem items[] = { { "Write user pages to card", fileRestoreAsk },
-			{ "Clone onto magic card (GTU)", fileCloneAsk }, { "Emulate this card", fileEmu },
-			{ "Emulate its NDEF message (Type 4)", fileEmuNdef }, { "Amiibo (decrypt, copy)", fileAmiibo } };
-		popup(files[fl.sel].name, items, ld.pages == 135 ? 5 : 4);
+		MenuItem items[8];
+		popup(dumps.ent[fl.sel].name, items, mfuDumpActions(items, &ld, dumps.ent[fl.sel].name));
 	}
-	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s?", files[fl.sel].name);
+	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s?", dumps.ent[fl.sel].name);
 }
 
 static void filesDraw(void)
 {
 	char hdr[32];
-	snprintf(hdr, sizeof(hdr), "%d dump%s", nfiles, nfiles == 1 ? "" : "s");
+	snprintf(hdr, sizeof(hdr), "%d dump%s", dumps.n, dumps.n == 1 ? "" : "s");
 	uiHeader("Saved Ultralight / NTAG dumps", hdr);
-	if (!nfiles) {
+	if (!dumps.n) {
 		uiTextCenter(UI_W / 2, 100, S_BODY, uiCol[COL_DIM], "No dumps yet.");
 		uiTextCenter(UI_W / 2, 118, S_SMALL, uiCol[COL_DIM], "Read a card, or copy pm3 .bin dumps to " MFU_DIR);
 		uiFooter(BTN_B " back");
 		return;
 	}
-	for (int i = 0; i < 12 && fl.top + i < nfiles; i++) {
-		const FileEnt *f = &files[fl.top + i];
+	for (int i = 0; i < 12 && fl.top + i < dumps.n; i++) {
+		const DumpEnt *f = &dumps.ent[fl.top + i];
 		float y = 24 + i * LINE_H;
 		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
 		char name[64];
 		snprintf(name, sizeof(name), "%s", f->name);
 		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 190, S_BODY)); // up to the size column
-		uiTextRight(268, y + 1, S_SMALL, uiCol[f->pages ? COL_ACCENT : COL_ERR], f->pages ? "%d pages" : "not MFU", f->pages);
-		if (f->mtime) {
+		uiTextRight(268, y + 1, S_SMALL, uiCol[f->info ? COL_ACCENT : COL_ERR], f->info ? "%d pages" : "not MFU", f->info);
+		if (f->mtime > 1) {
 			time_t t = f->mtime;
 			struct tm *tm = gmtime(&t);
 			uiTextRight(UI_W - 10, y + 1, S_SMALL, uiCol[COL_DIM], "%04d-%02d-%02d %02d:%02d", tm->tm_year + 1900,
 				tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min);
 		}
 	}
-	if (nfiles > 12) uiTextRight(UI_W - 6, UI_H - 34, S_SMALL, uiCol[COL_DIM], "%d-%d of %d", fl.top + 1,
-		fl.top + 12 < nfiles ? fl.top + 12 : nfiles, nfiles);
-	uiFooter(BTN_A " open   " BTN_X " write, clone, emulate   " BTN_Y " delete   " BTN_B " back");
+	if (dumps.n > 12) uiTextRight(UI_W - 6, UI_H - 34, S_SMALL, uiCol[COL_DIM], "%d-%d of %d", fl.top + 1,
+		fl.top + 12 < dumps.n ? fl.top + 12 : dumps.n, dumps.n);
+	uiFooter(BTN_A " open   " BTN_X " actions   " BTN_Y " delete   " BTN_B " back");
 }
 
 static const Screen filesScreen = { filesScan, filesInput, filesDraw };
@@ -749,6 +744,11 @@ static const Screen filesScreen = { filesScan, filesInput, filesDraw };
 void mfuFilesChanged(void)
 {
 	filesScan();
+}
+
+void mfuFilesWarm(void)
+{
+	if (!dumps.scanned) dumpScan(&dumps);
 }
 
 // --- menu and family ---
@@ -771,7 +771,7 @@ static const MenuEntry mfuEntries[] = {
 	{ "Read with password", "The same with a password (PWD_AUTH, 4 bytes) or an Ultralight C 3DES key first: the "
 	                        "protected pages read too. Offers the one that worked before, " MFU_KEYS ", passwords "
 	                        "derived from the UID (pm3 pwdgen) and the defaults, and shows the AUTHLIM.", startPwdRead },
-	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card, or clone them onto a Gen4 GTU.", openFiles },
+	{ "Saved dumps", "View and edit dumps, write their user memory back onto a card, clone them onto a Gen4 GTU, or emulate them: the 3DS as the card.", openFiles },
 	{ "Tear-off", "Cut the field N microseconds into a write (pm3 hw tearoff): scan a user page through the "
 	              "EEPROM's erase and write phases, or try an EV1 counter reset (pm3 hf mfu countertear, experimental).", mfuTearMenu },
 	{ "Download keys", "Fetch pm3's mfulc_default_keys.dic (Ultralight C 3DES keys, over Wi-Fi) to " MFU_PM3_KEYS

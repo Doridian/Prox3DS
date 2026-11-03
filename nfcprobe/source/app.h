@@ -119,6 +119,10 @@ void mfuCloneStart(const MfuDump *d);                 // clone onto the Gen4 GTU
 void mfuCloneAsk(const MfuDump *d, const char *name); // confirm, then mfuCloneStart
 void mfuFilesChanged(void); // a dump was saved behind the saved dumps list: rescan it
 void mfFilesChanged(void);  // the same for Classic
+void mfuFilesWarm(void);    // scan the saved dumps list once, if nothing has yet (app start, background)
+void mfFilesWarm(void);
+int mfuDumpActions(MenuItem *items, const MfuDump *d, const char *name); // a dump's card actions (X menus)
+int mfDumpActions(MenuItem *items, const MfDump *d, const char *name);
 void ndefOpenMfu(void); // read the card on the reader, then its NDEF screen (ndefui.c)
 void mfuTearMenu(void);  // tear-off: write scan, EV1 counter reset (mfutear.c)
 void amiiboOpenCard(void); // read the NTAG215 on the reader, then the Amiibo screen (amiiboui.c)

@@ -12,6 +12,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "dumplist.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -94,10 +95,12 @@ static struct {
 	int kind;
 	char title[48], msg[512];
 	void (*yes)(void);
-	MenuItem items[12];
+	MenuItem items[24];
 	int n;
 	UiList l;
 } dlg;
+
+#define POP_ROWS 12 // a longer popup scrolls
 
 void msgBox(const char *title, const char *fmt, ...)
 {
@@ -123,7 +126,7 @@ void confirm(const char *title, void (*yes)(void), const char *fmt, ...)
 void popup(const char *title, const MenuItem *items, int n)
 {
 	snprintf(dlg.title, sizeof(dlg.title), "%s", title);
-	dlg.n = n < 12 ? n : 12;
+	dlg.n = n < 24 ? n : 24;
 	memcpy(dlg.items, items, dlg.n * sizeof(*items));
 	dlg.l = (UiList){ 0 };
 	dlg.kind = DLG_POPUP;
@@ -133,7 +136,7 @@ static void dialogInput(u32 kDown, u32 kRepeat)
 {
 	int kind = dlg.kind;
 	if (kind == DLG_POPUP) {
-		uiListNav(&dlg.l, dlg.n, dlg.n, kRepeat & (KEY_UP | KEY_DOWN));
+		uiListNav(&dlg.l, dlg.n, POP_ROWS, kRepeat & (KEY_UP | KEY_DOWN));
 		if (kDown & KEY_B) dlg.kind = DLG_NONE;
 		if (kDown & KEY_A) {
 			dlg.kind = DLG_NONE; // the item may open the next dialog
@@ -152,12 +155,15 @@ static void dialogInput(u32 kDown, u32 kRepeat)
 static void dialogDraw(void)
 {
 	if (dlg.kind == DLG_POPUP) {
-		float h = 22 + dlg.n * LINE_H + 22, y = uiBox(240, h, dlg.title), x = (UI_W - 240) / 2;
-		for (int i = 0; i < dlg.n; i++, y += LINE_H) {
+		int rows = dlg.n < POP_ROWS ? dlg.n : POP_ROWS;
+		float h = 22 + rows * LINE_H + 22, y = uiBox(240, h, dlg.title), x = (UI_W - 240) / 2;
+		for (int i = dlg.l.top; i < dlg.l.top + rows; i++, y += LINE_H) {
 			if (i == dlg.l.sel) uiRect(x + 2, y - 1, 236, LINE_H, uiCol[COL_SEL]);
 			uiText(x + 10, y, S_BODY, uiCol[COL_TEXT], "%s", dlg.items[i].label);
 		}
 		uiText(x + 10, y + 4, S_SMALL, uiCol[COL_DIM], BTN_A " select   " BTN_B " close");
+		if (dlg.n > rows) uiTextRight(x + 230, y + 4, S_SMALL, uiCol[COL_DIM], "%d-%d of %d", dlg.l.top + 1,
+			dlg.l.top + rows, dlg.n);
 		uiHints(BTN_UD " item   " BTN_A " select   " BTN_B " close");
 		return;
 	}
@@ -737,8 +743,19 @@ static void bottomDraw(void)
 
 // --- loop ---
 
+// The saved dump lists, scanned once in the background: their first open doesn't wait for every file's date.
+static Thread warmer;
+
+static void warmMain(void *arg)
+{
+	mfFilesWarm();
+	mfuFilesWarm();
+}
+
 void appRun(void)
 {
+	dumpInit();
+	warmer = threadCreate(warmMain, NULL, 0x4000, 0x3F, -2, false);
 	hidSetRepeatParameters(18, 4);
 	rootInit();
 	while (aptMainLoop() && !quit && !restartRequested) {
@@ -798,5 +815,6 @@ void appShutdown(void)
 	// A worker stuck in IPC can't be joined; only clean up a finished one.
 	for (int i = 0; i < 100 && jobBusy && !jobFinished; i++) svcSleepThread(MS(100));
 	if (worker && jobFinished) threadJoin(worker, U64_MAX), threadFree(worker);
+	if (warmer) threadJoin(warmer, U64_MAX), threadFree(warmer);
 	logp("--- exit: job %s ---\n", jobBusy && !jobFinished ? "STILL RUNNING" : "done");
 }

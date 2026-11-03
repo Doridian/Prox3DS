@@ -35,6 +35,7 @@ void simMfuClone(const MfuDump *d, int result, const char *why)
 
 void simMfuMenu(void)
 {
+	mfuMenu.l = (UiList){ 0 };
 	mfuOpenMenu();
 }
 

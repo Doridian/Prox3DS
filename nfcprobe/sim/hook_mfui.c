@@ -30,5 +30,6 @@ void simMfcClone(int result, const char *why)
 
 void simMfcMenu(void)
 {
+	mfcMenu.l = (UiList){ 0 }; // scenes start at the top (menus keep their cursor)
 	mfcOpenMenu();
 }

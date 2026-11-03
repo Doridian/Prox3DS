@@ -26,7 +26,8 @@ is a `CardFamily` (`source/app.h`: match on ATQA/SAK, probe, card screen, menu) 
   backdoors, FM11RF08S static-nonce and nested key recovery. Saved as
   `sdmc:/nfcprobe/dumps/<UID>.bin` + `.keys.txt` (never overwritten: `<UID>-2.bin` and so on) and
   opened in the editor.
-- Saved dumps: open, write onto a magic card, delete. Foreign `.bin` dumps work too.
+- Saved dumps: open in the editor, delete; X has the dump's card actions (card info, write onto a magic card,
+  emulate the card or its UID, add its keys to the dictionary), the same as in the editor. Foreign `.bin` dumps work too.
 - Dump editor: one sector at a time as hex + ASCII, the block under the cursor decoded (manufacturer
   block / BCC, trailer keys and access conditions, value blocks). A edits a byte nibble by nibble, or
   the access conditions when on trailer bytes 6-8 (the inverted copy is kept consistent). X: save,
@@ -41,7 +42,8 @@ MIFARE Ultralight / NTAG (`source/mfu.c`, `source/mfuui.c`, `source/mfuedit.c`),
   `sdmc:/nfcprobe/mfu/<UID>.bin` in pm3's `hf mfu` dump format (56-byte header: version, signature,
   counters), unread pages listed in `<UID>.txt`, and opened in the page editor.
 - Saved dumps (pm3 .bin dumps work too), page editor: one page per row with its role, the page under
-  the cursor decoded. X writes a page, or every user page that differs, to the card on the reader.
+  the cursor decoded. X writes a page, or every user page that differs, to the card on the reader, and has the
+  same card actions as the saved dumps list (clone, emulate the card or its NDEF message, Amiibo).
   Only user memory is ever written to a real card: lock bits and OTP are one-way, config can lock it.
 - Clone onto magic card: a Gen4 GTU (password 00000000) is switched to Ultralight mode for the dump's
   type and becomes a full copy (UID, version, signature, password, every page), read back as a reader
@@ -85,6 +87,9 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   answers within the frame delay goes into `chip/emu.c` (the ROM's listen-A RX hook, see NOTES.md).
 
 - Chip info: reset / init / patch version.
+
+The saved dump lists (`source/dumplist.c`) read the directory in batches and cache each file's date: a stat or a
+date costs ~20 ms per file on the SD card. Both are scanned in the background at start.
 
 `sim/` builds the UI for the PC with fake citro2d / libctru and mock cards, renders every screen to
 PNG and checks the text for overflows and overlaps (`make -C sim run`, see `sim/README.md`).

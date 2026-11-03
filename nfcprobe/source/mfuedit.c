@@ -9,6 +9,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "dumplist.h"
 #include "mfu.h"
 #include "probe.h"
 #include "ui.h"
@@ -104,6 +105,7 @@ static void save(void)
 		return;
 	}
 	orig = d;
+	dumpForget(path);
 	toast("Saved %s", baseName());
 }
 
@@ -168,22 +170,6 @@ static void writePage(void)
 		wpData[0], wpData[1], wpData[2], wpData[3]);
 }
 
-static void restoreGo(void)
-{
-	mfuRestoreStart(&d);
-}
-
-static void restoreAsk(void)
-{
-	confirm("Write to card", restoreGo, "Write this dump's user pages (4-%d) onto the card on the\n"
-		"reader? Only pages that differ are written.\nLock bits, OTP and config are left alone.", userEnd() - 1);
-}
-
-static void cloneAsk(void)
-{
-	mfuCloneAsk(&d, baseName());
-}
-
 static void copyPage(void)
 {
 	memcpy(clip, d.data[page], 4);
@@ -217,17 +203,16 @@ static void actions(void)
 {
 	static char wlabel[32];
 	snprintf(wlabel, sizeof(wlabel), "Write page %d to card", page);
-	MenuItem items[9];
+	MenuItem items[16];
 	int n = 0;
 	items[n++] = (MenuItem){ "Save", save };
 	items[n++] = (MenuItem){ "Save as a copy", saveCopy };
 	if (isUser(page)) items[n++] = (MenuItem){ wlabel, writePage };
-	items[n++] = (MenuItem){ "Write user pages to card", restoreAsk };
-	items[n++] = (MenuItem){ "Clone onto magic card (GTU)", cloneAsk };
 	items[n++] = (MenuItem){ "Copy page", copyPage };
 	if (clipOk) items[n++] = (MenuItem){ "Paste page", pastePage };
 	items[n++] = (MenuItem){ "Revert page", revertPage };
 	items[n++] = (MenuItem){ "Revert all changes", revertAll };
+	n += mfuDumpActions(items + n, &d, baseName());
 	popup("Dump", items, n);
 }
 

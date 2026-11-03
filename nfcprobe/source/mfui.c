@@ -10,6 +10,7 @@
 #include <3ds.h>
 
 #include "app.h"
+#include "dumplist.h"
 #include "mfcinfo.h"
 #include "pm3dict.h"
 #include "entry.h"
@@ -386,50 +387,98 @@ void cloneStart(const MfDump *d, bool force)
 	jobStart("Writing to magic card", runClone, doneClone, true);
 }
 
+// --- a dump's card actions: the saved dumps list and the editor share them (X) ---
+
+static const MfDump *act; // the list's cl or the editor's dump: valid while their popup is up
+static char actName[64];
+
+static void actInfo(void)
+{
+	mfcInfoOpen(act);
+}
+
+static void actClone(void)
+{
+	cloneStart(act, false);
+}
+
+static void actCloneAsk(void)
+{
+	confirm("Write to magic card", actClone, "Write %s onto the magic card on the reader?\n"
+		"Everything on that card is overwritten (Gen1a, Gen2, Gen4 GTU, USCUID).", actName);
+}
+
+static void actEmu(void)
+{
+	emuStartMfc(act, actName);
+}
+
+// The UID, SAK and ATQA from block 0: 4-byte UID + BCC, SAK, ATQA; else a 7-byte UID, SAK, ATQA.
+static void actEmuUid(void)
+{
+	const u8 *b = act->data[0];
+	Card c;
+	c.uidLen = (b[0] ^ b[1] ^ b[2] ^ b[3]) == b[4] ? 4 : 7;
+	memcpy(c.uid, b, c.uidLen);
+	c.sak = b[c.uidLen == 4 ? 5 : 7];
+	memcpy(c.atqa, b + (c.uidLen == 4 ? 6 : 8), 2);
+	emuStartUid(&c);
+}
+
+static void actAddKeys(void)
+{
+	static u8 have[MF_MAX_KEYS][6];
+	int n = mfKeyList(have, MF_MAX_KEYS, NULL, 0), added = 0;
+	mkdir(MF_DIR, 0777);
+	FILE *f = fopen(MF_KEYS, "a");
+	if (!f) {
+		msgBox("Dictionary", "Could not open " MF_KEYS);
+		return;
+	}
+	for (int s = 0; s < act->sectors; s++)
+		for (int k = 0; k < 2; k++) {
+			if (!act->keyFound[s][k]) continue;
+			bool dup = false;
+			for (int i = 0; i < n && !dup; i++) dup = !memcmp(have[i], act->keys[s][k], 6);
+			if (dup || n >= MF_MAX_KEYS) continue;
+			const u8 *key = act->keys[s][k];
+			fprintf(f, "%02X%02X%02X%02X%02X%02X # %s sector %d %c\n", key[0], key[1], key[2], key[3], key[4],
+				key[5], actName, s, "AB"[k]);
+			memcpy(have[n++], key, 6);
+			added++;
+		}
+	fclose(f);
+	msgBox("Dictionary", added ? "%d new key%s added to " MF_KEYS "." : "All of this dump's keys are already known.",
+		added, added == 1 ? "" : "s");
+}
+
+int mfDumpActions(MenuItem *items, const MfDump *d, const char *name)
+{
+	act = d;
+	snprintf(actName, sizeof(actName), "%s", name);
+	int n = 0;
+	items[n++] = (MenuItem){ "Card info (MAD, Saflok, signature)", actInfo };
+	items[n++] = (MenuItem){ "Write to magic card", actCloneAsk };
+	items[n++] = (MenuItem){ "Emulate this card", actEmu };
+	if (d->valid[0]) items[n++] = (MenuItem){ "Emulate its UID", actEmuUid };
+	items[n++] = (MenuItem){ "Add keys to dictionary", actAddKeys };
+	return n;
+}
+
 // --- saved dumps ---
 
-typedef struct {
-	char name[64];
-	int blocks;
-	u64 mtime;
-} FileEnt;
-static FileEnt files[200];
-static int nfiles;
+static DumpDir dumps = { .dir = MF_DUMPS };
 static UiList fl;
-
-static int fileCmp(const void *a, const void *b)
-{
-	const FileEnt *x = a, *y = b;
-	return x->mtime < y->mtime ? 1 : x->mtime > y->mtime ? -1 : strcmp(x->name, y->name);
-}
 
 static void filesScan(void)
 {
-	nfiles = 0;
-	DIR *dir = opendir(MF_DUMPS);
-	struct dirent *e;
-	while (dir && (e = readdir(dir)) && nfiles < 200) {
-		int len = strlen(e->d_name);
-		if (len < 5 || len >= 64 || strcasecmp(e->d_name + len - 4, ".bin")) continue;
-		FileEnt *f = &files[nfiles];
-		char path[128];
-		snprintf(path, sizeof(path), MF_DUMPS "/%s", e->d_name);
-		struct stat st;
-		if (stat(path, &st)) continue;
-		snprintf(f->name, sizeof(f->name), "%s", e->d_name);
-		f->blocks = st.st_size / 16;
-		f->mtime = 0;
-		archive_getmtime(path, &f->mtime);
-		nfiles++;
-	}
-	if (dir) closedir(dir);
-	qsort(files, nfiles, sizeof(*files), fileCmp);
-	if (fl.sel >= nfiles) fl.sel = nfiles ? nfiles - 1 : 0;
+	dumpScan(&dumps);
+	if (fl.sel >= dumps.n) fl.sel = dumps.n ? dumps.n - 1 : 0;
 }
 
 static void filePath(char *out, u32 max)
 {
-	snprintf(out, max, MF_DUMPS "/%s", files[fl.sel].name);
+	snprintf(out, max, MF_DUMPS "/%s", dumps.ent[fl.sel].name);
 }
 
 static void fileDelete(void)
@@ -439,50 +488,22 @@ static void fileDelete(void)
 	snprintf(kpath, sizeof(kpath), "%.*s.keys.txt", (int)strlen(path) - 4, path);
 	remove(path);
 	remove(kpath);
-	toast("Deleted %s", files[fl.sel].name);
+	toast("Deleted %s", dumps.ent[fl.sel].name);
 	filesScan();
-}
-
-static void fileClone(void)
-{
-	cloneStart(&cl, false);
-}
-
-static void fileCloneAsk(void)
-{
-	confirm("Write to magic card", fileClone, "Write %s onto the magic card on the reader?\n"
-		"Everything on that card is overwritten (Gen1a, Gen2, Gen4 GTU, USCUID).", files[fl.sel].name);
-}
-
-// The UID, SAK and ATQA from block 0: 4-byte UID + BCC, SAK, ATQA; else a 7-byte UID, SAK, ATQA.
-static void fileEmuUid(void)
-{
-	const u8 *b = cl.data[0];
-	Card c;
-	c.uidLen = (b[0] ^ b[1] ^ b[2] ^ b[3]) == b[4] ? 4 : 7;
-	memcpy(c.uid, b, c.uidLen);
-	c.sak = b[c.uidLen == 4 ? 5 : 7];
-	memcpy(c.atqa, b + (c.uidLen == 4 ? 6 : 8), 2);
-	emuStartUid(&c);
-}
-
-static void fileEmu(void)
-{
-	emuStartMfc(&cl, files[fl.sel].name);
 }
 
 static void filesInput(u32 kDown, u32 kRepeat)
 {
-	uiListNav(&fl, nfiles, 12, kRepeat);
+	uiListNav(&fl, dumps.n, 12, kRepeat);
 	if (kDown & KEY_B) appBack();
-	if (!nfiles) return;
+	if (!dumps.n) return;
 	char path[128];
 	filePath(path, sizeof(path));
 	if (kDown & (KEY_A | KEY_X)) {
 		static MfDump d;
 		if (!mfLoadDump(&d, path)) {
-			msgBox("Saved dumps", "%s is not a Mifare Classic dump\n(%d bytes).", files[fl.sel].name,
-				files[fl.sel].blocks * 16);
+			msgBox("Saved dumps", "%s is not a Mifare Classic dump\n(%lu bytes).", dumps.ent[fl.sel].name,
+				(unsigned long)dumps.ent[fl.sel].size);
 			return;
 		}
 		if (kDown & KEY_A) {
@@ -490,45 +511,45 @@ static void filesInput(u32 kDown, u32 kRepeat)
 			return;
 		}
 		cl = d;
-		static const MenuItem items[] = { { "Write to magic card", fileCloneAsk }, { "Emulate this card", fileEmu },
-			{ "Emulate its UID", fileEmuUid } };
-		popup(files[fl.sel].name, items, cl.valid[0] ? 3 : 1);
+		MenuItem items[8];
+		popup(dumps.ent[fl.sel].name, items, mfDumpActions(items, &cl, dumps.ent[fl.sel].name));
 	}
-	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s and its key file?", files[fl.sel].name);
+	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s and its key file?", dumps.ent[fl.sel].name);
 }
 
 static void filesDraw(void)
 {
 	char hdr[32];
-	snprintf(hdr, sizeof(hdr), "%d dump%s", nfiles, nfiles == 1 ? "" : "s");
+	snprintf(hdr, sizeof(hdr), "%d dump%s", dumps.n, dumps.n == 1 ? "" : "s");
 	uiHeader("Saved dumps", hdr);
-	if (!nfiles) {
+	if (!dumps.n) {
 		uiTextCenter(UI_W / 2, 100, S_BODY, uiCol[COL_DIM], "No dumps yet.");
 		uiTextCenter(UI_W / 2, 118, S_SMALL, uiCol[COL_DIM], "Read a card, or copy .bin dumps to " MF_DUMPS);
 		uiFooter(BTN_B " back");
 		return;
 	}
-	for (int i = 0; i < 12 && fl.top + i < nfiles; i++) {
-		const FileEnt *f = &files[fl.top + i];
+	for (int i = 0; i < 12 && fl.top + i < dumps.n; i++) {
+		const DumpEnt *f = &dumps.ent[fl.top + i];
+		int blocks = f->size / 16;
 		float y = 24 + i * LINE_H;
 		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
 		char name[64];
 		snprintf(name, sizeof(name), "%s", f->name);
 		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 200, S_BODY)); // up to the size column
 		int sectors = 0;
-		while (sectors < 40 && mfFirstBlock(sectors) < f->blocks) sectors++;
-		uiTextRight(268, y + 1, S_SMALL, uiCol[mfFirstBlock(sectors) == f->blocks ? COL_ACCENT : COL_ERR], "%s",
-			mfFirstBlock(sectors) == f->blocks ? sizeName(sectors) : "not MFC");
-		if (f->mtime) {
+		while (sectors < 40 && mfFirstBlock(sectors) < blocks) sectors++;
+		uiTextRight(268, y + 1, S_SMALL, uiCol[mfFirstBlock(sectors) == blocks ? COL_ACCENT : COL_ERR], "%s",
+			mfFirstBlock(sectors) == blocks ? sizeName(sectors) : "not MFC");
+		if (f->mtime > 1) {
 			time_t t = f->mtime;
 			struct tm *tm = gmtime(&t);
 			uiTextRight(UI_W - 10, y + 1, S_SMALL, uiCol[COL_DIM], "%04d-%02d-%02d %02d:%02d", tm->tm_year + 1900,
 				tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min);
 		}
 	}
-	if (nfiles > 12) uiTextRight(UI_W - 6, UI_H - 34, S_SMALL, uiCol[COL_DIM], "%d-%d of %d", fl.top + 1,
-		fl.top + 12 < nfiles ? fl.top + 12 : nfiles, nfiles);
-	uiFooter(BTN_A " open   " BTN_X " write, emulate   " BTN_Y " delete   " BTN_B " back");
+	if (dumps.n > 12) uiTextRight(UI_W - 6, UI_H - 34, S_SMALL, uiCol[COL_DIM], "%d-%d of %d", fl.top + 1,
+		fl.top + 12 < dumps.n ? fl.top + 12 : dumps.n, dumps.n);
+	uiFooter(BTN_A " open   " BTN_X " actions   " BTN_Y " delete   " BTN_B " back");
 }
 
 static const Screen filesScreen = { filesScan, filesInput, filesDraw }; // rescanned: the editor may have saved one
@@ -536,6 +557,11 @@ static const Screen filesScreen = { filesScan, filesInput, filesDraw }; // resca
 void mfFilesChanged(void)
 {
 	filesScan();
+}
+
+void mfFilesWarm(void)
+{
+	if (!dumps.scanned) dumpScan(&dumps);
 }
 
 // --- menu and family ---
@@ -611,7 +637,7 @@ static const MenuEntry mfcEntries[] = {
 	               "USCUID config.", startScan },
 	{ "Read card", "Dump every sector. Keys from the dictionary, then the nested and static-nonce attacks and the "
 	               "magic backdoors. Saved to the SD card and opened in the editor.", startRead },
-	{ "Saved dumps", "View and edit dumps, write them onto magic cards.", openFiles },
+	{ "Saved dumps", "View and edit dumps, write them onto magic cards, or emulate them (1K, Mini): the 3DS as the card.", openFiles },
 	{ "Enter a key", "Type a sector key into the dictionary (" MF_KEYS "), then read the card with it.", enterKey },
 	{ "GTU password", "Set the Gen4 GTU password the magic card operations use (default 00000000).", gtuPwd },
 	{ "Download keys", "Fetch pm3's mfc_default_keys.dic (~2500 keys, over Wi-Fi). Read card checks them "

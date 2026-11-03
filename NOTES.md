@@ -1664,3 +1664,13 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   All 9 swkbd callers moved (Amiibo search, NDEF URL / text, OATH password / name / secret / new
   password x2, APDU). Fixed-length keys keep entryHex. On the 3DS: search opens at once; 5 quick
   open / cancel cycles leave the UI responsive.
+
+## Saved dump lists: SD card file calls are slow (nfcprobe dumplist.c) -- 2026-11-02
+- Entering a saved dumps list took 3.3 s with 72 dumps: per file stat() ~23 ms and archive_getmtime() ~21 ms on
+  the SD card; the readdir walk itself 85 ms. The Ultralight list also opened each file for its header.
+- dumplist.c: FSDIR_Read (16 entries per call) gives names and sizes without a stat; the date and the family's
+  value (Ultralight pages from the header) are cached per name + size across scans; a background thread
+  (lowest priority) scans both lists at app start. Entering a list: 85 ms. The editors' Save drops the
+  file's cache entry (same size, new date).
+- popup() cut menus at 12 items (the Classic editor could reach 13): it scrolls now (24 items, 12 rows).
+

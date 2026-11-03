@@ -752,7 +752,7 @@ static const SimStep script[] = {
 	CALL(reset), CALL(mfcMenu), D, D, D, D, D, SHOT("mfc_menu_download"),
 	CALL(reset), CALL(mfuMenu), D, D, D, D, SHOT("mfu_menu_download"),
 	CALL(reset), CALL(dfMenu), D, D, SHOT("df_menu_download"),
-	A, SHOT("mfc_files"), X, SHOT("mfc_files_clone_confirm"), B, Y, SHOT("mfc_files_delete_confirm"), B,
+	CALL(reset), CALL(mfcMenu), D, D, A, SHOT("mfc_files"), X, SHOT("mfc_files_popup"), D, A, SHOT("mfc_files_clone_confirm"), B, Y, SHOT("mfc_files_delete_confirm"), B,
 	R, SHOT("mfc_files_page2"), L,
 	D, D, D, A, SHOT("mfc_files_bad"), B,
 	CALL(reset), CALL(mfcNone), SHOT("mfc_card_nomagic"), CALL(mfcGen1a2), SHOT("mfc_card_gen1a_gen2"),
@@ -768,7 +768,7 @@ static const SimStep script[] = {
 	CALL(reset), CALL(ed1k), SHOT("ed_block0"), D, SHOT("ed_data"), X, SHOT("ed_data_actions"), B, D, SHOT("ed_data2"), D, SHOT("ed_trailer"),
 	R, R, R, R, R, R, A, SHOT("ed_acl_editor"), R, R, SHOT("ed_acl_editor_locked"), B,
 	X, SHOT("ed_actions"), B, Y, X, SHOT("ed_actions_paste"), B, U, A, U, SHOT("ed_editing"), B,
-	D, D, SHOT("ed_value"), X, SHOT("ed_value_actions"), B, CALL(edValueOk), SHOT("ed_value_ok"), A, U, B, SHOT("ed_modified"),
+	D, D, SHOT("ed_value"), X, SHOT("ed_value_actions"), U, SHOT("ed_value_actions_end"), B, CALL(edValueOk), SHOT("ed_value_ok"), A, U, B, SHOT("ed_modified"),
 	KEYS(KEY_R), D, D, D, SHOT("ed_bad_acl"), B, SHOT("ed_close_confirm"), B,
 	X, D, D, A, SHOT("ed_write_trailer"), B,
 	CALL(edWbOk), SHOT("ed_wb_ok"), CALL(reset), CALL(ed1k), CALL(edWbFail), SHOT("ed_wb_fail"),
@@ -777,7 +777,7 @@ static const SimStep script[] = {
 	D, D, R, R, R, R, R, R, A, SHOT("ed_4k_acl"), B,
 
 	// Ultralight / NTAG
-	CALL(reset), CALL(mfuMenu), SHOT("mfu_menu_0"), D, SHOT("mfu_menu_1"), D, SHOT("mfu_menu_2"),
+	CALL(reset), CALL(mfuMenu), SHOT("mfu_menu_0"), D, SHOT("mfu_menu_1"), D, SHOT("mfu_menu_2"), D,
 	A, SHOT("mfu_files"), X, SHOT("mfu_files_popup"), A, SHOT("mfu_files_restore_confirm"), B, X, D, A,
 	SHOT("mfu_files_clone_confirm"), B, D, D, A, SHOT("mfu_files_bad"), B,
 	CALL(reset), CALL(mfuN215), SHOT("mfu_card_ntag215_gtu"), CALL(mfuEv1), SHOT("mfu_card_ev1"),
@@ -808,7 +808,7 @@ static const SimStep script[] = {
 
 	// Ultralight editor
 	CALL(reset), CALL(edN215), SHOT("mfued_p0"), D, D, SHOT("mfued_p2"), D, SHOT("mfued_p3"), D, SHOT("mfued_user"),
-	X, SHOT("mfued_actions"), D, D, A, SHOT("mfued_write_confirm"), B, X, D, D, D, A, SHOT("mfued_restore_confirm"), B,
+	X, SHOT("mfued_actions"), D, D, A, SHOT("mfued_write_confirm"), B, X, D, D, D, D, D, D, A, SHOT("mfued_restore_confirm"), B,
 	A, U, B, SHOT("mfued_modified"),
 	CALL(reset), CALL(edN215), U, U, U, U, SHOT("mfued_cfg0"), D, SHOT("mfued_cfg1"), D, SHOT("mfued_pwd"),
 	D, SHOT("mfued_pack"),
