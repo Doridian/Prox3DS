@@ -608,6 +608,11 @@ static u32 rx_hook(void)
 #endif
 }
 
+#define REARM_CODE
+#define REARM_VAR
+#define DISC_VAR
+#include "rearm.h"
+
 AON static int hook(u8 *msg)
 {
 	if ((msg[0] & 0xF) != 0xF || (msg[1] & 0x3F) != OID_DEBUG) return 0;
@@ -653,12 +658,19 @@ AON static int hook(u8 *msg)
 	return 1;
 }
 
+static int cmd_hook(u8 *msg)
+{
+	rearm_cmd(msg);
+	return hook(msg);
+}
+
 // The ROM treats a nonzero return as failure; code must start right after the entry word.
 __attribute__((section(".text.init"))) int init(void)
 {
 	extern u32 __bss_start[], __bss_end[];
 	for (u32 *p = __bss_start; p < __bss_end; p++) *p = 0;
-	CMD_HOOK = (u32)hook;
+	CMD_HOOK = (u32)cmd_hook;
 	LA_HOOK = (u32)rx_hook;
+	RF_EVT_HOOK = (u32)rf_hook;
 	return 0;
 }

@@ -1430,7 +1430,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
     DATA (PBF reassembly, a credit per packet, CORE_CONN_CREDITS returns it when the next block comes).
     Type 4 NDEF tag verified with pm3: `hf 14a ndefread` 8/8 back to back, UPDATE BINARY write + read back.
   - Re-arm after deactivation to idle: RF_DISCOVER sent right away (or 20 ms later) gets RSP OK and field
-    NTFs, but the chip never activates again; 100 ms later works every time.
+    NTFs, but the chip never activates again; 100 ms later works every time. (Superseded: the chip re-arms by
+    itself now, see "Listen re-arm on the chip" below; "never again" did not reproduce over the network.)
   - pm3 `hf 14a ndefread` (and the DESFire-only `ndefwrite`) leave the field on: the chip stays in the
     session, and the next pm3 command's field reset lands in the deactivation -> "No card" on every
     other run. Add `; hw fpgaoff` when testing.
@@ -1536,9 +1537,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - emu.c: a one-byte answer (native status) used to be replaced with 6F00, and logApdu read r[rlen - 2].
 - pm3 (synthetic EV3 file + a real EV3 info file): lsapp --files (apps, key settings, DF names, files, auth
   probes), read std / records (newest-first offsets) / value, EV1 AES auth + encrypted read (CRC checked by pm3),
-  wrong key refused, 2K3DES PICC auth + GetCardUID. `hf mfdes info` stops after GetVersion: pm3 drops the field
-  and sends WUPA for only ~11 ms; listening again needs RF_DISCOVER >= ~100 ms after the deactivation to idle
-  (50 ms: same). Same for back-to-back pm3 commands in one -c: separate calls work.
+  wrong key refused, 2K3DES PICC auth + GetCardUID. `hf mfdes info` stopped after GetVersion (fixed by the
+  chip-side re-arm, "Listen re-arm on the chip" below).
 - Not done: writes (9D).
 - Later the same day: legacy D40 (0A) and EV2 (71 First / 77 NonFirst) logins, card side of pm3's code.
   D40 (DES / 2K3DES apps): pm3 deciphers in CBC send mode (y_i = D(x_i ^ y_i-1)), so the card enciphers
@@ -1745,3 +1745,37 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   file's cache entry (same size, new date).
 - popup() cut menus at 12 items (the Classic editor could reach 13): it scrolls now (24 items, 12 rows).
 
+## Listen re-arm on the chip (chip/rearm.h, all three chip images) -- 2026-11-02
+- Why pm3 `hf mfdes info` (and any back-to-back commands in one -c) missed the emulated card: tools/exp/listen/
+  rearm.py and irq.py (lmon IRQ log, ECHO=1 answers APDUs and re-arms, EVERY=s keeps monitor reads out of
+  the log) with the pm3 under the 3DS.
+  - Only a session (RATS + an I-block) ends in a deactivation to idle; `hf 14a reader` (RATS, field off)
+    leaves the chip in discovery and it answers again on its own.
+  - After an APDU session: pm3 field off -> field-lost IRQ -> the ROM stops listening within 3 ms
+    (0x5C554 / 0x5C560 -> 0). The host's RF_DISCOVER arrives 70-250 ms later (network; the app is faster but
+    still far off). pm3 drops its field for only a few ms before reselecting, then WUPAs 50 ms after field on;
+    with `msleep -t 50` between two commands the field was back 62 ms after the drop and listening only at
+    207 ms: nothing answered (field detection is edge-triggered). `msleep -t 150` worked.
+  - The old note "RF_DISCOVER right away never activates again" did not reproduce from the PC: delay 0
+    re-arms worked every time (they land >= 170 ms after the drop anyway).
+- ROM: RF_DISCOVER handler 0x18E86 = 0x1ACFC(msg) (in idle it only stores the msg POINTER at 0x39E8E,
+  0x1E856 = unaligned u32 store), RSP, then RF state machine 0x1AB6A(event 5). 0x1AB6A(evt): RAM hook
+  *(0x3876C)(evt) first (nonzero = consumed), state byte 0x39E92 (0 idle, 1 discovery, 3 listen active),
+  switch per state (helper 0x1EBC4: byte table after the BL). Seen in listen: event 5 0 -> 1 (discover),
+  event 9 1 -> 3 (activated), event 0 3 -> 0 (field lost / session over). Event 5 reads the discovery
+  parameters through the stored pointer: calling it from the monitor did nothing until the pointer was
+  aimed at a static copy of `21 03 03 01 80 01`.
+- Event 5 from inside the hook for event 0 (right after the ROM's handling) sets state 1 but the listen
+  registers stay 0: lost. From a ROM timer 1 ms later it works (debug image with a delay variable: 200, 50,
+  20, 5, 1 ms all fine). ROM timers: 0xA90 init(t, fn, arg, flags), 0xB04 start(t, us) (<= 0: call now),
+  0xAAA stop; t = next, fn, arg, deadline, flags (20 bytes, may be statically initialised).
+- chip/rearm.h: the command hook keeps a copy of the host's last listen-only RF_DISCOVER (RF_DEACTIVATE
+  clears it), the event hook starts the 1 ms timer on event 0, the timer (same function, arg 0xFF) replays
+  the copy if the state is still idle. The host no longer re-arms (nfcprobe emu.c). reader.c has no room:
+  the hooks live in its AON code (AON_SPLIT 0x68104 after `capturing` became a u8; variables still end at
+  0x68410), the copy in the image (exactly full again); emu.c has room in its image.
+- Debug images: the 0x68410 limit bites quickly (a 4-byte overrun worked, 0x18 killed listening).
+- pm3 under the 3DS, all in single -c chains: DESFire `hf mfdes info` complete (version, signature, AIDs,
+  PICC settings, free memory) twice; `read` AES + plain + `getuid` back to back; Ultralight `hf mfu info;
+  rdbl; rdbl; hf 14a reader; hf mfu dump`; Classic `hf mf chk --1k; hf 14a reader; rdbl; rdbl`; echo APDUs
+  x3 in one chain.

@@ -31,11 +31,10 @@ static bool nciOk(const u8 *cmd, u32 len)
 	return false;
 }
 
-#define REARM_MS 100 // sooner (0 or 20 ms) and the chip never activates again
 static u32 credits, maxPayload;
-static u64 rearmAt; // when to listen again after a deactivation to idle, 0 = not pending
 
-// The NTFs around a session. A deactivation to idle (field gone) stops listening: listen again.
+// The NTFs around a session. After a deactivation to idle (field gone) the chip listens again by itself
+// (chip/rearm.h), 1 ms later: a host RF_DISCOVER takes far longer than readers that reselect wait.
 static void control(const u8 *p, u32 len, EmuApdu fn)
 {
 	if (len < 5) return;
@@ -48,7 +47,6 @@ static void control(const u8 *p, u32 len, EmuApdu fn)
 		logp("emu: session %lu\n", (unsigned long)emu.sessions);
 	} else if (p[1] == 0x61 && p[2] == 0x06) {
 		emu.active = false;
-		if (p[4] == 0) rearmAt = osGetTime() + REARM_MS;
 	} else if (p[1] == 0x61 && p[2] == 0x07) {
 		emu.field = p[4];
 		emu.fields += p[4] != 0;
@@ -227,13 +225,8 @@ static bool listenAs(EmuApdu fn)
 	logp("emu: listening as %s, ATQA %02X%02X, SAK %02X\n", u, e->atqa[1], e->atqa[0], e->sak);
 	u32 clen = 0;
 	bool over = false;
-	rearmAt = 0;
 	u64 pollAt = osGetTime() + POLL_MS;
 	while (!mfCancel) {
-		if (rearmAt && osGetTime() >= rearmAt) {
-			i2cNfcWrite(listenA, sizeof(listenA)); // its RSP comes through control(), ignored
-			rearmAt = 0;
-		}
 		if (chipBase && osGetTime() >= pollAt) {
 			chipPoll();
 			pollAt = osGetTime() + POLL_MS;

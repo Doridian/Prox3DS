@@ -79,7 +79,7 @@ static struct {
 	u32 count; // frames captured so far; frame i is in ring[(i - 1) % N_FRAMES], seq = i
 	struct frame ring[N_FRAMES];
 } capture;
-static u32 capturing;
+static u8 capturing;
 
 // The RF and timer interrupt groups: pass the status through unchanged (identity filter), the same
 // as the ROM would. (The per-interrupt trace that once lived here, and OP_CAPTURE's pointer to it,
@@ -489,7 +489,7 @@ static u32 darkside(const u8 *arg, u32 n, u32 nrar_tx, struct dslot *ds)
 // darkside timed-sync collector. NOTES.md keeps the framer dumps it produced; re-add from git if
 // another technology needs one.)
 
-static int hook(u8 *msg)
+__attribute__((noinline)) static int hook(u8 *msg)
 {
 	if ((msg[0] & 0xF) != 0xF || (msg[1] & 0x3F) != OID_DEBUG) return 0;
 	u32 len = msg[2];
@@ -607,11 +607,29 @@ static int hook(u8 *msg)
 	return 1;
 }
 
+#define AON     __attribute__((section(".aon"), noinline)) // code in the AON RAM (link.ld): no room in the image
+#define REARM_CODE AON
+#define REARM_VAR  __attribute__((section(".aon.var")))
+#define DISC_VAR   __attribute__((section(".data.disc")))
+#include "rearm.h"
+
+AON static int cmd_hook(u8 *msg)
+{
+	rearm_cmd(msg);
+	return hook(msg);
+}
+
+AON static void hooks_on(void)
+{
+	CMD_HOOK = (u32)cmd_hook;
+	RF_EVT_HOOK = (u32)rf_hook;
+}
+
 // The ROM treats a nonzero return as failure; code must start right after the entry word.
 __attribute__((section(".text.init"))) int init(void)
 {
 	extern u32 __bss_start[], __bss_end[];
 	for (u32 *p = __bss_start; p < __bss_end; p++) *p = 0;
-	CMD_HOOK = (u32)hook;
+	hooks_on();
 	return 0;
 }

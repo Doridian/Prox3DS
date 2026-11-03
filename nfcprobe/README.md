@@ -87,9 +87,9 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   Authentication with the keys the file has, all three kinds: legacy D40 (DES / 2K3DES), EV1 (AES, ISO 2K3DES /
   3K3DES) and EV2 (AES, First and NonFirst), then MAC'd or encrypted answers as a real card. Readers may write
   (data, records, credit / debit, with the file's keys and comm mode; transactions commit as on a card); on stop
-  the app offers to save the result as a new info file. pm3's `hf mfdes info` reselects within ~10 ms
-  of dropping its field, faster than the chip listens again (100 ms), so it stops after GetVersion; `lsapp`,
-  `read`, `auth` work.
+  the app offers to save the result as a new info file. pm3's `hf mfdes info`, `lsapp`, `read`, `auth` work.
+- After a reader drops its field the chip listens again by itself 1 ms later (`chip/rearm.h`, in every chip
+  image), so readers that reselect quickly (pm3 command chains, `hf mfdes info`) find the card again.
 - APDU log: an empty ISO-DEP card answering from `sdmc:/nfcprobe/emu/apdu.txt` ("<command prefix>
   <response>" in hex per line, first match wins, else 6A82 for a SELECT / 6D00), every APDU appended to
   `sdmc:/nfcprobe/emu/apdu.log`.
