@@ -1499,6 +1499,18 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Image space: the code is ~2.3 KB, so struct emu and the frame log moved to zeroed AON RAM and only the 1 KB
   page / block memory is in the image; CALL / WRITE32 dropped. RAM after 0x3C530 holds data: the image can't
   grow. With the parity TX it overflowed: code in the AON RAM below (.aon).
+- 2K / 4K (2026-11-02): emu.c is built twice, emu_mfu (Ultralight / NTAG) and emu_mfc (Classic, 2908 of 3364
+  bytes), the app loads the family's image. A 4K's blocks past 63 go to chip RAM the ROM leaves alone while
+  listening (tools/exp/listen/ramfree.py: snapshots of 0x38000-0x40000 around pm3 sessions, then candidate
+  runs filled with a pattern through a 45 s session): 0x3C530-0x3CC00 (blocks 64-172) and 0x39610-0x39C10
+  (173-255) stay untouched and the emulation keeps working. Ruled out: 0x38278-0x38870 and 0x39410-0x39610,
+  0x39C10-0x39E10 (filled: the chip stops answering), 0x38F68-0x390A0 (changes; 0x390A0-0x39360 is free),
+  0x39E98-0x3A240 (untouched but the deep end of the stack below SP 0x3A374: not used). Image loads power-cycle
+  the chip, so the ROM gets that RAM back. MON_EMU answers 5 addresses (struct, log, blocks 0-63, 64, 173).
+  Trailers: block | 3 below 128, | 15 above; npages 0 = 256 blocks. pm3 against a real 4K dump (7991086F):
+  hf mf chk --4k all 80 keys, two hf mf dump --4k identical, wrbl blocks 100 and 200 + read back, the app's
+  stop offered to save the 2 written blocks. A synthetic dump with distinct blocks read right across both
+  areas (sectors 0, 1, 15, 16, 31-33, 39).
 - pm3 under the 3DS: hf mf rdbl / rdsc with each sector's key, wrbl + read back, hf mf chk --1k (dozens of
   wrong-key auths, all silent, every key found), hf mf dump twice identical; a few single reads NACKed or
   auth errors, retried by pm3.

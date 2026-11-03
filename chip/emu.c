@@ -2,7 +2,10 @@
 // protocol the ROM can't hand to the host in time (no WTX outside ISO-DEP: an Ultralight answers a READ
 // within ~100 us). memrw's protocol (2F 2C) with READ8 0, WRITE8 1 and READ32 3 only (no room for
 // CALL / WRITE32), so tools/chipmon.py and the app's mon.c drive it, plus:
-//   op 5 EMU     -> 4F 2C | 00 | addresses (u32) of struct emu, the frame log, the page / block memory
+//   op 5 EMU     -> 4F 2C | 00 | addresses (u32) of struct emu, the frame log, the page / block memory,
+//                   and (Classic) where blocks 64 and 173 start
+// Built twice (Makefile): emu_mfu (-DEMU_MFU, Ultralight / NTAG) and emu_mfc (-DEMU_MFC, Classic), as the
+// image has no room for both.
 // The host fills struct emu (WRITE8) and sets mode; the rest happens in the RX hook.
 //
 // The ROM's listen-A frame handler 0xFF84 (from the RX-done path 0x10114, interrupt context) first
@@ -40,7 +43,7 @@ enum { MODE_OFF, MODE_MFU, MODE_MFC = 3 };
 // Shared with the host (nfcprobe emu.c, tools/exp/listen/mfuemu.py): keep the layout.
 struct emu {
 	u8 mode;
-	u8 npages;       // MFU: pages in mem (READ rolls over here); MFC: blocks (64 = 1K, 20 = Mini)
+	u8 npages;       // MFU: pages in mem (READ rolls over here); MFC: blocks (20 Mini, 64 1K, 128 2K, 0 4K)
 	u8 flags;        // bit 0 GET_VERSION answers, bit 1 READ_SIG answers, bit 2 check PWD_AUTH
 	u8 pad0;
 	u8 version[8];   // MFC: [0..3] = the UID bytes Crypto1 takes (the last 4 of a 7-byte UID)
@@ -53,7 +56,14 @@ struct emu {
 	u32 writes;      // pages written (WRITE / COMPATIBILITY WRITE)
 	u32 nlog;        // elog[nlog % N_LOG] is next
 } emu; // zeroed AON RAM (init), like elog: only emem is in the downloaded image
-static u8 emem[MFU_MAX_PAGES * 4] __attribute__((section(".data"))); // MFU pages / MFC blocks
+static u8 emem[MFU_MAX_PAGES * 4] __attribute__((section(".data"))); // MFU pages / MFC blocks 0-63
+#ifdef EMU_MFC
+// A 2K / 4K's other blocks: RAM the ROM leaves alone while it listens (filled with a pattern, untouched
+// through pm3 sessions: tools/exp/listen/ramfree.py; the neighbours hang the chip or change). The chip is
+// power-cycled for the next image, so the ROM gets it back as it was.
+#define BLK2 ((u8 *)0x3C530) // blocks 64-172, up to 0x3CC00
+#define BLK3 ((u8 *)0x39610) // blocks 173-255, up to 0x39C10
+#endif
 static u8 elog[N_LOG][8]; // frames in the active states: state (| 0x80: decrypted), len, first 6 bytes
                           // (zeroed AON RAM, not downloaded)
 
@@ -106,6 +116,7 @@ static void tx4(u32 nib)
 	REG(0x5C568) = old;
 }
 
+#ifdef EMU_MFU
 static u8 cwrite_page; // COMPATIBILITY WRITE: page + 1 between its two frames
 
 // READ: 4 pages from p, rolling over at npages.
@@ -188,8 +199,9 @@ nack:
 	              // ROM would take that WUPA as a reason to halt)
 	return 1;
 }
+#endif
 
-
+#ifdef EMU_MFC
 // --- MIFARE Classic, card side ---
 // Crypto1 as in chip/memrw.c (crapto1's odd/even halves). The reader's frames arrive with the parity
 // bits stripped (encrypted parity or not); ours go out with their encrypted parity as a raw bit stream
@@ -242,6 +254,17 @@ static u32 prng_successor(u32 x, int n)
 	x = swap32(x);
 	while (n--) x = x >> 1 | (x >> 16 ^ x >> 18 ^ x >> 19 ^ x >> 21) << 31;
 	return swap32(x);
+}
+
+// Block b's 16 bytes; its sector's trailer (sectors of 4 blocks, from block 128 of 16).
+static u8 *blk(u32 b)
+{
+	return b < 64 ? emem + b * 16 : b < 173 ? BLK2 + (b - 64) * 16 : BLK3 + (b - 173) * 16;
+}
+
+static u32 trailer(u32 b)
+{
+	return b < 128 ? b | 3 : b | 15;
 }
 
 static enum { C_IDLE, C_NT, C_AUTH } cst;
@@ -304,10 +327,10 @@ static void c_tx(u8 *d, u32 n, const u8 *feed)
 }
 
 // AUTH: load the sector's key, feed uid ^ nt; nt goes out plain (first auth) or encrypted (nested).
-static void c_auth(u32 keyB, u32 blk, u32 nested)
+static void c_auth(u32 keyB, u32 n, u32 nested)
 {
 	static u8 b[4], un[4];
-	const u8 *tr = emem + (blk | 3) * 16;
+	const u8 *tr = blk(trailer(n));
 	// a real PRNG state, some steps on from the last one (stepping to a random index takes too long)
 	c_nt = prng_successor(c_nt ? c_nt : 0x01200145, 16 + (TIMER & 63));
 	c1_key(tr + (keyB ? 10 : 0));
@@ -342,7 +365,7 @@ static void c_nack(void)
 static u32 mfc(const u8 *f, u32 len)
 {
 	static u8 d[18];
-	u32 nb = emu.npages;
+	u32 nb = emu.npages ? emu.npages : 256;
 	if (cst == C_NT) { // {nr}{ar}: nr fed in encrypted, ar checked, {at} back
 		cst = C_IDLE;
 		if (len != 8) return 1;
@@ -384,13 +407,14 @@ static u32 mfc(const u8 *f, u32 len)
 		return 1;
 	}
 	if (c_wblock) { // WRITE data
-		u32 blk = c_wblock - 1;
+		u32 b = c_wblock - 1;
 		c_wblock = 0;
-		if (len != 18 || !blk) { // block 0 stays (manufacturer block)
+		if (len != 18 || !b) { // block 0 stays (manufacturer block)
 			c_nack();
 			return 1;
 		}
-		for (u32 i = 0; i < 16; i++) emem[blk * 16 + i] = d[i];
+		u8 *m = blk(b);
+		for (u32 i = 0; i < 16; i++) m[i] = d[i];
 		emu.writes++;
 		c_tx4(0xA);
 		return 1;
@@ -401,11 +425,11 @@ static u32 mfc(const u8 *f, u32 len)
 	}
 	switch (d[0]) {
 	case 0x30: { // READ: a trailer shows key A as zeros, key B only where its access bits allow
-		u32 blk = d[1];
-		if (blk >= nb) break;
-		const u8 *m = emem + blk * 16;
+		u32 b = d[1];
+		if (b >= nb) break;
+		const u8 *m = blk(b);
 		for (u32 i = 0; i < 16; i++) d[i] = m[i];
-		if ((blk & 3) == 3) {
+		if (b == trailer(b)) {
 			u32 c = (m[7] >> 7 & 1) << 2 | (m[8] >> 3 & 1) << 1 | (m[8] >> 7 & 1);
 			for (u32 i = 0; i < 6; i++) d[i] = 0;
 			if (c != 0 && c != 1 && c != 2)
@@ -433,11 +457,14 @@ static u32 mfc(const u8 *f, u32 len)
 	c_nack();
 	return 1;
 }
+#endif
 
 static u32 rx_hook(void)
 {
 	u32 st = LA_STATE;
+#ifdef EMU_MFC
 	if (st != 4 && st != 9) cst = C_IDLE; // a new selection
+#endif
 	if (emu.mode == MODE_OFF || (st != 4 && st != 9)) return 0;
 	const u8 *f = LA_FRAME;
 	u32 len = LA_LEN;
@@ -445,18 +472,23 @@ static u32 rx_hook(void)
 	l[0] = st;
 	l[1] = len;
 	for (u32 i = 0; i < 6; i++) l[2 + i] = f[i]; // past len: stale buffer bytes, not shown
+#ifdef EMU_MFC
 	// Classic, authenticated: encrypted frames (4, 8 or 18 bytes) can start with any byte
-	if (emu.mode == MODE_MFC && cst != C_IDLE && (len == 4 || len == 8 || len == 18)) {
+	if (cst != C_IDLE && (len == 4 || len == 8 || len == 18)) {
 		emu.frames++;
 		return mfc(f, len);
 	}
+#endif
 	// Anticollision, HLTA and RATS go to the ROM (it moves the state); so does an empty frame.
 	if (!len || f[0] == 0x26 || f[0] == 0x52 || f[0] == 0x50 || f[0] == 0x93 || f[0] == 0x95 || f[0] == 0x97)
 		return 0;
 	emu.frames++;
-	if (emu.mode == MODE_MFC) return mfc(f, len);
+#ifdef EMU_MFC
+	return mfc(f, len);
+#else
 	if (len < 3 || crc_a(f, len - 2) != (f[len - 2] | f[len - 1] << 8)) return 1; // a bad frame: no answer
 	return mfu(f, len);
+#endif
 }
 
 AON static int hook(u8 *msg)
@@ -490,7 +522,14 @@ AON static int hook(u8 *msg)
 		put32(buf, (u32)&emu);
 		put32(buf + 4, (u32)elog);
 		put32(buf + 8, (u32)emem);
-		reply(0, buf, 12);
+#ifdef EMU_MFC
+		put32(buf + 12, (u32)BLK2);
+		put32(buf + 16, (u32)BLK3);
+#else
+		put32(buf + 12, 0);
+		put32(buf + 16, 0);
+#endif
+		reply(0, buf, 20);
 		return 1;
 	}
 	reply(1, 0, 0);

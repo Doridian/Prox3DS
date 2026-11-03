@@ -18,8 +18,9 @@ typedef struct {
 } MonFrame;
 
 bool monLoad(void); // power cycle, download memrw, CORE_RESET / GET_PATCH_VERSION / CORE_INIT
-// The same with the card emulation image (chip/emu.c): ops 0-4 only, plus MON_EMU (-> struct emu address).
-bool monLoadEmu(void);
+// The same with a card emulation image (chip/emu.c, one per family: Classic or Ultralight / NTAG): ops 0-4 only,
+// plus MON_EMU (-> struct emu, log, memory addresses).
+bool monLoadEmu(bool classic);
 #define MON_EMU 5
 // One request; returns the answer payload length or MON_NO_ANSWER / MON_STATUS(s).
 int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax);

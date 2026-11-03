@@ -105,7 +105,9 @@ static void setId(const EmuId *id)
 	}
 }
 
-static bool chipUp(bool chipImage)
+enum { CM_MFU = 1, CM_MFC = 3 };
+
+static bool chipUp(int chipImage) // 0: the monitor, else CM_MFU / CM_MFC's image
 {
 	if (!chipEnsure()) {
 		logp("NFC takeover failed\n");
@@ -113,16 +115,16 @@ static bool chipUp(bool chipImage)
 	}
 	// For APDUs the memrw monitor stays loaded but unused: it doesn't get in the way. (The ROM's FRAME_LOG
 	// does: with it on, our DATA answers never go out.)
-	return chipImage ? monLoadEmu() : monLoad();
+	return chipImage ? monLoadEmu(chipImage == CM_MFC) : monLoad();
 }
 
 // struct emu in the chip image (chip/emu.c): keep in step. It and the frame log are in the chip's AON
-// RAM, the page / block memory in the image; MON_EMU gives the three addresses.
+// RAM, the page / block memory in the image (Classic blocks 64-172 and 173-255 in two more places);
+// MON_EMU gives the five addresses.
 enum { CE_MODE = 0, CE_NPAGES = 1, CE_FLAGS = 2, CE_VERSION = 4, CE_SIG = 12, CE_CNT = 44, CE_PACK = 53, CE_PWD = 56,
 	CE_FRAMES = 60, CE_WRITES = 64, CE_NLOG = 68, CE_SIZE = 72 };
-enum { CM_MFU = 1, CM_MFC = 3 };
 #define CE_LOG_N 16
-static u32 chipBase, chipLog, chipMem; // 0 = APDUs answered here
+static u32 chipBase, chipLog, chipMem, chipMem2, chipMem3; // 0 = APDUs answered here
 static u32 chipMode;
 static u32 chipSeen, chipNlog; // log entries shown so far / there
 
@@ -272,27 +274,40 @@ bool emuRun(const EmuId *id, EmuApdu fn)
 	memset(&emu, 0, sizeof(emu));
 	setId(id);
 	chipBase = chipMode = 0;
-	return chipUp(false) && listenAs(fn);
+	return chipUp(0) && listenAs(fn);
 }
 
 // Loads the emulation image, puts hdr (struct emu, mode left 0) and mem in, starts the mode, listens as
 // emu.id until mfCancel; afterwards the final counters and, if readers wrote, mem as it is now.
+// mem's bytes from off to the chip (or back): bytes 0-1023 in the image, then chipMem2 / chipMem3 (chip/emu.c blk()).
+static bool chipMemIo(u8 *mem, u32 memLen, bool write)
+{
+	for (u32 off = 0; off < memLen;) {
+		u32 at = off < 1024 ? chipMem + off : off < 173 * 16 ? chipMem2 + off - 1024 : chipMem3 + off - 173 * 16;
+		u32 end = off < 1024 ? 1024 : off < 173 * 16 ? 173 * 16 : 256 * 16;
+		u32 n = (end < memLen ? end : memLen) - off;
+		if (!(write ? monWrite(at, mem + off, n) : monRead(at, mem + off, n))) return false;
+		off += n;
+	}
+	return true;
+}
+
 static bool chipRun(u8 *hdr, u8 *mem, u32 memLen, u32 mode)
 {
-	if (!chipUp(true)) return false;
-	u8 a[12];
-	if (monDo(MON_EMU, 0, NULL, 0, a, 12) != 12) return false;
-	chipBase = get32(a), chipLog = get32(a + 4), chipMem = get32(a + 8);
+	if (!chipUp(mode)) return false;
+	u8 a[20];
+	if (monDo(MON_EMU, 0, NULL, 0, a, 20) != 20) return false;
+	chipBase = get32(a), chipLog = get32(a + 4), chipMem = get32(a + 8), chipMem2 = get32(a + 12), chipMem3 = get32(a + 16);
 	chipMode = mode;
 	chipSeen = chipNlog = 0;
 	// The mode byte last: the chip starts answering with everything in place.
-	if (!monWrite(chipBase + 1, hdr + 1, CE_SIZE - 1) || !monWrite(chipMem, mem, memLen)) return false;
+	if (!monWrite(chipBase + 1, hdr + 1, CE_SIZE - 1) || !chipMemIo(mem, memLen, true)) return false;
 	u8 m = mode;
 	if (!monWrite(chipBase + CE_MODE, &m, 1)) return false;
 	if (!listenAs(NULL)) return false;
 	u8 st[5 + CE_SIZE - CE_FRAMES] = { 0 };
 	if (monRead(chipBase + CE_FRAMES, st + 5, CE_SIZE - CE_FRAMES)) chipStats(st, sizeof(st));
-	return !emu.writes || monRead(chipMem, mem, memLen);
+	return !emu.writes || chipMemIo(mem, memLen, false);
 }
 
 bool emuRunMfu(MfuDump *d)
@@ -342,12 +357,12 @@ bool emuRunMfu(MfuDump *d)
 
 int emuMfcBlocks(const MfDump *d)
 {
-	return d->sectors == 16 ? 64 : d->sectors == 5 ? 20 : 0;
+	return d->sectors == 5 ? 20 : d->sectors == 16 ? 64 : d->sectors == 32 ? 128 : d->sectors == 40 ? 256 : 0;
 }
 
 bool emuRunMfc(MfDump *d)
 {
-	static u8 hdr[CE_SIZE], mem[16 * 64];
+	static u8 hdr[CE_SIZE], mem[16 * 256];
 	int nb = emuMfcBlocks(d);
 	if (!nb) return false;
 	memset(&emu, 0, sizeof(emu));
@@ -363,25 +378,26 @@ bool emuRunMfc(MfDump *d)
 		memcpy(id.atqa, b0 + 8, 2);
 	}
 	memcpy(id.uid, b0, id.uidLen);
-	if (id.sak & 0x20 || !id.sak) id.sak = nb == 20 ? 0x09 : 0x08; // no ISO-DEP: the ROM would answer RATS
+	if (id.sak & 0x20 || !id.sak) // no ISO-DEP: the ROM would answer RATS
+		id.sak = nb == 20 ? 0x09 : nb == 128 ? 0x19 : nb == 256 ? 0x18 : 0x08;
 	setId(&id);
 	emu.chipPages = nb;
 	memset(hdr, 0, sizeof(hdr));
-	hdr[CE_NPAGES] = nb;
+	hdr[CE_NPAGES] = nb & 0xFF; // 4K: 0
 	memcpy(hdr + CE_VERSION, id.uid + id.uidLen - 4, 4); // Crypto1 takes the last 4 UID bytes
 	for (int i = 0; i < nb; i++) {
 		if (d->valid[i]) memcpy(mem + 16 * i, d->data[i], 16);
 		else memset(mem + 16 * i, 0, 16);
-		if ((i & 3) == 3) { // the trailer with the keys the dump found (unknown: zeros, never opens)
-			int sec = i / 4;
-			memcpy(mem + 16 * i, d->keyFound[sec][0] ? d->keys[sec][0] : (const u8 *)"\0\0\0\0\0\0", 6);
-			memcpy(mem + 16 * i + 10, d->keyFound[sec][1] ? d->keys[sec][1] : (const u8 *)"\0\0\0\0\0\0", 6);
-		}
+	}
+	for (int sec = 0; sec < d->sectors; sec++) { // the trailers with the keys the dump found (unknown: zeros, never opens)
+		int i = mfFirstBlock(sec) + mfSectorBlocks(sec) - 1;
+		memcpy(mem + 16 * i, d->keyFound[sec][0] ? d->keys[sec][0] : (const u8 *)"\0\0\0\0\0\0", 6);
+		memcpy(mem + 16 * i + 10, d->keyFound[sec][1] ? d->keys[sec][1] : (const u8 *)"\0\0\0\0\0\0", 6);
 	}
 	if (!chipRun(hdr, mem, 16 * nb, CM_MFC)) return false;
 	if (emu.writes)
 		for (int i = 1; i < nb; i++) {
-			if ((i & 3) == 3) continue; // trailers: the keys stay as the dump has them
+			if (i == (i < 128 ? i | 3 : i | 15)) continue; // trailers: the keys stay as the dump has them
 			if (memcmp(d->data[i], mem + 16 * i, 16) || !d->valid[i]) {
 				memcpy(d->data[i], mem + 16 * i, 16);
 				d->valid[i] = true;

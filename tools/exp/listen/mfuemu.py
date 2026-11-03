@@ -32,8 +32,8 @@ def main():
     npages = len(mem) // 4
     nfc = nfcnet.Nfc(host)
     mon = chipmon.Mon(nfc, on_other=lambda p: None)
-    mon.load("emu.bin")
-    base, logp, memp = struct.unpack("<III", mon._do(OP_EMU, 0))
+    mon.load("emu_mfu.bin")
+    base, logp, memp = struct.unpack("<III", mon._do(OP_EMU, 0)[:12])
     print(f"struct emu at {base:05X}, {npages} pages")
     hdr = bytes([0, npages, 3, 0]) + version + sig + cnt + bytes(2)
     mon.write(base, hdr)

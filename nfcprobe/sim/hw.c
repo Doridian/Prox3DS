@@ -41,7 +41,7 @@ void netStart(void) {}
 void netStop(void) {}
 
 bool monLoad(void) { return false; }
-bool monLoadEmu(void) { return false; }
+bool monLoadEmu(bool classic) { return false; }
 int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax) { return MON_NO_ANSWER; }
 bool monRead(u32 addr, void *buf, u32 len) { return false; }
 bool monWrite(u32 addr, const void *buf, u32 len) { return false; }

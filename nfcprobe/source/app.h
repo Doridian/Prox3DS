@@ -103,7 +103,7 @@ void emuStartNdef(const u8 *msg, u32 len);                // a Type 4 tag with t
 void emuStartUid(const Card *c);                          // its UID, ATQA and SAK
 void emuStartMfuNdef(const MfuDump *d, const char *name); // a Type 4 tag with the dump's NDEF message
 void emuStartMfu(const MfuDump *d, const char *name);     // the dump's card itself (chip-answered)
-void emuStartMfc(const MfDump *d, const char *name);      // the same for Classic 1K / Mini
+void emuStartMfc(const MfDump *d, const char *name);      // the same for Classic Mini / 1K / 2K / 4K
 
 // HID iClass / PicoPass (iclassui.c)
 void iclassOpenMenu(void);

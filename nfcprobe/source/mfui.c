@@ -637,7 +637,7 @@ static const MenuEntry mfcEntries[] = {
 	               "USCUID config.", startScan },
 	{ "Read card", "Dump every sector. Keys from the dictionary, then the nested and static-nonce attacks and the "
 	               "magic backdoors. Saved to the SD card and opened in the editor.", startRead },
-	{ "Saved dumps", "View and edit dumps, write them onto magic cards, or emulate them (1K, Mini): the 3DS as the card.", openFiles },
+	{ "Saved dumps", "View and edit dumps, write them onto magic cards, or emulate them: the 3DS as the card.", openFiles },
 	{ "Enter a key", "Type a sector key into the dictionary (" MF_KEYS "), then read the card with it.", enterKey },
 	{ "GTU password", "Set the Gen4 GTU password the magic card operations use (default 00000000).", gtuPwd },
 	{ "Download keys", "Fetch pm3's mfc_default_keys.dic (~2500 keys, over Wi-Fi). Read card checks them "

@@ -105,7 +105,8 @@ static float emuView(float x, float y, float w)
 	emuUidHex(&emu.id, u);
 	snprintf(s, sizeof(s), "%s", mode == MODE_NDEF ? "Type 4 tag" : mode == MODE_LOG ? "APDU log" : mode == MODE_MFU ?
 		(runDump.info.type ? runDump.info.type->name : "Ultralight") : mode == MODE_MFC ?
-		(emu.chipPages == 20 ? "MIFARE Classic Mini" : "MIFARE Classic 1K") : "UID only");
+		(emu.chipPages == 20 ? "MIFARE Classic Mini" : emu.chipPages == 128 ? "MIFARE Classic 2K" :
+		 emu.chipPages == 256 ? "MIFARE Classic 4K" : "MIFARE Classic 1K") : "UID only");
 	uiText(x, y, S_SMALL, dim, "%s", uiFit(s, w, S_SMALL));
 	y += SMALL_H;
 	uiText(x, y, S_SMALL, dim, "UID %s, ATQA %02X%02X, SAK %02X", u, emu.id.atqa[1], emu.id.atqa[0], emu.id.sak);
@@ -183,7 +184,7 @@ static void start(void)
 void emuStartMfc(const MfDump *d, const char *name)
 {
 	if (!emuMfcBlocks(d)) {
-		msgBox("Emulate", "Only Classic 1K and Mini dumps fit the NFC chip's memory (%s has %d sectors).", name,
+		msgBox("Emulate", "Only Classic Mini, 1K, 2K and 4K dumps can be emulated (%s has %d sectors).", name,
 			d->sectors);
 		return;
 	}

@@ -5,7 +5,8 @@
 #include "mon.h"
 #include "nfchw.h"
 #include "probe.h"
-#include "emu_ncd_bin.h"
+#include "emu_mfc_ncd_bin.h"
+#include "emu_mfu_ncd_bin.h"
 #include "memrw_ncd_bin.h"
 
 #define N_FRAMES   8
@@ -68,9 +69,9 @@ bool monLoad(void)
 	return loadImage(memrw_ncd_bin, memrw_ncd_bin_size);
 }
 
-bool monLoadEmu(void)
+bool monLoadEmu(bool classic)
 {
-	return loadImage(emu_ncd_bin, emu_ncd_bin_size);
+	return classic ? loadImage(emu_mfc_ncd_bin, emu_mfc_ncd_bin_size) : loadImage(emu_mfu_ncd_bin, emu_mfu_ncd_bin_size);
 }
 
 int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax)
