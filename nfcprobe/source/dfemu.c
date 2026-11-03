@@ -4,7 +4,9 @@
 // file settings, the contents that were read (free, or with a key the dictionary found), free memory, the
 // originality signature, DF names. EV1 authentication (AA AES, 1A ISO 2K3DES / 3K3DES) with the keys the file
 // has; after it the answers carry their CMAC or come encrypted (full mode), as desfire.c expects them on the
-// reader side. Writes are refused (permission denied); refused parts answer with the status they had.
+// reader side. Also the legacy D40 authentication (0A, DES / 2K3DES: MAC4 and CRC16 on file reads only) and
+// EV2 (71 / 77, AES: TI and command counter, MACt on what came MACed), as pm3 talks them.
+// Writes are refused (permission denied); refused parts answer with the status they had.
 #include <string.h>
 #include <3ds.h>
 
@@ -15,15 +17,21 @@
 
 static DfInfo info;
 static DfApp *app; // NULL: the PICC level
+enum { SM_NONE, SM_D40, SM_EV1, SM_EV2 };
 static struct {
-	bool on;
+	u8 mode; // SM_*
 	u8 keyNo;
-	DfCipher c;
-	u8 iv[16];
+	DfCipher c;   // the session key; EV2: SesAuthENCKey
+	u8 iv[16];    // EV1: the running IV
+	DfCipher mac; // EV2: SesAuthMACKey
+	u8 ti[4];     // EV2: transaction identifier (kept for a NonFirst after an error), command counter
+	bool hasTi;
+	u16 ctr;
+	bool macIn;   // EV2: this command came with its MAC
 } ses;
 static struct { // a running authentication: after AF ek(RndB)
 	bool on, known;
-	u8 keyNo, rl;
+	u8 cmd, keyNo, rl;
 	DfCipher k;
 	u8 rb[16], iv[16];
 } au;
@@ -75,20 +83,85 @@ static const DfKey *key(u8 k)
 	return k < 14 && k < (app->maxKeys & 0xF) ? &app->keys[k] : NULL;
 }
 
-// The answer: data (len) and status into out; in a session an OK answer gets its CMAC (plain / MAC mode) or
-// is encrypted with its CRC32 (full), and any other status ends the session.
-static void answer(const u8 *d, u32 len, u8 st, bool full)
+// ISO 14443-A CRC (D40 full mode), appended LSB first
+static void crcA(const u8 *p, u32 len, u8 *out)
+{
+	u32 c = 0x6363;
+	while (len--) {
+		u8 b = *p++ ^ c;
+		b ^= b << 4;
+		c = (c >> 8) ^ (b << 8) ^ (b << 3) ^ (b >> 4);
+	}
+	out[0] = c, out[1] = c >> 8;
+}
+
+// EV2: MACt = the odd bytes of CMAC(SesAuthMACKey, code || CmdCtr || TI || data) (desfire.c ev2Mac)
+static void ev2Mac(u8 code, const u8 *p, u32 len, u8 *mac)
+{
+	u8 m[1100], iv[16] = { 0 }, full[16];
+	m[0] = code, m[1] = ses.ctr, m[2] = ses.ctr >> 8;
+	memcpy(m + 3, ses.ti, 4);
+	memcpy(m + 7, p, len);
+	dfCmac(&ses.mac, iv, m, 7 + len, full);
+	for (int i = 0; i < 8; i++) mac[i] = full[2 * i + 1];
+}
+
+// EV2 full mode IV: E(SesAuthENCKey, A55A (command) / 5AA5 (answer) || TI || CmdCtr || 0..)
+static void ev2Iv(bool cmd, u8 *iv)
+{
+	memset(iv, 0, 16);
+	iv[0] = cmd ? 0xA5 : 0x5A, iv[1] = cmd ? 0x5A : 0xA5;
+	memcpy(iv + 2, ses.ti, 4);
+	iv[6] = ses.ctr, iv[7] = ses.ctr >> 8;
+	dfBlock(&ses.c, iv, true);
+}
+
+// The answer: data (len) and status into out. comm is the file's communication mode for the data commands
+// (0 plain, 1 MAC, 3 full), 0 for the rest, 3 for GetCardUID. In a session an OK answer is secured as the
+// session's kind wants it; any other status ends the session.
+static void answer(const u8 *d, u32 len, u8 st, u8 comm)
 {
 	if (len > sizeof(out) - 32) len = sizeof(out) - 32;
 	memmove(out, d, len);
 	outLen = len, outOff = 0, outSt = st, outVersion = false;
-	if (!ses.on) return;
-	if (st && st != 0xAF) {
-		ses.on = false;
+	if (!ses.mode) return;
+	if (st && st != 0xAF && st != 0x90) {
+		ses.mode = SM_NONE;
 		return;
 	}
-	u8 bs = ses.c.bs, mac[16];
-	if (full) {
+	u8 bs = ses.c.bs, mac[16], iv[16] = { 0 };
+	if (ses.mode == SM_D40) { // the DES CBC chain from IV 0 on each answer, the card only enciphers
+		u32 p = (len + (comm == 3 ? 2 : 0) + bs - 1) / bs * bs;
+		if (comm == 3) {
+			crcA(out, len, out + len);
+			memset(out + len + 2, 0, p - len - 2);
+			dfCbc(&ses.c, iv, out, p, true);
+			outLen = p;
+		} else if (comm == 1 && len) {
+			u8 t[1024];
+			memcpy(t, out, len);
+			memset(t + len, 0, p - len);
+			dfCbc(&ses.c, iv, t, p, true);
+			memcpy(out + len, t + p - bs, 4);
+			outLen = len + 4;
+		}
+		return;
+	}
+	if (ses.mode == SM_EV2) {
+		ses.ctr++;
+		if (comm == 3 && len) {
+			u32 p = (len + 16) / 16 * 16;
+			out[len] = 0x80;
+			memset(out + len + 1, 0, p - len - 1);
+			ev2Iv(false, iv);
+			dfCbc(&ses.c, iv, out, p, true);
+			len = p;
+		}
+		if (comm == 3 || comm == 1 || ses.macIn) ev2Mac(st, out, len, out + len), len += 8;
+		outLen = len;
+		return;
+	}
+	if (comm == 3) {
 		out[len] = st;
 		u32 crc = dfCrc32(out, len + 1);
 		out[len] = crc, out[len + 1] = crc >> 8, out[len + 2] = crc >> 16, out[len + 3] = crc >> 24;
@@ -106,7 +179,7 @@ static void answer(const u8 *d, u32 len, u8 st, bool full)
 
 static void status(u8 st)
 {
-	answer(NULL, 0, st, false);
+	answer(NULL, 0, st, 0);
 }
 
 // Free access, or the session's key is the file's read or read/write key.
@@ -115,25 +188,24 @@ static bool mayRead(const DfFile *f)
 	if (f->len < 4) return false;
 	u16 ar = f->set[2] | f->set[3] << 8;
 	u8 r = ar >> 12, rw = ar >> 4 & 0xF;
-	return r == 0xE || rw == 0xE || (ses.on && (ses.keyNo == r || ses.keyNo == rw));
+	return r == 0xE || rw == 0xE || (ses.mode && (ses.keyNo == r || ses.keyNo == rw));
 }
 
-static bool fullMode(const DfFile *f)
-{
-	return ses.on && (f->set[1] & 3) == 3;
-}
-
+// 0A (D40, DES / 2K3DES), 1A (ISO, DES / 2K3DES / 3K3DES), AA (AES), 71 / 77 (EV2 First / NonFirst, AES):
+// AF ek(RndB). A key the file doesn't have still gets its challenge, and the refusal after it.
 static void authStart(u8 cmd, const u8 *p, u32 n)
 {
-	ses.on = au.on = false;
+	ses.mode = SM_NONE, au.on = false;
+	if (cmd != 0x77) ses.hasTi = false;
 	if (n < 1) return status(0x7E);
 	const DfKey *k = key(p[0]);
 	if (!k) return status(0x40);
-	bool aes = (app ? app->maxKeys : info.maxKeys) >> 6 == 2;
-	if ((cmd == 0xAA) != aes) return status(0xAE);
-	au.known = k->known && (k->type == DF_AES) == aes;
-	au.keyNo = p[0];
-	u8 type = au.known ? k->type : aes ? DF_AES : DF_2K3DES;
+	u8 kt = (app ? app->maxKeys : info.maxKeys) >> 6; // 0 DES / 2K3DES, 1 3K3DES, 2 AES
+	if (cmd == 0x0A ? kt != 0 : cmd == 0x1A ? kt > 1 : kt != 2) return status(0xAE);
+	if (cmd == 0x77 && !ses.hasTi) return status(0xAE);
+	u8 type = kt == 2 ? DF_AES : kt == 1 ? DF_3K3DES : DF_2K3DES;
+	au.known = k->known && k->type == type;
+	au.cmd = cmd, au.keyNo = p[0];
 	dfCipherInit(&au.k, type, au.known ? k->key : (const u8 *)"nfcprobe-unknown-key-pad");
 	au.rl = type == DF_2K3DES ? 8 : 16;
 	rnd(au.rb, au.rl);
@@ -142,23 +214,61 @@ static void authStart(u8 cmd, const u8 *p, u32 n)
 	memset(au.iv, 0, sizeof(au.iv));
 	dfCbc(&au.k, au.iv, e, au.rl, true);
 	au.on = true;
-	answer(e, au.rl, 0xAF, false);
+	answer(e, au.rl, 0xAF, 0);
 }
 
-// AF ek(RndA || rol(RndB)) -> 00 ek(rol(RndA)), the session key as desfire.c dfAuth derives it.
+// AF ek(RndA || rol(RndB)) -> 00 ek(rol(RndA)), the session keys as desfire.c dfAuth / authEv2 derive them.
+// D40: the reader deciphers in CBC send mode (y_i = D(x_i ^ y_i-1)), IV 0 each way. EV1: the IV runs on from
+// ek(RndB). EV2: IV 0, the answer E(TI || rol(RndA) || PDcap2 || PCDcap2) (First) or E(rol(RndA)) (NonFirst).
 static void authFinish(const u8 *p, u32 n)
 {
 	au.on = false;
-	u8 rl = au.rl, b[32], ra[16];
+	u8 rl = au.rl, b[32], ra[16], iv[16] = { 0 };
+	bool d40 = au.cmd == 0x0A, ev2 = au.cmd == 0x71 || au.cmd == 0x77;
 	if (n != 2u * rl) return status(0x7E);
 	memcpy(b, p, n);
-	dfCbc(&au.k, au.iv, b, n, false);
+	if (d40) {
+		dfBlock(&au.k, b, true), dfBlock(&au.k, b + 8, true);
+		for (int i = 0; i < 8; i++) b[8 + i] ^= p[i];
+	} else {
+		dfCbc(&au.k, ev2 ? iv : au.iv, b, n, false);
+	}
 	if (!au.known || memcmp(b + rl, au.rb + 1, rl - 1) || b[2 * rl - 1] != au.rb[0]) return status(0xAE);
 	memcpy(ra, b, rl);
-	for (u32 i = 0; i < rl; i++) b[i] = ra[(i + 1) % rl];
-	dfCbc(&au.k, au.iv, b, rl, true);
 	const DfKey *k = key(au.keyNo);
-	u8 sk[24], *rb = au.rb;
+	u8 *rb = au.rb, *rot = b + (au.cmd == 0x71 ? 4 : 0);
+	for (u32 i = 0; i < rl; i++) rot[i] = ra[(i + 1) % rl];
+	if (ev2) {
+		u32 m = rl;
+		if (au.cmd == 0x71) {
+			rnd(ses.ti, 4);
+			memcpy(b, ses.ti, 4);
+			memset(b + 20, 0, 12);
+			m = 32;
+		}
+		memset(iv, 0, 16);
+		dfCbc(&au.k, iv, b, m, true);
+		answer(b, m, 0x00, 0);
+		u8 sv[32] = { 0xA5, 0x5A, 0x00, 0x01, 0x00, 0x80 }, ke[16], km[16];
+		memcpy(sv + 6, ra, 8);
+		for (int i = 0; i < 6; i++) sv[8 + i] ^= rb[i];
+		memcpy(sv + 14, rb + 6, 10);
+		memcpy(sv + 24, ra + 8, 8);
+		memset(iv, 0, 16);
+		dfCmac(&au.k, iv, sv, 32, ke);
+		sv[0] = 0x5A, sv[1] = 0xA5;
+		memset(iv, 0, 16);
+		dfCmac(&au.k, iv, sv, 32, km);
+		dfCipherInit(&ses.c, DF_AES, ke);
+		dfCipherInit(&ses.mac, DF_AES, km);
+		if (au.cmd == 0x71) ses.ctr = 0;
+		ses.hasTi = true;
+		ses.keyNo = au.keyNo, ses.mode = SM_EV2;
+		return;
+	}
+	if (d40) dfBlock(&au.k, b, true);
+	else dfCbc(&au.k, au.iv, b, rl, true);
+	u8 sk[24];
 	memcpy(sk, ra, 4), memcpy(sk + 4, rb, 4);
 	if (k->type == DF_2K3DES) {
 		bool same = true;
@@ -171,10 +281,10 @@ static void authFinish(const u8 *p, u32 n)
 	} else {
 		memcpy(sk + 8, ra + 12, 4), memcpy(sk + 12, rb + 12, 4);
 	}
-	answer(b, rl, 0x00, false); // before the session: no MAC on this one
+	answer(b, rl, 0x00, 0); // before the session: no MAC on this one
 	dfCipherInit(&ses.c, k->type, sk);
 	memset(ses.iv, 0, sizeof(ses.iv));
-	ses.keyNo = au.keyNo, ses.on = true;
+	ses.keyNo = au.keyNo, ses.mode = d40 ? SM_D40 : SM_EV1;
 }
 
 // ReadData / ReadRecords / GetValue from the contents the file holds.
@@ -192,14 +302,14 @@ static void readFile(u8 cmd, const u8 *p, u32 n)
 	const u8 *data = info.pool + f->dataOff;
 	u32 dl = f->dataLen;
 	static u8 buf[1024];
-	if (cmd == 0x6C) return answer(data, dl < 4 ? dl : 4, 0, fullMode(f));
+	if (cmd == 0x6C) return answer(data, dl < 4 ? dl : 4, 0, f->set[1] & 3);
 	if (cmd == 0xBD) { // the saved part of the file; beyond it (an info file keeps up to DF_MAX_DATA): zeros
 		u32 size = f->len >= 7 ? le24(f->set + 4) : dl, off = le24(p + 1), len = le24(p + 4);
 		if (off > size || (len && off + len > size)) return status(0xBE);
 		if (!len) len = size - off;
 		if (len > sizeof(buf) - 64) len = sizeof(buf) - 64;
 		for (u32 i = 0; i < len; i++) buf[i] = off + i < dl ? data[off + i] : 0;
-		return answer(buf, len, 0, fullMode(f));
+		return answer(buf, len, 0, f->set[1] & 3);
 	}
 	// records, oldest first as read; offset counts back from the newest
 	u32 rs = f->len >= 13 ? le24(f->set + 4) : 0, have = rs ? dl / rs : 0, off = le24(p + 1), cnt = le24(p + 4);
@@ -209,7 +319,7 @@ static void readFile(u8 cmd, const u8 *p, u32 n)
 	u32 first = have - off - cnt, len = cnt * rs;
 	if (len > sizeof(buf) - 64) len = (sizeof(buf) - 64) / rs * rs;
 	memcpy(buf, data + first * rs, len);
-	answer(buf, len, 0, fullMode(f));
+	answer(buf, len, 0, f->set[1] & 3);
 }
 
 static void native(const u8 *c, u32 len)
@@ -222,20 +332,27 @@ static void native(const u8 *c, u32 len)
 		if (outOff < outLen) return; // the next frame of the answer
 		return status(0x1C);
 	}
-	if (cmd != 0xAA && cmd != 0x1A) au.on = false;
-	// in a session the reader runs its CMAC over every command: so does the card
-	if (ses.on && cmd != 0x5A && cmd != 0xAA && cmd != 0x1A) {
+	bool auth = cmd == 0x0A || cmd == 0x1A || cmd == 0xAA || cmd == 0x71 || cmd == 0x77;
+	if (!auth) au.on = false;
+	ses.macIn = false;
+	// EV1: the reader runs its CMAC over every command, so does the card. EV2: a command that ends in its
+	// MACt (the reader's MAC / full mode) gets one on the answer too.
+	if (ses.mode == SM_EV1 && cmd != 0x5A && !auth) {
 		u8 mac[16];
 		dfCmac(&ses.c, ses.iv, c, len, mac);
+	} else if (ses.mode == SM_EV2 && len >= 9 && !auth) {
+		u8 mac[8];
+		ev2Mac(cmd, p, n - 8, mac);
+		if (!memcmp(mac, c + len - 8, 8)) ses.macIn = true, n -= 8;
 	}
 	switch (cmd) {
 	case 0x60: // GetVersion: hardware, then AF software, AF UID / batch / production week
 		memcpy(b, info.ver, 28);
-		answer(b, info.verLen > 21 ? info.verLen : 21, 0, false);
+		answer(b, info.verLen > 21 ? info.verLen : 21, 0, 0);
 		outVersion = true;
 		return;
 	case 0x5A: { // SelectApplication
-		ses.on = false;
+		ses.mode = SM_NONE, ses.hasTi = false;
 		if (n != 3) return status(0x7E);
 		u32 aid = le24(p);
 		if (!aid) {
@@ -250,13 +367,13 @@ static void native(const u8 *c, u32 len)
 			}
 		return status(0xA0);
 	}
-	case 0xAA: case 0x1A:
+	case 0x0A: case 0x1A: case 0xAA: case 0x71: case 0x77:
 		return authStart(cmd, p, n);
 	case 0x6A: // GetApplicationIDs
 		if (app) return status(0x1C);
 		if (info.appSt) return status(info.appSt);
 		for (int i = 0; i < info.napps && i < DF_MAX_APPS && k < 250; i++, k += 3) put24(b + k, info.apps[i].aid);
-		return answer(b, k, 0, false);
+		return answer(b, k, 0, 0);
 	case 0x6D: // GetDFNames: AID, ISO FID, DF name of the ISO applications
 		if (app) return status(0x1C);
 		for (int i = 0; i < info.napps && i < DF_MAX_APPS && k < 230; i++) {
@@ -267,46 +384,44 @@ static void native(const u8 *c, u32 len)
 			memcpy(b + k + 5, a->name, a->nameLen);
 			k += 5 + a->nameLen;
 		}
-		return answer(b, k, 0, false);
+		return answer(b, k, 0, 0);
 	case 0x45: // GetKeySettings
 		if (app ? app->keySt : info.keySt) return status(app ? app->keySt : info.keySt);
 		b[0] = app ? app->keySet : info.keySet, b[1] = app ? app->maxKeys : info.maxKeys;
-		return answer(b, 2, 0, false);
+		return answer(b, 2, 0, 0);
 	case 0x64: // GetKeyVersion
 		if (n != 1) return status(0x7E);
 		if (!app) {
 			if (p[0] || info.keyVerSt) return status(p[0] ? 0x40 : info.keyVerSt);
-			return answer(&info.keyVer, 1, 0, false);
+			return answer(&info.keyVer, 1, 0, 0);
 		}
 		if ((p[0] & 0x3F) >= (app->maxKeys & 0xF)) return status(0x40);
 		b[0] = (p[0] & 0x3F) < app->nKeyVer ? app->keyVer[p[0] & 0x3F] : 0; // not in the file: 00
-		return answer(b, 1, 0, false);
+		return answer(b, 1, 0, 0);
 	case 0x6F: // GetFileIDs
 		if (!app) return status(0x1C);
 		if (app->fileSt) return status(app->fileSt);
 		for (int i = 0; i < app->nfiles; i++) b[k++] = app->files[i].fid;
-		return answer(b, k, 0, false);
+		return answer(b, k, 0, 0);
 	case 0xF5: { // GetFileSettings
 		if (n != 1) return status(0x7E);
 		DfFile *f = file(p[0]);
 		if (!f) return status(0xF0);
 		if (f->st) return status(f->st);
-		return answer(f->set, f->len, 0, false);
+		return answer(f->set, f->len, 0, 0);
 	}
 	case 0xBD: case 0xBB: case 0x6C:
 		return readFile(cmd, p, n);
 	case 0x6E: // GetFreeMemory
 		if (!info.hasFree) return status(0x1C);
 		put24(b, info.freeMem);
-		return answer(b, 3, 0, false);
+		return answer(b, 3, 0, 0);
 	case 0x3C: // Read_Sig: 90 with the signature
 		if (!info.hasSig) return status(0x1C);
-		memcpy(out, info.sig, 56);
-		outLen = 56, outOff = 0, outSt = 0x90, outVersion = false;
-		return;
+		return answer(info.sig, 56, 0x90, 3);
 	case 0x51: // GetCardUID (full mode, the PICC master key's session)
-		if (!ses.on || app || ses.keyNo) return status(0xAE);
-		return answer(info.realUid, 7, 0, true);
+		if (!ses.mode || app || ses.keyNo) return status(0xAE);
+		return answer(info.realUid, 7, 0, 3);
 	case 0x3D: case 0x3B: case 0xDB: case 0x0C: case 0xDC: case 0x1C: case 0xC7: case 0xC4: case 0x54: case 0x5F:
 	case 0xCA: case 0xDA: case 0xCD: case 0xCB: case 0xCC: case 0xC0: case 0xC1: case 0xDF: case 0xFC: case 0x5C:
 		return status(0x9D); // writes and changes: a saved card is read only
@@ -330,7 +445,7 @@ u32 dfEmuApdu(const u8 *c, u32 len, u8 *resp, u32 max)
 {
 	if (!c) { // a new session
 		app = NULL;
-		ses.on = au.on = false;
+		ses.mode = SM_NONE, ses.hasTi = au.on = false;
 		outLen = outOff = 0;
 		return 0;
 	}
@@ -353,7 +468,7 @@ u32 dfEmuApdu(const u8 *c, u32 len, u8 *resp, u32 max)
 			DfApp *a = &info.apps[i];
 			if (a->hasIso && a->nameLen == lc && !memcmp(a->name, c + 5, lc)) {
 				app = a;
-				ses.on = false;
+				ses.mode = SM_NONE, ses.hasTi = false;
 				return resp[0] = 0x90, resp[1] = 0, 2;
 			}
 		}

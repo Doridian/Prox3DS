@@ -1539,7 +1539,16 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   wrong key refused, 2K3DES PICC auth + GetCardUID. `hf mfdes info` stops after GetVersion: pm3 drops the field
   and sends WUPA for only ~11 ms; listening again needs RF_DISCOVER >= ~100 ms after the deactivation to idle
   (50 ms: same). Same for back-to-back pm3 commands in one -c: separate calls work.
-- Not done: legacy D40 auth (0A, pm3 shows "Auth NO"), EV2 (71), writes (9D).
+- Not done: writes (9D).
+- Later the same day: legacy D40 (0A) and EV2 (71 First / 77 NonFirst) logins, card side of pm3's code.
+  D40 (DES / 2K3DES apps): pm3 deciphers in CBC send mode (y_i = D(x_i ^ y_i-1)), so the card enciphers
+  both ways, IV 0 per operation; session key as EV1; no MAC on commands (only writes carry one), file reads
+  answer data || MAC4 (CBC-MAC over zero-padded data) in MAC mode, E(data || CRC16-A(data) || 0-pad) in full
+  mode, everything else plain. EV2 (AES apps): E(TI || rol(RndA) || PDcap2 || PCDcap2) IV 0, session keys as
+  desfire.c authEv2; a command whose last 8 bytes are its MACt (CmdCtr || TI) gets a MACt on the answer, full
+  mode E(IV = E(5AA5 || TI || CmdCtr+1), data || 80 ..); CmdCtr +1 per answer, NonFirst keeps TI + CmdCtr.
+  tools/exp/dfemu/: dfemu.c built on the host (build.sh, the UI sim's fake libctru) against a Python reader
+  written from pm3's desfirecore.c / desfiresecurechan.c (dftest.py): 19 checks pass.
 
 ## Listen-mode parity: raw 9-bit frames (chip/ptest.c, tools/exp/parity/) -- 2026-11-02
 - Found by a bit sweep on air (ptest.c: the ROM's listen TX rebuilt, one register write per answered E5 frame,

@@ -168,7 +168,7 @@ static float emuView(float x, float y, float w)
 		uiText(x, y, S_SMALL, txt, "%d app%s, %d file%s from %s", d->napps, d->napps == 1 ? "" : "s", files,
 			files == 1 ? "" : "s", uiFit(nm, w - 170, S_SMALL));
 		y += SMALL_H;
-		if (keys) uiText(x, y, S_SMALL, dim, "EV1 authentication with its %d known key%s; read only", keys,
+		if (keys) uiText(x, y, S_SMALL, dim, "Authentication (D40 / EV1 / EV2) with its %d known key%s; read only", keys,
 			keys == 1 ? "" : "s");
 		else uiText(x, y, S_SMALL, dim, "No keys in the file: what reads without one; read only");
 	} else if (mode == MODE_NDEF) {

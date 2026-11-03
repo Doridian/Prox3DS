@@ -1,0 +1,72 @@
+# nfcprobe DESFire info (key dictionary: 12 keys, EV1 secure messaging for AES)
+UID 04112233445566
+ATS 067577810280
+MIFARE DESFire EV3
+hardware 04010133001A05
+  vendor 04 type 01 subtype 01 version 3.0 storage 4096 bytes protocol 05
+software 04010103001A05
+  vendor 04 type 01 subtype 01 version 3.0 storage 4096 bytes protocol 05
+batch BA654A2361
+production week 30 / 2021
+signature 0B30557A9FC4E90E33587DA2C7EC11365B80A5CAEF14395E83A8CDF2173C6186ABD0F51A3F6489AED3F81D42678CB1D6FB20456A8FB4D9FE
+  NOT verified by any NXP key
+free memory 3456 bytes
+
+PICC
+  key settings 0F, 1 DES/2K3DES key
+    PICC master key changeable: yes
+  key 0 version 00
+  key 0: DES 0000000000000000
+  3 applications
+
+Application 112233
+  key settings 0B, 2 AES keys
+    app master key changeable: yes
+  key versions 0000
+  key 0: AES 00000000000000000000000000000000
+  key 1: AES 00112233445566778899AABBCCDDEEFF
+  file 01: standard, full, 16 bytes
+    read key 1, write key 1, read/write key 1, change key 0
+    read with key 1
+    0000: 53 45 43 52 45 54 2D 41 45 53 2D 46 49 4C 45 21
+    raw 00031011100000
+  file 02: standard, MAC, 8 bytes
+    read key 1, write key 1, read/write key 1, change key 0
+    read with key 1
+    0000: 45 56 32 2D 4D 41 43 21
+    raw 00011011080000
+
+Application 445566
+  ISO FID E110, DF name D2760000850101
+  key settings 0F, 1 DES/2K3DES key
+  key 0: not in the dictionary
+  file 01: standard, plain, 32 bytes
+    read free, write free, read/write free, change key 0
+    0000: 20 21 22 23 24 25 26 27 28 29 2A 2B 2C 2D 2E 2F
+    0010: 30 31 32 33 34 35 36 37 38 39 3A 3B 3C 3D 3E 3F
+    raw 0000EEEE200000
+  file 02: value, plain, 0..1000
+    read free, write free, read/write free, change key 0
+    0000: 64 00 00 00
+    raw 0200EEEE00000000E80300006400000000
+  file 03: linear record, MAC, 3/5 records x 8 bytes
+    read free, write free, read/write free, change key 0
+    0000: 01 01 01 01 01 01 01 01 02 02 02 02 02 02 02 02
+    0010: 03 03 03 03 03 03 03 03
+    raw 0301EEEE080000050000030000
+
+Application 778899
+  key settings 0F, 2 DES/2K3DES keys
+  key versions 0000
+  key 0: DES 0001020304050607
+  key 1: 2K3DES 00112233445566778899AABBCCDDEEFF
+  file 01: standard, full, 16 bytes
+    read key 0, write key 0, read/write key 0, change key 0
+    read with key 0
+    0000: 44 34 30 2D 46 55 4C 4C 2D 46 49 4C 45 2D 30 31
+    raw 00030000100000
+  file 02: standard, MAC, 12 bytes
+    read key 1, write key 1, read/write key 1, change key 0
+    read with key 1
+    0000: 44 34 30 2D 4D 41 43 2D 46 49 4C 45
+    raw 000110110C0000
