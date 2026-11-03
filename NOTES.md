@@ -1506,7 +1506,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 ## Listen-mode parity: raw 9-bit frames (chip/ptest.c, tools/exp/parity/) -- 2026-11-02
 - Found by a bit sweep on air (ptest.c: the ROM's listen TX rebuilt, one register write per answered E5 frame,
   the TX time measured on the chip; the pm3 holds the selection and chains `hf 14a raw -k -c e5 NN`): flip
-  each bit of 0x5C000-0x5C0FC, 0x5C540-0x5C5FC, 0x5C640-0x5C6FC, 0x5C780-0x5C7FC (sw2.log). TX time = on-air
+  each bit of 0x5C000-0x5C0FC, 0x5C540-0x5C5FC, 0x5C640-0x5C6FC, 0x5C780-0x5C7FC (sweep2.py). TX time = on-air
   bits * 9.44 + ~70 ticks. A listen TX from the command context (no reader frame just received) stays busy:
   it only goes out as an answer. Answering with an empty FIFO wedges listen until a reload.
 - 0x5C000-0x5C01C: 8 slot registers (the ROM indexes them; 0x5C580 bit 7 + bits 6:4 pick one in the listen
@@ -1530,6 +1530,15 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   0x68180, its variables still end below 0x68410) is extracted as <name>.aon.bin and appended to the AON
   segment by mkpatch.py --aon (chipmon.load picks it up). emu.c keeps the monitor's hook() and reply() there:
   3336 + 292 bytes.
+- Reader mode: no equivalent (tools/exp/parity/rsweep.py; memrw TXSCHED busy time, the Gen1a
+  01020304 on the 3DS). The slot registers are 0 in reader mode and their modes / 0x20 change nothing there.
+  The reader-mode limit stays the length code: a 21-byte bit-mode frame with code 0x42 drops the whole last
+  byte (160 bits, the index 20 doesn't fit [6:4]). Flipping each bit of 0x5C540-0x5C5FC, 0x5C640-0x5C6FC,
+  0x5C780-0x5C7FC, 0x5C000-0x5C0FC around that TX: only 0x5C554 bits 1-3, 0x5C558 bits 2-3 and 0x5C044 bit 4
+  change its length; 0x5C044 bit 4 adds 2 bit periods to any frame (whatever [2:0], also after a full 168-bit
+  FIFO), not data: a Gen1a backdoor WRITE whose 162-bit data frame relied on it was refused 4/4 (also when the
+  2 missing bits were 0 0). 0x5C57C flips leave the reader TX dead without an error (reload). So encrypted
+  WRITE keeps the mixed-parity frames (pair search, re-auth on a miss).
 - pm3's `hf mf nested` against the emulation stops early: "PRNG is not predictable" (nt steps 16-79 at random).
 - Research (no public register docs for the BCM2079x RF block): Android's nfc_brcm_defs.h names
   NCI_PARAM_ID_DH_PARITY_CRC_CTL 0xC7 and GID_PROP SET / GET_CLF_REGISTERS 0x03 / 0x2A, no layout known.
