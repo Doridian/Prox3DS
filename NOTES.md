@@ -1549,6 +1549,9 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   mode E(IV = E(5AA5 || TI || CmdCtr+1), data || 80 ..); CmdCtr +1 per answer, NonFirst keeps TI + CmdCtr.
   tools/exp/dfemu/: dfemu.c built on the host (build.sh, the UI sim's fake libctru) against a Python reader
   written from pm3's desfirecore.c / desfiresecurechan.c (dftest.py): 19 checks pass.
+  On air with pm3 (test.txt): `--schann d40` auth DES + 2K3DES, read full (CRC16 OK) + MAC, getuid; `--schann
+  ev2` auth (TI shown), read full + MAC, getfilesettings -m mac, no MAC warnings; wrong keys refused at the
+  second frame; EV1 getuid + encrypted read unchanged.
 
 ## Listen-mode parity: raw 9-bit frames (chip/ptest.c, tools/exp/parity/) -- 2026-11-02
 - Found by a bit sweep on air (ptest.c: the ROM's listen TX rebuilt, one register write per answered E5 frame,
