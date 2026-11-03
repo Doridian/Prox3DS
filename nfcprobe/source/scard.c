@@ -26,7 +26,7 @@ const ScApplet scApplets[] = {
 	{ "OpenPGP card", "D27600012401", "OpenPGP smart card (YubiKey, Nitrokey, SmartPGP): keys for signing, "
 		"decryption and authentication.", NULL },
 	{ "PIV", "A000000308", "NIST SP 800-73 personal identity verification: certificates and keys.", NULL },
-	{ "FIDO U2F / FIDO2", "A0000006472F0001", "Security key for web logins (U2F, CTAP2).", NULL },
+	{ "FIDO U2F / FIDO2", "A0000006472F0001", "Security key for web logins (U2F, CTAP2): its versions, options, whether a PIN is set.", fidoOpenTool },
 	{ "NDEF (Type 4 tag)", "D2760000850101", "An NFC Forum Type 4 tag: an NDEF message (URL, text, ...).", NULL },
 	{ "Payment card (EMV)", "325041592E5359532E4444463031", "EMV contactless payment card (the PPSE directory): "
 		"card number, expiry, cardholder, counters and the transaction log. Read only, nothing is paid.", emvOpenTool },

@@ -1916,3 +1916,12 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   A000000018434D00; no EXTERNAL AUTHENTICATE sent). The 4th INITIALIZE UPDATE in a row gave 6982: the card
   limits them; it still selects / answers fine. Stopped there: no applet loading on this card, so no
   CryptoProbe. Useful as a FIDO2 / U2F card.
+- nfcprobe Smart card > FIDO U2F / FIDO2 (fido.c, fidoui.c; also the applet's tool on the card screen):
+  SELECT (the U2F version string), CTAP2 authenticatorGetInfo over NFCCTAP_MSG (80 10 00 00, a small CBOR
+  reader: versions, extensions, AAGUID, options, PIN protocols, algorithms, transports, limits, firmware,
+  passkey slots free) and, only with a PIN set, clientPIN getPINRetries. Read only: no credential made or
+  used. The PIN state is up front (no PIN set = warning). Key names by AAGUID (a few from the FIDO MDS;
+  only the Thales one checked on a card). Y saves SC_DIR/fido-<AAGUID start>.txt with the raw CBOR. A U2F-
+  only key (getInfo 6D00) shows its version and that. On the 3DS with the IDPrime 3940: as the pm3 read,
+  saved file right. uisim scenes fido_key (this card's real getInfo bytes through the parser), fido_key_pin,
+  fido_u2f. getPINRetries untested on a key (this one has no PIN).

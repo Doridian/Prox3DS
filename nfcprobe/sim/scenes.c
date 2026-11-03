@@ -632,6 +632,46 @@ static void emvFill(void)
 static void scnEmv(void) { emvFill(); simEmv(&emvCard, false); }
 static void scnEmvFull(void) { simEmv(&emvCard, true); }
 
+// the Thales IDPrime 3940 FIDO's getInfo, as read (2026-11-03)
+static FidoInfo fidoKey;
+static void fidoFill(void)
+{
+	static const char *info = "A50182665532465F5632684649444F5F325F3002816B686D61632D7365637265740350B50D5E0A7F8149599B12"
+		"F4540740750304A262726BF569636C69656E7450696EF4068101";
+	static u8 b[256];
+	int n = scUnhex(info, b, sizeof(b));
+	memset(&fidoKey, 0, sizeof(fidoKey));
+	FidoInfo *f = &fidoKey;
+	f->maxMsg = f->maxCredList = f->maxCredIdLen = f->minPin = f->firmware = f->remainingRk = f->pinRetries = -1;
+	strcpy(f->u2f, "U2F_V2");
+	f->infoSw = 0x9000;
+	f->ctap2 = fidoParseInfo(f, b, n);
+	if (!f->ctap2 || f->nver != 2 || f->nopt != 2 || fidoOpt(f, "clientPin") != 0 || !fidoModel(f->aaguid))
+		printf("fido: getInfo parse wrong\n");
+}
+static void scnFido(void) { fidoFill(); simFido(&fidoKey); }
+static void scnFidoPin(void)
+{
+	FidoInfo f = fidoKey;
+	f.opt[1].on = true, f.pinRetries = 7;
+	strcpy(f.ver[f.nver++], "FIDO_2_1");
+	strcpy(f.ext[f.next++], "credProtect"), strcpy(f.ext[f.next++], "largeBlobKey");
+	strcpy(f.opt[f.nopt].name, "uv"), f.opt[f.nopt++].on = false;
+	strcpy(f.opt[f.nopt].name, "credMgmt"), f.opt[f.nopt++].on = true;
+	f.alg[f.nalg++] = -7, f.alg[f.nalg++] = -8;
+	f.pinProto[f.npin++] = 2;
+	strcpy(f.trans[f.ntrans++], "nfc"), strcpy(f.trans[f.ntrans++], "usb");
+	f.remainingRk = 25, f.minPin = 4, f.maxMsg = 1200, f.maxCredList = 8, f.maxCredIdLen = 128, f.firmware = 0x050704;
+	simFido(&f);
+}
+static void scnFidoU2f(void)
+{
+	FidoInfo f = { 0 };
+	strcpy(f.u2f, "U2F_V2");
+	f.infoSw = 0x6D00;
+	simFido(&f);
+}
+
 static void kbDone(const char *s) { (void)s; }
 static void scnKbText(void) { entryText("Write a URL", "https://..., tel:..., mailto:...", "https://example.org/a?b=c", 511, 0, kbDone); }
 static void scnKbHex(void) { entryText("APDU", "CLA INS P1 P2 [Lc data] [Le], in hex.", "00A4040007A0000000041010", 522, ENTRY_HEX, kbDone); }
@@ -862,6 +902,7 @@ static const SimStep script[] = {
 	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
 	CALL(reset), CALL(scnEmv), SHOT("emv_card"), D, D, D, SHOT("emv_card_log_end"), CALL(scnEmvFull), SHOT("emv_card_full"),
 	KEYS(KEY_R), SHOT("emv_app2"),
+	CALL(reset), CALL(scnFido), SHOT("fido_key"), CALL(scnFidoPin), SHOT("fido_key_pin"), CALL(scnFidoU2f), SHOT("fido_u2f"),
 
 	// keyboard
 	CALL(reset), CALL(scnKbText), SHOT("kb_text"), CALL(reset), CALL(scnKbHex), SHOT("kb_hex"),

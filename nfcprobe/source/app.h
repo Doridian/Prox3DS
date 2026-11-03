@@ -95,6 +95,7 @@ void gpOpenTool(void);   // GlobalPlatform (gpui.c)
 void oathOpenTool(void); // YubiKey OATH (oathui.c)
 u64 unixNow(void);       // the console clock as UTC, with the OATH tool's clock setting (oathui.c)
 void emvOpenTool(void);  // EMV payment cards (emvui.c)
+void fidoOpenTool(void); // FIDO security keys (fidoui.c)
 void apduConsole(void);  // raw APDUs (scui.c)
 u32 jobCount(void);      // jobs started so far: tells a tool whether another job touched the card since
 
