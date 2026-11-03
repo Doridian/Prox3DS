@@ -492,7 +492,7 @@ static void listDraw(void)
 	for (int i = 0; i < LIST_ROWS && fl.top + i < nvis; i++) {
 		const AmiiboDbEnt *e = amiiboDbAt(vis[fl.top + i]);
 		float y = 24 + i * LINE_H;
-		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		if (fl.top + i == fl.sel) uiSel(4, y - 1, UI_W - 8, LINE_H);
 		snprintf(s, sizeof(s), "%s", e->series);
 		float w = uiTextWidth(S_SMALL, uiFit(s, 150, S_SMALL));
 		uiTextRight(UI_W - 10, y + 1, S_SMALL, uiCol[COL_DIM], "%s", s);

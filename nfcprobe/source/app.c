@@ -158,7 +158,7 @@ static void dialogDraw(void)
 		int rows = dlg.n < POP_ROWS ? dlg.n : POP_ROWS;
 		float h = 22 + rows * LINE_H + 22, y = uiBox(240, h, dlg.title), x = (UI_W - 240) / 2;
 		for (int i = dlg.l.top; i < dlg.l.top + rows; i++, y += LINE_H) {
-			if (i == dlg.l.sel) uiRect(x + 2, y - 1, 236, LINE_H, uiCol[COL_SEL]);
+			if (i == dlg.l.sel) uiSel(x + 2, y - 1, 236, LINE_H);
 			uiText(x + 10, y, S_BODY, uiCol[COL_TEXT], "%s", dlg.items[i].label);
 		}
 		uiText(x + 10, y + 4, S_SMALL, uiCol[COL_DIM], BTN_A " select   " BTN_B " close");
@@ -393,8 +393,7 @@ void menuDraw(Menu *m)
 	for (int i = 0; i < m->n; i++) {
 		float y = 30 + i * pitch;
 		if (i == m->l.sel) {
-			uiRect(8, y - 3, 180, 19, uiCol[COL_SEL]);
-			uiRect(8, y - 3, 3, 19, uiCol[COL_ACCENT]);
+			uiSel(8, y - 3, 180, 19);
 		}
 		uiText(20, y, S_BODY, uiCol[i == m->l.sel ? COL_TEXT : COL_DIM], "%s", m->entries[i].label);
 	}
@@ -444,7 +443,7 @@ static void formDraw(void)
 	uiHeader(form.title, NULL);
 	float y = 26;
 	for (int i = 0; i <= n; i++, y += LINE_H) {
-		if (i == form.l.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
+		if (i == form.l.sel) uiSel(8, y - 1, UI_W - 16, LINE_H);
 		if (i == n) {
 			uiText(14, y, S_BODY, uiCol[COL_ACCENT], "%s", form.go);
 			break;
@@ -697,6 +696,7 @@ static void bottomDraw(void)
 	u32 dim = uiCol[COL_DIM];
 	int n = uiLogCount();
 	uiRect(0, 0, UI_BW, BOT_LOG * 12 + 6, uiCol[COL_PANEL]);
+	uiRect(0, BOT_LOG * 12 + 5, UI_BW, 1, uiCol[COL_ACCENT]);
 	for (int i = 0; i < BOT_LOG; i++) {
 		int k = n - BOT_LOG + i;
 		if (k < 0) continue;
@@ -704,7 +704,7 @@ static void bottomDraw(void)
 		uiLogLine(k, line, sizeof(line));
 		char *nl = strchr(line, '\n');
 		if (nl) *nl = 0;
-		uiText(4, 3 + i * 12, S_LOG, dim, "%s", uiFit(line, UI_BW - 28, S_LOG));
+		uiText(4, 3 + i * 12, S_LOG, k == n - 1 ? uiCol[COL_TEXT] : dim, "%s", uiFit(line, UI_BW - 28, S_LOG));
 	}
 	float y0 = BOT_LOG * 12 + 14, c = 36; // D-pad cell
 	u32 pad = uiCol[COL_BAR];
@@ -797,6 +797,7 @@ void appRun(void)
 			uiFit(t, UI_W - 32, S_SMALL);
 			float w = 16 + uiTextWidth(S_SMALL, t);
 			uiRect((UI_W - w) / 2, UI_H - 44, w, 20, uiCol[COL_BAR]);
+			uiRect((UI_W - w) / 2, UI_H - 44, 2, 20, uiCol[COL_CURSOR]);
 			uiTextCenter(UI_W / 2, UI_H - 41, S_SMALL, uiCol[COL_TEXT], "%s", t);
 		}
 		uiBottom();

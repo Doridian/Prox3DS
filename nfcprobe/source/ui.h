@@ -71,6 +71,8 @@ void uiMono(float x, float y, u32 color, const char *s);
 void uiMonoS(float x, float y, float scale, float cell, u32 color, const char *s);
 void uiHeader(const char *title, const char *right);
 void uiFooter(const char *hints);
+// A selected list row: highlight with a bar down its left edge.
+void uiSel(float x, float y, float w, float h);
 // A centered box with a title bar; returns the y where its content starts.
 float uiBox(float w, float h, const char *title);
 

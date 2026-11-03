@@ -116,7 +116,7 @@ static void capsDraw(void)
 	for (int i = 0; i < 12 && cl.top + i < ncaps; i++) {
 		const CapEnt *f = &caps[cl.top + i];
 		float y = 24 + i * LINE_H;
-		if (cl.top + i == cl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		if (cl.top + i == cl.sel) uiSel(4, y - 1, UI_W - 8, LINE_H);
 		char name[64];
 		snprintf(name, sizeof(name), "%s", f->name);
 		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 300, S_BODY));
@@ -214,7 +214,7 @@ static void draw(void)
 	}
 	for (int i = 0; i < 9 && al.top + i < n; i++) {
 		float y = 24 + i * (LINE_H + SMALL_H);
-		if (al.top + i == al.sel) uiRect(4, y - 1, UI_W - 8, LINE_H + SMALL_H, uiCol[COL_SEL]);
+		if (al.top + i == al.sel) uiSel(4, y - 1, UI_W - 8, LINE_H + SMALL_H);
 		char aid[40], cap[64];
 		if (al.top + i >= jcCard.napplets) {
 			const JcPkg *p = &jcCard.vm.pkgs[libs[al.top + i - jcCard.napplets]];

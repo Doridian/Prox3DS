@@ -330,7 +330,7 @@ static void gen4Draw(void)
 	snprintf(vals[2], 32, "%s", shadowNames[g4shadow]);
 	float y = 32;
 	for (int i = 0; i < 3; i++, y += 22) {
-		if (i == g4sel) uiRect(8, y - 3, UI_W - 16, 21, uiCol[COL_SEL]);
+		if (i == g4sel) uiSel(8, y - 3, UI_W - 16, 21);
 		uiText(16, y, S_BODY, uiCol[COL_TEXT], "%s", labels[i]);
 		uiText(140, y, S_BODY, uiCol[COL_ACCENT], "< %s >", vals[i]);
 	}
@@ -532,7 +532,7 @@ static void filesDraw(void)
 		const DumpEnt *f = &dumps.ent[fl.top + i];
 		int blocks = f->size / 16;
 		float y = 24 + i * LINE_H;
-		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		if (fl.top + i == fl.sel) uiSel(4, y - 1, UI_W - 8, LINE_H);
 		char name[64];
 		snprintf(name, sizeof(name), "%s", f->name);
 		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 200, S_BODY)); // up to the size column

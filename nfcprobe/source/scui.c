@@ -125,7 +125,7 @@ static void cardDraw(void)
 		y += SMALL_H;
 		for (int i = 0; i < APP_ROWS && al.top + i < n; i++, y += LINE_H) {
 			const ScFound *f = &si.found[al.top + i];
-			if (al.top + i == al.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
+			if (al.top + i == al.sel) uiSel(8, y - 1, UI_W - 16, LINE_H);
 			uiText(14, y, S_BODY, uiCol[f->app && f->app->open ? COL_ACCENT : COL_TEXT], "%s", f->name);
 			scHex(s, f->aid, f->aidLen);
 			uiMonoS(170, y + 2, 0.34f, 5.6f, dim, s);

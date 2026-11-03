@@ -194,7 +194,7 @@ static void cardDraw(void)
 		y += SMALL_H + 1;
 		for (int i = 0; i < APP_ROWS && al.top + i < n; i++, y += LINE_H) {
 			const DfApp *a = &di.apps[al.top + i];
-			if (al.top + i == al.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
+			if (al.top + i == al.sel) uiSel(8, y - 1, UI_W - 16, LINE_H);
 			uiText(14, y, S_BODY, uiCol[COL_ACCENT], "%06lX", a->aid);
 			float x = 80;
 			if (a->hasIso) uiText(x, y + 1, S_SMALL, txt, "ISO %04X", a->isoFid);
@@ -327,7 +327,7 @@ static void appDraw(void)
 			char desc[96], keys[80], data[32] = "";
 			dfFileDesc(f, desc, sizeof(desc));
 			dfFileKeys(f, keys, sizeof(keys));
-			if (fl.top + i == fl.sel) uiRect(8, y - 1, UI_W - 16, 2 * SMALL_H + 1, uiCol[COL_SEL]);
+			if (fl.top + i == fl.sel) uiSel(8, y - 1, UI_W - 16, 2 * SMALL_H + 1);
 			uiText(14, y, S_SMALL, uiCol[COL_ACCENT], "%02X", f->fid);
 			// what the read got, on the right of whichever line has room for it
 			bool noKey = di.keyed && !f->hasData && !f->st && !dfFreeRead(f);
@@ -1440,7 +1440,7 @@ static void isoDraw(void)
 	float y = 26 + SMALL_H + 4;
 	for (int i = il.top; i < isoN && i < il.top + ISO_ROWS; i++, y += LINE_H) {
 		const DfIsoEf *e = &isoEfs[i];
-		if (i == il.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
+		if (i == il.sel) uiSel(8, y - 1, UI_W - 16, LINE_H);
 		uiText(14, y, S_BODY, uiCol[COL_ACCENT], "EF %04X", e->fid);
 		if (e->sw == 0x9000 && e->records)
 			snprintf(s, sizeof(s), "records: %d, %d bytes", e->records_n, e->dataLen);
@@ -1683,7 +1683,7 @@ static void filesDraw(void)
 	for (int i = 0; i < 12 && fl.top + i < infos.n; i++) {
 		const DumpEnt *f = &infos.ent[fl.top + i];
 		float y = 24 + i * LINE_H;
-		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		if (fl.top + i == fl.sel) uiSel(4, y - 1, UI_W - 8, LINE_H);
 		char name[64];
 		snprintf(name, sizeof(name), "%s", f->name);
 		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 190, S_BODY));

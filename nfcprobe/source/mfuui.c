@@ -268,7 +268,7 @@ static void pickDraw(void)
 	float hexX = pkLen == 16 ? UI_W - 10 - 32 * 6.0f : UI_W - 10 - 8 * MONO_W;
 	for (int i = 0; i < PICK_ROWS && pl.top + i <= npk; i++, y += LINE_H) {
 		int r = pl.top + i;
-		if (r == pl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		if (r == pl.sel) uiSel(4, y - 1, UI_W - 8, LINE_H);
 		if (!r) {
 			uiText(10, y, S_BODY, uiCol[COL_ACCENT], pkLen == 16 ? "Type a 3DES key..." : "Type a password...");
 			continue;
@@ -722,7 +722,7 @@ static void filesDraw(void)
 	for (int i = 0; i < 12 && fl.top + i < dumps.n; i++) {
 		const DumpEnt *f = &dumps.ent[fl.top + i];
 		float y = 24 + i * LINE_H;
-		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		if (fl.top + i == fl.sel) uiSel(4, y - 1, UI_W - 8, LINE_H);
 		char name[64];
 		snprintf(name, sizeof(name), "%s", f->name);
 		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 190, S_BODY)); // up to the size column

@@ -15,6 +15,12 @@ static char hints[256];
 static C2D_TextBuf frameBuf, monoBuf;
 static C2D_Text mono[95]; // ' ' .. '~'
 static u8 asciiW[128];     // glyph advances, wrapping measures a lot
+static u32 frames;         // the header's blinking cursor
+
+// The non-binary flag, for the stripes on headers and dialogs
+static const u32 flagRGB[4] = { 0xFCF434, 0xFFFFFF, 0x9C59D1, 0x2C2C2C };
+static u32 flag[4];
+#define SCANLINES 0x16 // alpha of the CRT scanline every other row, 0 = none
 
 void uiInit(void)
 {
@@ -33,12 +39,13 @@ void uiInit(void)
 		C2D_TextOptimize(&mono[c]);
 	}
 	static const u32 rgb[COL_N] = {
-		[COL_BG] = 0x15181E, [COL_PANEL] = 0x1F242C, [COL_BAR] = 0x2A313C, [COL_TEXT] = 0xE6E9EE,
-		[COL_DIM] = 0x7D8796, [COL_ACCENT] = 0x4FB3FF, [COL_SEL] = 0x2F4D6E, [COL_CURSOR] = 0xE0A030,
-		[COL_WARN] = 0xF2C14E, [COL_ERR] = 0xFF6B6B, [COL_OK] = 0x6BD68A, [COL_KEYA] = 0x7EE08E,
-		[COL_KEYB] = 0x6FB7FF, [COL_ACL] = 0xF5A25D, [COL_CHANGED] = 0xFFE066,
+		[COL_BG] = 0x0A0710, [COL_PANEL] = 0x151020, [COL_BAR] = 0x201731, [COL_TEXT] = 0xF2EEF8,
+		[COL_DIM] = 0x8A7BA3, [COL_ACCENT] = 0xB57CF2, [COL_SEL] = 0x3A2160, [COL_CURSOR] = 0xFCF434,
+		[COL_WARN] = 0xFCF434, [COL_ERR] = 0xFF4D7A, [COL_OK] = 0x3DFFA0, [COL_KEYA] = 0x3DFFA0,
+		[COL_KEYB] = 0x4DD8FF, [COL_ACL] = 0xFF9A3D, [COL_CHANGED] = 0xFFF27A,
 	};
 	for (int i = 0; i < COL_N; i++) uiCol[i] = C2D_Color32(rgb[i] >> 16, rgb[i] >> 8 & 0xFF, rgb[i] & 0xFF, 0xFF);
+	for (int i = 0; i < 4; i++) flag[i] = C2D_Color32(flagRGB[i] >> 16, flagRGB[i] >> 8 & 0xFF, flagRGB[i] & 0xFF, 0xFF);
 }
 
 void uiExit(void)
@@ -57,10 +64,19 @@ void uiFrameBegin(void)
 	C2D_SceneBegin(top);
 	C2D_TextBufClear(frameBuf);
 	*hints = 0;
+	frames++;
+}
+
+// Over everything, last: a CRT's dark rows
+static void scanlines(float w)
+{
+	if (!SCANLINES) return;
+	for (int y = 1; y < UI_H; y += 2) uiRect(0, y, w, 1, C2D_Color32(0, 0, 0, SCANLINES));
 }
 
 void uiBottom(void)
 {
+	scanlines(UI_W);
 	C2D_SceneBegin(bot);
 }
 
@@ -72,10 +88,19 @@ void uiTouch(bool down, bool repeat, float x, float y)
 	touchDown = down, touchRep = repeat, touchX = x, touchY = y;
 }
 
+// A button's face: neon edge under it, corner ticks
+static void face(float x, float y, float w, float h, u32 color, bool hit)
+{
+	uiRect(x, y, w, h, hit ? uiCol[COL_ACCENT] : color);
+	uiRect(x, y + h - 1, w, 1, hit ? flag[0] : uiCol[COL_ACCENT]);
+	uiRect(x, y, 3, 1, uiCol[COL_DIM]);
+	uiRect(x, y, 1, 3, uiCol[COL_DIM]);
+}
+
 static bool button(float x, float y, float w, float h, u32 color, const char *label, bool rep)
 {
 	bool hit = touchDown && (rep || !touchRep) && touchX >= x && touchX < x + w && touchY >= y && touchY < y + h;
-	uiRect(x, y, w, h, hit ? uiCol[COL_ACCENT] : color);
+	face(x, y, w, h, color, hit);
 	char t[64];
 	snprintf(t, sizeof(t), "%s", label);
 	uiTextCenter(x + w / 2, y + (h - 16) / 2, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, w - 6, S_BODY));
@@ -86,7 +111,7 @@ static bool button(float x, float y, float w, float h, u32 color, const char *la
 bool uiButton2(float x, float y, float w, float h, u32 color, const char *caption, const char *label)
 {
 	bool hit = touchDown && !touchRep && touchX >= x && touchX < x + w && touchY >= y && touchY < y + h;
-	uiRect(x, y, w, h, hit ? uiCol[COL_ACCENT] : color);
+	face(x, y, w, h, color, hit);
 	char t[64];
 	snprintf(t, sizeof(t), "%s", caption);
 	uiTextCenter(x + w / 2, y + 1, 0.34f, uiCol[COL_DIM], "%s", uiFit(t, w - 6, 0.34f));
@@ -108,6 +133,7 @@ bool uiButtonRep(float x, float y, float w, float h, u32 color, const char *labe
 
 void uiFrameEnd(void)
 {
+	scanlines(UI_BW);
 	C3D_FrameEnd(0);
 }
 
@@ -125,7 +151,10 @@ void uiBar(float x, float y, float w, float h, float frac, u32 color)
 {
 	frac = frac < 0 ? 0 : frac > 1 ? 1 : frac;
 	uiRect(x, y, w, h, uiCol[COL_BG]);
-	uiRect(x, y, w * frac, h, color);
+	uiRect(x, y + h - 1, w, 1, uiCol[COL_SEL]);
+	float f = w * frac;
+	for (float sx = x; sx < x + f; sx += 4) uiRect(sx, y, (x + f - sx < 3 ? x + f - sx : 3), h, color); // segments
+	if (frac > 0 && frac < 1) uiRect(x + f - 2, y - 1, 2, h + 2, flag[0]);
 }
 
 void uiTri(float x0, float y0, float x1, float y1, float x2, float y2, u32 color)
@@ -280,20 +309,45 @@ void uiMono(float x, float y, u32 color, const char *s)
 	uiMonoS(x, y, S_MONO, MONO_W, color, s);
 }
 
+// The flag as h tall stripes from (x, y)
+static void flagChip(float x, float y, float w, float h)
+{
+	for (int i = 0; i < 4; i++) uiRect(x, y + i * h / 4, w, h / 4, flag[i]);
+}
+
+// Text with a chromatic glitch: purple and yellow ghosts a pixel off either side
+static float glitch(float x, float y, float scale, const char *s)
+{
+	uiText(x + 1, y, scale, C2D_Color32(0x9C, 0x59, 0xD1, 0xC0), "%s", s);
+	uiText(x - 1, y, scale, C2D_Color32(0xFC, 0xF4, 0x34, 0x70), "%s", s);
+	return uiText(x, y, scale, uiCol[COL_TEXT], "%s", s);
+}
+
 void uiHeader(const char *title, const char *right)
 {
 	char t[256];
 	snprintf(t, sizeof(t), "%s", title);
 	uiRect(0, 0, UI_W, 20, uiCol[COL_BAR]);
-	uiText(6, 2, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, UI_W - 12 - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
+	uiRect(0, 19, UI_W, 1, uiCol[COL_ACCENT]);
+	flagChip(0, 0, 5, 20);
+	float w = glitch(12, 2, S_BODY, uiFit(t, UI_W - 26 - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
+	if (frames / 30 % 2) uiRect(12 + w + 3, 5, 6, 11, flag[0]); // the prompt's cursor
 	if (right) uiTextRight(UI_W - 6, 3, S_SMALL, uiCol[COL_DIM], "%s", right);
 }
 
 void uiFooter(const char *h)
 {
 	uiRect(0, UI_H - 18, UI_W, 18, uiCol[COL_BAR]);
+	uiRect(0, UI_H - 18, UI_W, 1, uiCol[COL_SEL]);
+	uiRect(0, UI_H - 18, 40, 1, uiCol[COL_ACCENT]);
 	uiText(6, UI_H - 16, S_SMALL, uiCol[COL_DIM], "%s", h);
 	uiHints(h);
+}
+
+void uiSel(float x, float y, float w, float h)
+{
+	uiRect(x, y, w, h, uiCol[COL_SEL]);
+	uiRect(x, y, 2, h, flag[0]);
 }
 
 void uiHints(const char *h)
@@ -309,13 +363,22 @@ const char *uiHintsNow(void)
 float uiBox(float w, float h, const char *title)
 {
 	float x = (UI_W - w) / 2, y = (UI_H - h) / 2;
-	uiRect(0, 0, UI_W, UI_H, C2D_Color32(0, 0, 0, 0x90));
+	uiRect(0, 0, UI_W, UI_H, C2D_Color32(0x0A, 0x07, 0x10, 0xA8));
 	uiRect(x - 1, y - 1, w + 2, h + 2, uiCol[COL_ACCENT]);
 	uiRect(x, y, w, h, uiCol[COL_PANEL]);
 	uiRect(x, y, w, 18, uiCol[COL_BAR]);
+	uiRect(x, y + 18, w, 1, uiCol[COL_SEL]);
+	flagChip(x, y, 4, 18);
+	// targeting brackets on the corners
+	u32 c = flag[0];
+	float r = x + w, b = y + h, a = 9;
+	uiRect(x - 3, y - 3, a, 2, c), uiRect(x - 3, y - 3, 2, a, c);
+	uiRect(r + 3 - a, y - 3, a, 2, c), uiRect(r + 1, y - 3, 2, a, c);
+	uiRect(x - 3, b + 1, a, 2, c), uiRect(x - 3, b + 3 - a, 2, a, c);
+	uiRect(r + 3 - a, b + 1, a, 2, c), uiRect(r + 1, b + 3 - a, 2, a, c);
 	char t[128];
 	snprintf(t, sizeof(t), "%s", title);
-	uiText(x + 6, y + 1, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, w - 12, S_BODY));
+	glitch(x + 10, y + 1, S_BODY, uiFit(t, w - 16, S_BODY));
 	return y + 22;
 }
 

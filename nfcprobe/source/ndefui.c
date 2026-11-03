@@ -219,7 +219,7 @@ static void ndefDraw(void)
 	y += SMALL_H + 4;
 	for (int i = rl.top; i < nrec && i < rl.top + VIS; i++) {
 		bool sel = i == rl.sel;
-		if (sel) uiRect(8, y - 1, UI_W - 16, 2 * SMALL_H + 2, uiCol[COL_SEL]);
+		if (sel) uiSel(8, y - 1, UI_W - 16, 2 * SMALL_H + 2);
 		ndefDescribe(&recs[i], s, sizeof(s));
 		uiText(14, y, S_SMALL, txt, "%s", uiFit(s, UI_W - 28, S_SMALL));
 		const NdefRec *r = &recs[i];

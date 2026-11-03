@@ -224,7 +224,7 @@ static void oathDraw(void)
 	float y = 44;
 	for (int i = 0; i < ROWS && cl.top + i < oi.n; i++, y += 20) {
 		const OathCred *c = &oi.c[cl.top + i];
-		if (cl.top + i == cl.sel) uiRect(8, y - 2, UI_W - 16, 19, uiCol[COL_SEL]);
+		if (cl.top + i == cl.sel) uiSel(8, y - 2, UI_W - 16, 19);
 		const char *nm = c->name;
 		const char *slash = strchr(nm, '/');
 		if (c->period != 30 && slash) nm = slash + 1;

@@ -208,7 +208,7 @@ static void gpDraw(void)
 	y += SMALL_H + 1;
 	for (int i = 0; i < ROWS && el.top + i < n; i++, y += LINE_H) {
 		const GpEntry *e = &gc.ent[el.top + i];
-		if (el.top + i == el.sel) uiRect(8, y - 1, UI_W - 16, LINE_H, uiCol[COL_SEL]);
+		if (el.top + i == el.sel) uiSel(8, y - 1, UI_W - 16, LINE_H);
 		uiText(14, y + 1, S_SMALL, e->kind == GP_PKG ? dim : uiCol[COL_ACCENT], "%s", kindName(e));
 		gpAidHex(aid, e->aid, e->aidLen);
 		uiMonoS(66, y + 2, 0.34f, 5.6f, txt, aid);
@@ -370,7 +370,7 @@ static void capsDraw(void)
 	for (int i = 0; i < 12 && cl.top + i < ncaps; i++) {
 		const CapEnt *f = &caps[cl.top + i];
 		float y = 24 + i * LINE_H;
-		if (cl.top + i == cl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		if (cl.top + i == cl.sel) uiSel(4, y - 1, UI_W - 8, LINE_H);
 		char name[64];
 		snprintf(name, sizeof(name), "%s", f->name);
 		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 300, S_BODY));

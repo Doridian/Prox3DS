@@ -172,7 +172,7 @@ static void wsDraw(void)
 		const u8 *g = wr[k].got;
 		const char *p = wr[k].ok ? phaseOf(g) : "lost";
 		bool sel = k == wl.sel;
-		if (sel) uiRect(8, y - 1, UI_W - 16, SMALL_H, uiCol[COL_SEL]);
+		if (sel) uiSel(8, y - 1, UI_W - 16, SMALL_H);
 		uiTextRight(70, y, S_SMALL, uiCol[COL_TEXT], "%u us", wr[k].us);
 		if (wr[k].ok) {
 			sprintf(s, "%02X%02X%02X%02X", g[0], g[1], g[2], g[3]);

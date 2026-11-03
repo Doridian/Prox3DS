@@ -559,7 +559,7 @@ static void drawAclEditor(void)
 		char lbl[24];
 		groupLabel(lbl, sizeof(lbl), g);
 		int c = acl.c[g];
-		if (g == acl.sel) uiRect(x + 2, y - 2, 368, 29, uiCol[COL_SEL]);
+		if (g == acl.sel) uiSel(x + 2, y - 2, 368, 29);
 		uiText(x + 8, y, S_SMALL, uiCol[COL_TEXT], "%s", lbl);
 		uiText(x + 100, y, S_SMALL, uiCol[COL_ACL], "< %d%d%d >", c >> 2, c >> 1 & 1, c & 1);
 		uiText(x + 8, y + 13, S_SMALL, uiCol[COL_DIM], "%s", g == 3 ? trailerAcl[c] : dataAcl[c]);

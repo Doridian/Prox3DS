@@ -61,7 +61,8 @@ def draw(ops, scale, W=400):
         if op[0] == "R":
             _, x, y, w, h, c = op
             if w > 0 and h > 0:
-                d.rectangle([x * scale, y * scale, (x + w) * scale - 1, (y + h) * scale - 1], fill=c)
+                d.rectangle([x * scale, y * scale, max(x * scale, (x + w) * scale - 1),
+                             max(y * scale, (y + h) * scale - 1)], fill=c)
         else:
             _, x, y, w, s, n, c, text, align = op
             f = font(SIZE * s * scale)
@@ -161,6 +162,8 @@ def check(ops, W=400):
             if layers[ia] != layers[ib] or A[2] >= B[3] - 1 or B[2] >= A[3] - 1:
                 continue
             if len(oa[7]) == 1 and len(ob[7]) == 1:  # uiMono cells: wide glyphs may touch
+                continue
+            if oa[7] == ob[7] and abs(oa[1] - ob[1]) <= 2 and oa[2] == ob[2]:  # ui.c glitch(): ghosts
                 continue
             if A[0] > B[0]:
                 (ia, oa, A), (ib, ob, B) = (ib, ob, B), (ia, oa, A)
