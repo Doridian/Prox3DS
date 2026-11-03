@@ -76,7 +76,7 @@ static float row(float y, const char *label, const char *val, u32 col)
 	return y + SMALL_H + 1;
 }
 
-// What an option means in words, "" = say it as name yes / no.
+// What an option means in words; "" = say it as name yes / no, NULL = not worth a word (off, nothing named).
 static const char *optText(const FidoOpt *o)
 {
 	static const struct {
@@ -88,6 +88,7 @@ static const char *optText(const FidoOpt *o)
 		{ "up", "touch / presence", "no presence check" },
 		{ "plat", "platform", NULL },
 		{ "credMgmt", "credential management", NULL },
+		{ "credentialMgmtPreview", "credential management (preview)", NULL },
 		{ "bioEnroll", "fingerprints enrolled", "no fingerprints enrolled" },
 		{ "largeBlobs", "large blobs", NULL },
 		{ "ep", "enterprise attestation on", "enterprise attestation off" },
@@ -98,7 +99,7 @@ static const char *optText(const FidoOpt *o)
 		{ "authnrCfg", "config command", NULL },
 	};
 	for (u32 i = 0; i < sizeof(t) / sizeof(t[0]); i++)
-		if (!strcmp(o->name, t[i].name)) return o->on ? t[i].on : t[i].off ? t[i].off : "";
+		if (!strcmp(o->name, t[i].name)) return o->on ? t[i].on : t[i].off;
 	return "";
 }
 
@@ -115,6 +116,7 @@ static void fidoDraw(void)
 	if (fi.hasAaguid) {
 		fidoAaguidText(fi.aaguid, g);
 		uiText(12, y, S_SMALL, dim, "AAGUID %s", g);
+		if (fi.firmware >= 0) uiTextRight(UI_W - 12, y, S_SMALL, dim, "fw %06X", fi.firmware);
 		y += SMALL_H + 4;
 	}
 	if (!fi.ctap2) {
@@ -141,7 +143,7 @@ static void fidoDraw(void)
 	o = 0;
 	for (int i = 0; i < fi.nopt; i++) {
 		const char *t = optText(&fi.opt[i]);
-		if (!strcmp(fi.opt[i].name, "clientPin")) continue;
+		if (!t || !strcmp(fi.opt[i].name, "clientPin")) continue;
 		if (*t) o += snprintf(s + o, sizeof(s) - o, "%s%s", o ? ", " : "", t);
 		else o += snprintf(s + o, sizeof(s) - o, "%s%s %s", o ? ", " : "", fi.opt[i].name, fi.opt[i].on ? "yes" : "no");
 	}
@@ -172,10 +174,6 @@ static void fidoDraw(void)
 	if (fi.maxCredList >= 0) o += snprintf(s + o, sizeof(s) - o, "%s%d IDs a list", o ? ", " : "", fi.maxCredList);
 	if (fi.maxCredIdLen >= 0) o += snprintf(s + o, sizeof(s) - o, "%sIDs to %d bytes", o ? ", " : "", fi.maxCredIdLen);
 	if (o) y = row(y, "Limits", s, txt);
-	if (fi.firmware >= 0) {
-		snprintf(s, sizeof(s), "%d (%06X)", fi.firmware, fi.firmware);
-		y = row(y, "Firmware", s, txt);
-	}
 	bool u2fListed = false;
 	for (int i = 0; i < fi.nver; i++) u2fListed |= !strcmp(fi.ver[i], fi.u2f);
 	if (*fi.u2f && !u2fListed && y < UI_H - 30) row(y, "U2F", fi.u2f, dim);

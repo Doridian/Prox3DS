@@ -1924,4 +1924,5 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   only the Thales one checked on a card). Y saves SC_DIR/fido-<AAGUID start>.txt with the raw CBOR. A U2F-
   only key (getInfo 6D00) shows its version and that. On the 3DS with the IDPrime 3940: as the pm3 read,
   saved file right. uisim scenes fido_key (this card's real getInfo bytes through the parser), fido_key_pin,
-  fido_u2f. getPINRetries untested on a key (this one has no PIN).
+  fido_u2f. YubiKey 5 NFC (fw 05.04.03, PIN set) the same day: AAGUID 2fc0579f-... named right, getPINRetries
+  = 8, FIDO_2_1_PRE + credentialMgmtPreview; firmware moved next to the AAGUID so its screen fits.
