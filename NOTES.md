@@ -1569,6 +1569,10 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   75 checks pass. dftest.py grew D40 / EV2 / plain / chained writes (33 checks). pm3 on air: write + read back
   plain std, credit (pm3 commits), record append, D40 full + MAC, EV2 full, EV1 MAC + full; a keyed file without
   auth refused; stop -> save prompt -> new info file listed.
+- netsrv: update / put-file took hwLock like the chip ops; an emulation holds it until stopped, so an update
+  sent while emulating blocked the server thread for good (timeouts, later refused). Both skip the lock now
+  (no chip access); verified: update during a DESFire emulation restarts the app. Save -> reload -> keyed EV2
+  and D40 reads of the saved -N.txt on air OK after the dfLoadInfo header fix.
 
 ## Listen-mode parity: raw 9-bit frames (chip/ptest.c, tools/exp/parity/) -- 2026-11-02
 - Found by a bit sweep on air (ptest.c: the ROM's listen TX rebuilt, one register write per answered E5 frame,
