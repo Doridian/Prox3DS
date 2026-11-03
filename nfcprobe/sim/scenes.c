@@ -751,7 +751,7 @@ static const SimStep script[] = {
 	CALL(reset), CALL(mfcMenu), SHOT("mfc_menu_0"), D, SHOT("mfc_menu_1"), D, SHOT("mfc_menu_2"),
 	CALL(reset), CALL(mfcMenu), D, D, D, D, D, SHOT("mfc_menu_download"),
 	CALL(reset), CALL(mfuMenu), D, D, D, D, SHOT("mfu_menu_download"),
-	CALL(reset), CALL(dfMenu), D, D, SHOT("df_menu_download"),
+	CALL(reset), CALL(dfMenu), D, D, D, SHOT("df_menu_download"),
 	CALL(reset), CALL(mfcMenu), D, D, A, SHOT("mfc_files"), X, SHOT("mfc_files_popup"), D, A, SHOT("mfc_files_clone_confirm"), B, Y, SHOT("mfc_files_delete_confirm"), B,
 	R, SHOT("mfc_files_page2"), L,
 	D, D, D, A, SHOT("mfc_files_bad"), B,
@@ -872,6 +872,7 @@ static const SimStep script[] = {
 	CALL(reset), CALL(simEmuForm), SHOT("emu_form"), B,
 	CALL(reset), CALL(scnEmuMfu), SHOT("emu_mfu"), CALL(simBusyEnd), CALL(reset), CALL(scnEmuMfuDone), SHOT("emu_mfu_save"), B,
 	CALL(reset), CALL(simEmuMfc), SHOT("emu_mfc"), CALL(simBusyEnd),
+	CALL(reset), CALL(simEmuDf), SHOT("emu_df"), CALL(simBusyEnd),
 	// tear-off
 	CALL(reset), CALL(scnTear), SHOT("tear_scan"), D, D, D, D, D, D, D, D, D, D, SHOT("tear_scan_end"),
 	CALL(reset), CALL(scnTearCnt), SHOT("tear_counter"), CALL(simBusyEnd),

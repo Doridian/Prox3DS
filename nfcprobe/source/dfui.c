@@ -3,10 +3,12 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <3ds.h>
 
 #include "app.h"
 #include "desfire.h"
+#include "dumplist.h"
 #include "entry.h"
 #include "pm3dict.h"
 #include "probe.h"
@@ -1603,6 +1605,104 @@ static void appMenu(void)
 	popup("Application", items, 9);
 }
 
+// --- saved info files (Save info on the card screen): emulate ---
+
+static DfInfo ld; // the file picked (dfLoadInfo)
+
+// applications + 1, 0: not an info file (keys.txt, ...)
+static int infoApps(const char *path, u32 size)
+{
+	(void)size;
+	return dfLoadInfo(&ld, path) ? ld.napps + 1 : 0;
+}
+
+static DumpDir infos = { .dir = DF_DIR, .ext = ".txt", .info = infoApps };
+static UiList fl;
+
+static void filesScan(void)
+{
+	dumpScan(&infos);
+	if (fl.sel >= infos.n) fl.sel = infos.n ? infos.n - 1 : 0;
+}
+
+static void filePath(char *out, u32 max)
+{
+	snprintf(out, max, DF_DIR "/%s", infos.ent[fl.sel].name);
+}
+
+static void actEmu(void)
+{
+	char name[64];
+	snprintf(name, sizeof(name), "%s", infos.ent[fl.sel].name);
+	emuStartDf(&ld, name);
+}
+
+static void fileDelete(void)
+{
+	char path[128];
+	filePath(path, sizeof(path));
+	remove(path);
+	toast("Deleted %s", infos.ent[fl.sel].name);
+	filesScan();
+}
+
+static void filesInput(u32 kDown, u32 kRepeat)
+{
+	uiListNav(&fl, infos.n, 12, kRepeat);
+	if (kDown & KEY_B) appBack();
+	if (!infos.n) return;
+	if (kDown & (KEY_A | KEY_X)) {
+		char path[128];
+		filePath(path, sizeof(path));
+		if (!dfLoadInfo(&ld, path)) {
+			msgBox("Saved cards", "%s is not a DESFire info file.", infos.ent[fl.sel].name);
+			return;
+		}
+		static const MenuItem items[] = { { "Emulate this card", actEmu } };
+		popup(infos.ent[fl.sel].name, items, 1);
+	}
+	if (kDown & KEY_Y) confirm("Delete", fileDelete, "Delete %s?", infos.ent[fl.sel].name);
+}
+
+static void filesDraw(void)
+{
+	char hdr[32];
+	snprintf(hdr, sizeof(hdr), "%d file%s", infos.n, infos.n == 1 ? "" : "s");
+	uiHeader("Saved DESFire cards", hdr);
+	if (!infos.n) {
+		uiTextCenter(UI_W / 2, 100, S_BODY, uiCol[COL_DIM], "No info files yet.");
+		uiTextCenter(UI_W / 2, 118, S_SMALL, uiCol[COL_DIM], "Scan a card, then " BTN_Y " on the card screen");
+		uiFooter(BTN_B " back");
+		return;
+	}
+	for (int i = 0; i < 12 && fl.top + i < infos.n; i++) {
+		const DumpEnt *f = &infos.ent[fl.top + i];
+		float y = 24 + i * LINE_H;
+		if (fl.top + i == fl.sel) uiRect(4, y - 1, UI_W - 8, LINE_H, uiCol[COL_SEL]);
+		char name[64];
+		snprintf(name, sizeof(name), "%s", f->name);
+		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", uiFit(name, 190, S_BODY));
+		uiTextRight(268, y + 1, S_SMALL, uiCol[f->info ? COL_ACCENT : COL_ERR], f->info ? "%d app%s" : "not info",
+			f->info - 1, f->info == 2 ? "" : "s");
+		if (f->mtime > 1) {
+			time_t t = f->mtime;
+			struct tm *tm = gmtime(&t);
+			uiTextRight(UI_W - 10, y + 1, S_SMALL, uiCol[COL_DIM], "%04d-%02d-%02d %02d:%02d", tm->tm_year + 1900,
+				tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min);
+		}
+	}
+	if (infos.n > 12) uiTextRight(UI_W - 6, UI_H - 34, S_SMALL, uiCol[COL_DIM], "%d-%d of %d", fl.top + 1,
+		fl.top + 12 < infos.n ? fl.top + 12 : infos.n, infos.n);
+	uiFooter(BTN_A "/" BTN_X " actions   " BTN_Y " delete   " BTN_B " back");
+}
+
+static const Screen filesScreen = { filesScan, filesInput, filesDraw };
+
+static void openFiles(void)
+{
+	appScreen(&filesScreen);
+}
+
 // --- menu and family ---
 
 static void startDownload(void)
@@ -1618,6 +1718,8 @@ static const MenuEntry dfEntries[] = {
 	{ "Scan with keys", "The same, then the key dictionary (built in, " DF_KEYS ", pm3's if downloaded) on the PICC master key and "
 	                    "every application key (DES, 2K3DES, 3K3DES, AES; AES over EV2 on EV2 / EV3 cards). Found "
 	                    "keys open protected lists and files, in plain, MAC and full (encrypted) mode.", startKeyScan },
+	{ "Saved cards", "Info files saved from the card screen (" BTN_Y "): emulate one, the 3DS answering as that card "
+	                 "with what the file holds (and its keys).", openFiles },
 	{ "Download keys", "Fetch pm3's mfdes_default_keys.dic (~60 keys, over Wi-Fi) to " DF_DIR ": Scan with keys "
 	                   "tries them after the built-in ones and keys.txt.", startDownload },
 };

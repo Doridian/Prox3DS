@@ -144,3 +144,6 @@ void dfFileDesc(const DfFile *f, char *out, u32 max);
 void dfFileKeys(const DfFile *f, char *out, u32 max);
 bool dfFreeRead(const DfFile *f); // read or read/write access is free (key E)
 bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax); // DF_DIR/<UID>.txt, never overwrites
+// Back from such a file (for emulation): what it shows; parts it shows refused carry that status. false = not
+// an info file.
+bool dfLoadInfo(DfInfo *d, const char *path);

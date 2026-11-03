@@ -1,5 +1,5 @@
 #pragma once
-// Saved dump directories (Classic, Ultralight / NTAG): the .bin files newest first, with size, date and a
+// Saved dump directories (Classic, Ultralight / NTAG; DESFire info .txt): the .bin files newest first, with size, date and a
 // value of the family's (Ultralight: pages). On the SD card a stat and a date cost ~20 ms each per file, so
 // a scan reads the directory in batches (names and sizes) and only asks the per-file calls for files it
 // hasn't seen with that size; the app warms every directory in the background at start.
@@ -16,6 +16,7 @@ typedef struct {
 
 typedef struct {
 	const char *dir;                         // "sdmc:/..."
+	const char *ext;                         // NULL: ".bin"
 	int (*info)(const char *path, u32 size); // NULL: info 0
 	DumpEnt ent[DUMP_MAX];                   // the listing, newest first
 	int n;

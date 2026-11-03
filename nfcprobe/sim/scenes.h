@@ -59,6 +59,7 @@ void simEmuDone(void);      // its end dialog
 void simEmuMode(int which); // 0: UID-only busy box, 1: APDU log
 void simEmuMfu(bool done);
 void simEmuMfc(void);
+void simEmuDf(void);
 void simEmuForm(void);      // the UID form, from a scanned NTAG
 void simTearScan(void);    // write scan results, the EV1 test card's measured curve
 void simTearCounter(void); // the counter reset busy box

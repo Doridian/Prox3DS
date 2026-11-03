@@ -1526,6 +1526,21 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   wrong-key auths, all silent, every key found), hf mf dump twice identical; a few single reads NACKed or
   auth errors, retried by pm3.
 
+## DESFire emulation from saved info files (nfcprobe dfemu.c, desfire.c dfLoadInfo) -- 2026-11-02
+- ISO-DEP stays with the ROM (host answers through NCI DATA, as the T4T tag), so DESFire needs no chip code:
+  dfLoadInfo reads a Save info .txt back (status names back to codes, hex lines, keys by name / length),
+  dfEmuApdu answers native frames and 90-wrapped APDUs (59-byte frames, AF chaining, GetVersion 7 + 7 + rest).
+  EV1 card side mirrors desfire.c's reader side: AA / 1A (unknown key: AF ek(RndB) with a dummy key, then AE),
+  the session key as pm3 DesfireGenSessionKeyEV1, the running IV advanced by a CMAC over every command, OK
+  answers with an 8-byte CMAC over data || status, full mode E(data || CRC32(data || 00) || 0-pad).
+- emu.c: a one-byte answer (native status) used to be replaced with 6F00, and logApdu read r[rlen - 2].
+- pm3 (synthetic EV3 file + a real EV3 info file): lsapp --files (apps, key settings, DF names, files, auth
+  probes), read std / records (newest-first offsets) / value, EV1 AES auth + encrypted read (CRC checked by pm3),
+  wrong key refused, 2K3DES PICC auth + GetCardUID. `hf mfdes info` stops after GetVersion: pm3 drops the field
+  and sends WUPA for only ~11 ms; listening again needs RF_DISCOVER >= ~100 ms after the deactivation to idle
+  (50 ms: same). Same for back-to-back pm3 commands in one -c: separate calls work.
+- Not done: legacy D40 auth (0A, pm3 shows "Auth NO"), EV2 (71), writes (9D).
+
 ## Listen-mode parity: raw 9-bit frames (chip/ptest.c, tools/exp/parity/) -- 2026-11-02
 - Found by a bit sweep on air (ptest.c: the ROM's listen TX rebuilt, one register write per answered E5 frame,
   the TX time measured on the chip; the pm3 holds the selection and chains `hf 14a raw -k -c e5 NN`): flip

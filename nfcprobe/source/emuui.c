@@ -1,20 +1,22 @@
 // Card emulation screens (emu.c): an NFC Forum Type 4 tag carrying an NDEF message, a card's UID for
-// UID-only readers, an APDU log that shows what a reader sends, and Ultralight / NTAG and Classic dumps
-// (answered on the chip).
+// UID-only readers, an APDU log that shows what a reader sends, Ultralight / NTAG and Classic dumps
+// (answered on the chip) and DESFire info files (answered here, dfemu.c).
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <3ds.h>
 
 #include "app.h"
+#include "dfemu.h"
 #include "emu.h"
 #include "entry.h"
 #include "ndef.h"
 #include "probe.h"
 #include "ui.h"
 
-static enum { MODE_NDEF, MODE_UID, MODE_LOG, MODE_MFU, MODE_MFC } mode;
-static EmuId runId; // MODE_UID: what to be
+static enum { MODE_NDEF, MODE_UID, MODE_LOG, MODE_MFU, MODE_MFC, MODE_DF } mode;
+static EmuId runId; // MODE_UID, MODE_DF: what to be
 static MfuDump runDump; // MODE_MFU: the card, with what readers wrote afterwards
 static MfDump runMfc;   // MODE_MFC: the same
 static char runName[64];
@@ -44,6 +46,10 @@ static void runEmu(void)
 {
 	if (mode == MODE_MFU || mode == MODE_MFC) {
 		emuOk = mode == MODE_MFU ? emuRunMfu(&runDump) : emuRunMfc(&runMfc);
+		return;
+	}
+	if (mode == MODE_DF) {
+		emuOk = emuRun(&runId, dfEmuApdu);
 		return;
 	}
 	if (mode == MODE_LOG) nrules = emuLogLoad();
@@ -86,7 +92,7 @@ static void doneEmu(void)
 		msgBox("Emulate", "A reader wrote a new message onto the 3DS:\n%s", s);
 		return;
 	}
-	if (mode != MODE_NDEF && emu.apdus) {
+	if ((mode == MODE_LOG || mode == MODE_UID) && emu.apdus) {
 		msgBox("APDU log", "%lu APDU%s in %lu session%s, appended to\n" EMU_APDU_LOG, (unsigned long)emu.apdus,
 			emu.apdus == 1 ? "" : "s", (unsigned long)emu.sessions, emu.sessions == 1 ? "" : "s");
 		return;
@@ -106,7 +112,8 @@ static float emuView(float x, float y, float w)
 	snprintf(s, sizeof(s), "%s", mode == MODE_NDEF ? "Type 4 tag" : mode == MODE_LOG ? "APDU log" : mode == MODE_MFU ?
 		(runDump.info.type ? runDump.info.type->name : "Ultralight") : mode == MODE_MFC ?
 		(emu.chipPages == 20 ? "MIFARE Classic Mini" : emu.chipPages == 128 ? "MIFARE Classic 2K" :
-		 emu.chipPages == 256 ? "MIFARE Classic 4K" : "MIFARE Classic 1K") : "UID only");
+		 emu.chipPages == 256 ? "MIFARE Classic 4K" : "MIFARE Classic 1K") : mode == MODE_DF ? dfVersionName(dfEmuInfo()) :
+		"UID only");
 	uiText(x, y, S_SMALL, dim, "%s", uiFit(s, w, S_SMALL));
 	y += SMALL_H;
 	uiText(x, y, S_SMALL, dim, "UID %s, ATQA %02X%02X, SAK %02X", u, emu.id.atqa[1], emu.id.atqa[0], emu.id.sak);
@@ -149,6 +156,21 @@ static float emuView(float x, float y, float w)
 			uiText(x, y, S_SMALL, uiCol[COL_WARN], "%lu block%s written by readers (saved on stop if you like)",
 				(unsigned long)emu.writes, emu.writes == 1 ? "" : "s");
 		else uiText(x, y, S_SMALL, dim, "Encrypted answers with their encrypted parity, as a real card");
+	} else if (mode == MODE_DF) {
+		const DfInfo *d = dfEmuInfo();
+		char nm[64];
+		snprintf(nm, sizeof(nm), "%s", runName);
+		int keys = d->piccKey.known, files = 0;
+		for (int i = 0; i < d->napps && i < DF_MAX_APPS; i++) {
+			files += d->apps[i].nfiles;
+			for (int k = 0; k < 14; k++) keys += d->apps[i].keys[k].known;
+		}
+		uiText(x, y, S_SMALL, txt, "%d app%s, %d file%s from %s", d->napps, d->napps == 1 ? "" : "s", files,
+			files == 1 ? "" : "s", uiFit(nm, w - 170, S_SMALL));
+		y += SMALL_H;
+		if (keys) uiText(x, y, S_SMALL, dim, "EV1 authentication with its %d known key%s; read only", keys,
+			keys == 1 ? "" : "s");
+		else uiText(x, y, S_SMALL, dim, "No keys in the file: what reads without one; read only");
 	} else if (mode == MODE_NDEF) {
 		u32 len;
 		const u8 *msg = emuNdefGet(&len);
@@ -182,7 +204,26 @@ static void start(void)
 {
 	jobNextHint("Tap a phone on the bottom screen.");
 	jobStartView(mode == MODE_NDEF ? "Emulating a tag" : mode == MODE_LOG ? "APDU log" : mode == MODE_MFU ||
-		mode == MODE_MFC ? "Emulating a card" : "Emulating a UID", runEmu, doneEmu, true, emuView);
+		mode == MODE_MFC || mode == MODE_DF ? "Emulating a card" : "Emulating a UID", runEmu, doneEmu, true, emuView);
+}
+
+void emuStartDf(const DfInfo *d, const char *name)
+{
+	mode = MODE_DF;
+	dfEmuSet(d);
+	memset(&runId, 0, sizeof(runId));
+	runId.atqa[0] = 0x44, runId.atqa[1] = 0x03, runId.sak = 0x20;
+	if (d->randomUid && !d->hasRealUid) { // a random ID card: a new one, as it would give
+		runId.uidLen = 4;
+		runId.uid[0] = 0x08;
+		for (int i = 1; i < 4; i++) runId.uid[i] = rand();
+		runId.atqa[0] = 0x04;
+	} else {
+		runId.uidLen = 7;
+		memcpy(runId.uid, d->realUid, 7);
+	}
+	snprintf(runName, sizeof(runName), "%s", name);
+	start();
 }
 
 void emuStartMfc(const MfDump *d, const char *name)

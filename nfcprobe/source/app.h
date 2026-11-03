@@ -1,6 +1,7 @@
 #pragma once
 #include <3ds.h>
 
+#include "desfire.h"
 #include "mfc.h"
 #include "mfu.h"
 #include "ui.h"
@@ -104,6 +105,7 @@ void emuStartUid(const Card *c);                          // its UID, ATQA and S
 void emuStartMfuNdef(const MfuDump *d, const char *name); // a Type 4 tag with the dump's NDEF message
 void emuStartMfu(const MfuDump *d, const char *name);     // the dump's card itself (chip-answered)
 void emuStartMfc(const MfDump *d, const char *name);      // the same for Classic Mini / 1K / 2K / 4K
+void emuStartDf(const DfInfo *d, const char *name);       // a saved DESFire info file, answered by the host
 
 // HID iClass / PicoPass (iclassui.c)
 void iclassOpenMenu(void);

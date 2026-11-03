@@ -86,7 +86,8 @@ static void logApdu(const u8 *c, u32 clen, const u8 *r, u32 rlen)
 	int o = sprintf(s, "> ");
 	for (u32 i = 0; i < clen && i < 12; i++) o += sprintf(s + o, "%02X", c[i]);
 	if (clen > 12) o += sprintf(s + o, "..");
-	sprintf(s + o, "  < %s%02X%02X", rlen > 2 ? ".. " : "", r[rlen - 2], r[rlen - 1]);
+	if (rlen < 2) sprintf(s + o, "  < %02X", r[0]); // a native DESFire status
+	else sprintf(s + o, "  < %s%02X%02X", rlen > 2 ? ".. " : "", r[rlen - 2], r[rlen - 1]);
 	logp("emu: %s\n", s);
 }
 
@@ -254,7 +255,7 @@ static bool listenAs(EmuApdu fn)
 		else memcpy(cmd + clen, pkt + 4, n), clen += n;
 		if (pkt[1] & 0x10) continue;
 		u32 rlen = over ? 0 : fn(cmd, clen, resp, sizeof(resp));
-		if (rlen < 2) {
+		if (!rlen) { // (a native DESFire status is one byte)
 			resp[0] = over ? 0x67 : 0x6F; // wrong length / no precise diagnosis
 			resp[1] = 0;
 			rlen = 2;

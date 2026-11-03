@@ -14,15 +14,15 @@ static DumpDir *dirs[4]; // scanned at least once: dumpForget looks there
 static int ndirs;
 static LightLock regLock;
 
-static bool isDump(const char *name)
+static bool isDump(const char *name, const char *ext)
 {
-	int len = strlen(name);
-	return len >= 5 && len < 64 && !strcasecmp(name + len - 4, ".bin");
+	int len = strlen(name), el = strlen(ext);
+	return len > el && len < 64 && !strcasecmp(name + len - el, ext);
 }
 
-static void add(DumpEnt *out, int *n, const char *name, u32 size)
+static void add(DumpEnt *out, int *n, const char *name, u32 size, const char *ext)
 {
-	if (*n >= DUMP_MAX || !isDump(name)) return;
+	if (*n >= DUMP_MAX || !isDump(name, ext)) return;
 	DumpEnt *e = &out[(*n)++];
 	snprintf(e->name, sizeof(e->name), "%s", name);
 	e->size = size;
@@ -31,7 +31,7 @@ static void add(DumpEnt *out, int *n, const char *name, u32 size)
 }
 
 // Names and sizes, without a stat per file.
-static int readDir(const char *dir, DumpEnt *out)
+static int readDir(const char *dir, const char *ext, DumpEnt *out)
 {
 	int n = 0;
 #ifdef __3DS__
@@ -47,7 +47,7 @@ static int readDir(const char *dir, DumpEnt *out)
 				ssize_t len = utf16_to_utf8((u8 *)name, e[i].name, sizeof(name) - 1);
 				if (len < 0 || e[i].attributes & FS_ATTRIBUTE_DIRECTORY) continue;
 				name[len] = 0;
-				add(out, &n, name, e[i].fileSize);
+				add(out, &n, name, e[i].fileSize, ext);
 			}
 		FSDIR_Close(h);
 	}
@@ -59,7 +59,7 @@ static int readDir(const char *dir, DumpEnt *out)
 		char path[320];
 		struct stat st;
 		snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
-		if (!stat(path, &st) && S_ISREG(st.st_mode)) add(out, &n, e->d_name, st.st_size);
+		if (!stat(path, &st) && S_ISREG(st.st_mode)) add(out, &n, e->d_name, st.st_size, ext);
 	}
 	if (dp) closedir(dp);
 #endif
@@ -88,7 +88,7 @@ void dumpScan(DumpDir *d)
 	LightLock_Unlock(&regLock);
 
 	LightLock_Lock(&d->lock);
-	int n = readDir(d->dir, d->scratch);
+	int n = readDir(d->dir, d->ext ? d->ext : ".bin", d->scratch);
 	for (int i = 0; i < n; i++) {
 		DumpEnt *e = &d->scratch[i];
 		for (int k = 0; k < d->n; k++)

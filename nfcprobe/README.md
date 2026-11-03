@@ -81,6 +81,13 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   WRITE, HALT). The encrypted answers go out with their encrypted parity, as raw 9-bit frames (NOTES.md:
   listen-mode parity). Classic and Ultralight each have their own chip image (chip/emu.c built twice); a 2K /
   4K's blocks past 63 live in chip RAM the ROM leaves alone while listening.
+- DESFire: a saved info file (DESFire > Saved cards; `Save info` on the card screen writes them), answered by
+  the host (`dfemu.c`): GetVersion, application / file IDs, key settings and versions, file settings, the file
+  contents the scan read (standard, backup, value, records), free memory, signature, DF names, GetCardUID. EV1
+  authentication (AES, ISO 2K3DES / 3K3DES) with the keys the file has, then CMAC'd or encrypted answers as a real
+  card. Read only. Not yet: legacy (D40) and EV2 authentication. pm3's `hf mfdes info` reselects within ~10 ms
+  of dropping its field, faster than the chip listens again (100 ms), so it stops after GetVersion; `lsapp`,
+  `read`, `auth` work.
 - APDU log: an empty ISO-DEP card answering from `sdmc:/nfcprobe/emu/apdu.txt` ("<command prefix>
   <response>" in hex per line, first match wins, else 6A82 for a SELECT / 6D00), every APDU appended to
   `sdmc:/nfcprobe/emu/apdu.log`.

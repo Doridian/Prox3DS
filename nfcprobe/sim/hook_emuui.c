@@ -96,6 +96,32 @@ void simEmuMfc(void)
 	simBusyView(emuView);
 }
 
+// A DESFire info file mid-session: an EV3 with keyed applications
+void simEmuDf(void)
+{
+	static DfInfo d;
+	static const char *log[] = { "> 905A00000333221100  < 9100", "> 90AA0000010100  < .. 91AF",
+		"> 90AF000020A3C1..  < .. 9100", "> 90F50000010100  < .. 9100", "> 90BD0000070100000000..  < .. 9100" };
+	memset(&d, 0, sizeof(d));
+	static const u8 ver[28] = { 0x04, 0x01, 0x01, 0x33, 0x00, 0x1A, 0x05, 0x04, 0x01, 0x01, 0x03, 0x00, 0x1A, 0x05 };
+	memcpy(d.ver, ver, 28);
+	d.verLen = 28, d.napps = 4, d.piccKey.known = true;
+	for (int i = 0; i < 4; i++) {
+		d.apps[i].nfiles = 3;
+		d.apps[i].keys[0].known = d.apps[i].keys[1].known = true;
+	}
+	dfEmuSet(&d);
+	snprintf(runName, sizeof(runName), "040C686A9F2390-9.txt");
+	memset(&emu, 0, sizeof(emu));
+	mode = MODE_DF;
+	emu.id = (EmuId){ { 0x04, 0x0C, 0x68, 0x6A, 0x9F, 0x23, 0x90 }, 7, { 0x44, 0x03 }, 0x20 };
+	emu.field = emu.active = true, emu.fields = 4, emu.sessions = 3, emu.apdus = 23;
+	for (int i = 0; i < 5; i++) snprintf(emu.log[emu.nlog++ % EMU_LOG_N], 48, "%s", log[i]);
+	jobNextHint("Tap a phone on the bottom screen.");
+	simBusy("Emulating a card", true, false);
+	simBusyView(emuView);
+}
+
 void simEmuForm(void)
 {
 	card = (Card){ .atqa = { 0x44, 0x00 }, .uid = { 0x04, 0x6B, 0x21, 0x9A, 0x3C, 0x5D, 0x80 }, .uidLen = 7, .sak = 0 };

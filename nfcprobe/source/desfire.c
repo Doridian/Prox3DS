@@ -972,6 +972,143 @@ static void keyLine(FILE *fp, int k, const DfKey *key)
 	else fprintf(fp, "  key %d: not in the dictionary\n", k);
 }
 
+// Hex digits (spaces allowed between bytes) into out; the byte count.
+static int unhexLine(const char *s, u8 *out, int max)
+{
+	int n = 0;
+	unsigned v;
+	while (n < max) {
+		while (*s == ' ') s++;
+		if (sscanf(s, "%2x", &v) != 1 || !s[1] || s[1] == ' ' || s[1] == '\n' || s[1] == '\r') break;
+		out[n++] = v;
+		s += 2;
+	}
+	return n;
+}
+
+// "ok", "permission denied", ... back to the status (dfStatusName); unknown text: AE.
+static u8 statusFromName(const char *s)
+{
+	char t[48];
+	snprintf(t, sizeof(t), "%s", s);
+	t[strcspn(t, "\r\n")] = 0;
+	for (int st = 0; st < 256; st++)
+		if (!strcmp(dfStatusName(st), t)) return st;
+	return 0xAE;
+}
+
+static bool keyFromLine(const char *s, DfKey *k)
+{
+	char name[16];
+	int off;
+	if (sscanf(s, "%15s %n", name, &off) != 1) return false;
+	int n = unhexLine(s + off, k->key, 24);
+	if (!strcmp(name, "AES") && n == 16) k->type = DF_AES;
+	else if (!strcmp(name, "3K3DES") && n == 24) k->type = DF_3K3DES;
+	else if ((!strcmp(name, "DES") || !strcmp(name, "2K3DES")) && (n == 8 || n == 16)) k->type = DF_2K3DES;
+	else return false;
+	if (n == 8) memcpy(k->key + 8, k->key, 8);
+	return k->known = true;
+}
+
+bool dfLoadInfo(DfInfo *d, const char *path)
+{
+	FILE *fp = fopen(path, "r");
+	if (!fp) return false;
+	memset(d, 0, sizeof(*d));
+	d->keySt = d->keyVerSt = d->appSt = 0xAE; // until the file says otherwise
+	char line[512];
+	u8 uid[10];
+	int uidLen = 0;
+	bool ok = false;
+	DfApp *a = NULL;
+	DfFile *f = NULL;
+	unsigned x, y;
+	while (fgets(line, sizeof(line), fp)) {
+		const char *l = line;
+		int k;
+		if (!strncmp(l, "UID ", 4)) {
+			uidLen = unhexLine(l + 4, uid, 10);
+			ok = true;
+		} else if (!strncmp(l, "random ID on", 12)) {
+			d->randomUid = true;
+			if (strstr(l, "real UID by GetCardUID")) d->hasRealUid = true;
+		} else if (!strncmp(l, "ATS ", 4)) {
+			d->atsLen = unhexLine(l + 4, d->ats, sizeof(d->ats));
+		} else if (!strncmp(l, "hardware ", 9)) {
+			if (unhexLine(l + 9, d->ver, 7) == 7 && d->verLen < 7) d->verLen = 7;
+		} else if (!strncmp(l, "software ", 9)) {
+			if (unhexLine(l + 9, d->ver + 7, 7) == 7) d->verLen = 21;
+		} else if (!strncmp(l, "batch ", 6)) {
+			if (unhexLine(l + 6, d->ver + 21, 5) == 5) d->verLen = 28;
+		} else if (sscanf(l, "production week %x / 20%x", &x, &y) == 2) {
+			d->ver[26] = x, d->ver[27] = y;
+		} else if (!strncmp(l, "signature ", 10)) {
+			d->hasSig = unhexLine(l + 10, d->sig, 56) == 56;
+		} else if (sscanf(l, "free memory %u bytes", &x) == 1) {
+			d->hasFree = true, d->freeMem = x;
+		} else if (sscanf(l, "Application %x", &x) == 1) {
+			a = d->napps < DF_MAX_APPS ? &d->apps[d->napps] : NULL;
+			if (a) {
+				memset(a, 0, sizeof(*a));
+				a->aid = x;
+				a->keySt = a->fileSt = 0xAE;
+			}
+			d->napps++;
+			f = NULL;
+		} else if (!a) { // the PICC
+			if (!strncmp(l, "  key settings: ", 16)) d->keySt = statusFromName(l + 16);
+			else if (sscanf(l, "  key settings %x, %d", &x, &k) == 2) {
+				d->keySt = 0, d->keySet = x;
+				d->maxKeys = k | (strstr(l, "AES") ? 0x80 : strstr(l, "3K3DES") ? 0x40 : 0);
+			} else if (sscanf(l, "  key 0 version %x", &x) == 1) d->keyVerSt = 0, d->keyVer = x;
+			else if (!strncmp(l, "  key 0: ", 9)) keyFromLine(l + 9, &d->piccKey);
+			else if (!strncmp(l, "  applications: ", 16)) d->appSt = statusFromName(l + 16);
+			else if (sscanf(l, "  %d application", &k) == 1) d->appSt = 0;
+		} else if (a && a - d->apps < DF_MAX_APPS) {
+			int n = 0;
+			if (sscanf(l, "  ISO FID %x", &x) == 1) {
+				a->hasIso = true, a->isoFid = x;
+				const char *nm = strstr(l, "DF name ");
+				if (nm) a->nameLen = unhexLine(nm + 8, a->name, 16);
+			} else if (!strncmp(l, "  select: ", 10)) a->selSt = statusFromName(l + 10);
+			else if (!strncmp(l, "  key settings: ", 16)) a->keySt = statusFromName(l + 16);
+			else if (sscanf(l, "  key settings %x, %d", &x, &k) == 2) {
+				a->keySt = 0, a->keySet = x;
+				a->maxKeys = k | (strstr(l, "AES") ? 0x80 : strstr(l, "3K3DES") ? 0x40 : 0);
+			} else if (!strncmp(l, "  key versions ", 15)) a->nKeyVer = unhexLine(l + 15, a->keyVer, 14);
+			else if (sscanf(l, "  key %d: %n", &k, &n) == 1 && k >= 0 && k < 14) keyFromLine(l + n, &a->keys[k]);
+			else if (!strncmp(l, "  files: ", 9)) a->fileSt = statusFromName(l + 9);
+			else if (sscanf(l, "  file %x:", &x) == 1) {
+				a->fileSt = 0;
+				f = a->nfiles < DF_MAX_FILES ? &a->files[a->nfiles++] : NULL;
+				if (f) {
+					memset(f, 0, sizeof(*f));
+					f->fid = x;
+					f->dataKey = 0xE;
+					const char *st = strstr(l, ": settings: ");
+					if (st) f->st = statusFromName(st + 12);
+				}
+			} else if (f && sscanf(l, "    read with key %x", &x) == 1) {
+				f->dataKey = x;
+			} else if (f && !strncmp(l, "    contents: ", 14)) {
+				f->hasData = true, f->dataSt = statusFromName(l + 14);
+			} else if (f && !strncmp(l, "    raw ", 8)) {
+				f->len = unhexLine(l + 8, f->set, sizeof(f->set));
+			} else if (f && sscanf(l, "    %x:%n", &x, &n) == 1 && n == 9) { // contents, 16 bytes a line
+				if (!f->hasData) f->hasData = true, f->dataOff = d->poolUsed;
+				u32 room = sizeof(d->pool) - d->poolUsed;
+				int got = unhexLine(l + n, d->pool + d->poolUsed, room < 16 ? room : 16);
+				d->poolUsed += got, f->dataLen += got;
+			}
+		}
+	}
+	fclose(fp);
+	if (d->verLen >= 21) memcpy(d->ver + 14, uid, uidLen < 7 ? uidLen : 7);
+	if (d->hasRealUid || !d->randomUid) memcpy(d->realUid, uid, 7);
+	return ok && d->verLen >= 7;
+}
+
 bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 {
 	char uid[21] = "";
