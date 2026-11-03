@@ -5,7 +5,7 @@ Runs inside the pm3 client (embedded Python):
     proxmark3 /dev/ttyACM0 -y gpload.py -- install dspm-test.cap
     proxmark3 /dev/ttyACM0 -y gpload.py -- delete F0334453504D
 
-Keys default to 404142..4F (GP_KEY=hex to change). The card cryptogram from INITIALIZE UPDATE is
+Keys default to 404142..4F (GP_KEY=hex to change), the ISD to A000000151000000 (GP_ISD=hex). The card cryptogram from INITIALIZE UPDATE is
 checked first; EXTERNAL AUTHENTICATE (the step whose failures the card counts) is only sent if it
 matches, so wrong keys never cost a try.
 """
@@ -18,7 +18,7 @@ import pm3
 from cryptography.hazmat.primitives.ciphers import algorithms
 from cryptography.hazmat.primitives.cmac import CMAC
 
-ISD = bytes.fromhex("A000000151000000")
+ISD = bytes.fromhex(os.environ.get("GP_ISD", "A000000151000000"))
 KEY = bytes.fromhex(os.environ.get("GP_KEY", "404142434445464748494A4B4C4D4E4F"))
 CAP_ORDER = ["Header", "Directory", "Import", "Applet", "Class", "Method", "StaticField", "Export",
              "ConstantPool", "RefLocation", "Descriptor"]

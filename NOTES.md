@@ -1902,3 +1902,17 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   check.py: 267 OK, 0 DIFF on both. PACE_GM and the EC key pair without a curve were wrong in the VM before
   that (fixed). 3ds.txt is from the run before those two fixes. The card sometimes misses the first
   APDU of a gpload.py run ("no answer"): run it again.
+
+### The "fido" card (2026-11-03): Thales SafeNet IDPrime 3940 FIDO
+- UID 08 00 F3 6A (random), ATQA 0004, SAK 20, ATS 14 78 77 95 02 80 31 80 65 B0 85 59 56 FB 12 0F FC 82 90
+  00 (pm3 fingerprint: IDPrime 3940 Fido). A product card, not a blank dev card.
+- Card manager A000000018434D00 (Gemalto ISD; A000000151000000 is not there): GP 2.2.x, SCP03 i=10, Java
+  Card OID 1.3.6.1.4.1.42.2.110.1.3. CPLC: IC Infineon (4090) type 7897, OS 1291 dated 7090, release 0400,
+  made / prepersonalized 2023 day 155, not personalized (pers fields 0).
+- FIDO A0000006472F0001: U2F_V2 on select; CTAP2 getInfo (80 10 00 00 01 04): U2F_V2 + FIDO_2_0,
+  hmac-secret, AAGUID b50d5e0a-7f81-4959-9b12-f45407407503, rk true, clientPin false (no PIN set), PIN
+  protocol 1. The IDPrime PKI / PIV / OpenPGP / PKCS#15 AIDs all 6A82.
+- GP keys: not 404142..4F, GEMXPRESSOSAMPLE or zeros (cryptogram checked offline with gpload.py, GP_ISD=
+  A000000018434D00; no EXTERNAL AUTHENTICATE sent). The 4th INITIALIZE UPDATE in a row gave 6982: the card
+  limits them; it still selects / answers fine. Stopped there: no applet loading on this card, so no
+  CryptoProbe. Useful as a FIDO2 / U2F card.
