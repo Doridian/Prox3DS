@@ -44,6 +44,8 @@ void jobStart(const char *title, void (*run)(void), void (*done)(void), bool can
 // the height it took; the log gets the rest.
 void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool cancellable,
 	float (*view)(float x, float y, float w));
+// The busy box's hint next to "B stop" for the next job started (default: keep the card on the bottom screen).
+void jobNextHint(const char *hint);
 void fmtDuration(char *out, u32 ms); // "m:ss"
 bool cardWait(void); // in a job: take the chip, poll until a card is activated (or cancelled)
 
@@ -94,6 +96,9 @@ u64 unixNow(void);       // the console clock as UTC, with the OATH tool's clock
 void emvOpenTool(void);  // EMV payment cards (emvui.c)
 void apduConsole(void);  // raw APDUs (scui.c)
 u32 jobCount(void);      // jobs started so far: tells a tool whether another job touched the card since
+
+// Card emulation (emuui.c)
+void emuOpenMenu(void);
 
 // HID iClass / PicoPass (iclassui.c)
 void iclassOpenMenu(void);

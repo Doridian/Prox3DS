@@ -21,6 +21,8 @@ void simTag(const Card *c)
 void simBusy(const char *title, bool cancellable, bool stopping)
 {
 	jobTitle = title;
+	jobHint = nextHint ? nextHint : "Keep the card on the bottom screen.";
+	nextHint = NULL;
 	jobCancellable = cancellable;
 	mfCancel = stopping;
 	jobBusy = true;

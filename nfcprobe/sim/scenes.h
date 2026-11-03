@@ -53,5 +53,8 @@ void simEmv(const EmvCard *e, bool full);
 void simIclass(const IcCard *c);
 void simIclassMenu(void);
 
+void simEmuMenu(void);
+void simEmuRun(bool written); // the emulation busy box (written: a phone wrote a URL)
+void simEmuDone(void);      // its end dialog
 void simTearScan(void);    // write scan results, the EV1 test card's measured curve
 void simTearCounter(void); // the counter reset busy box

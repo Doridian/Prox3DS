@@ -1422,6 +1422,16 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   - After field loss the chip deactivates to IDLE (`61 06 00 02`): RF_DISCOVER has to be re-sent to
     listen again (stock.py does this now).
   - So the earlier "TX too weak" verdict was a placement problem (pm3 lying ON TOP of the 3DS).
+  - Correction: memrw itself is harmless. The ROM's FRAME_LOG (0x380A0 = 1 1, which stock.py turned on
+    with memrw) is what keeps host DATA from going out; memrw loaded with FRAME_LOG off answers 4/4.
+  - nfcprobe card mode (source/emu.c): monLoad, LA_* config, map 04 02 02, listen A, then APDUs as NCI
+    DATA (PBF reassembly, a credit per packet, CORE_CONN_CREDITS returns it when the next block comes).
+    Type 4 NDEF tag verified with pm3: `hf 14a ndefread` 8/8 back to back, UPDATE BINARY write + read back.
+  - Re-arm after deactivation to idle: RF_DISCOVER sent right away (or 20 ms later) gets RSP OK and field
+    NTFs, but the chip never activates again; 100 ms later works every time.
+  - pm3 `hf 14a ndefread` (and the DESFire-only `ndefwrite`) leave the field on: the chip stays in the
+    session, and the next pm3 command's field reset lands in the deactivation -> "No card" on every
+    other run. Add `; hw fpgaoff` when testing.
 - Nintendo's nfc module only carries reader-side vendor config (TLV list at .code 0x13B1A1:
   CB 01 01, A5 01 01, CA [20 bytes], C5 01 01), so card mode was never configured on the 3DS.
 - lmon (chip/lmon.c, own SRAM image, ~3.3 KB): memrw ops 0-4 + op 5 IRQLOG (wrap IRQ0..7, 5 watched

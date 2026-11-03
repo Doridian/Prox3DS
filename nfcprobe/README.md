@@ -62,6 +62,13 @@ Smart cards (`source/iso7816.c`, `source/scard.c`, `source/scui.c`): any ISO1444
   offset is a setting (`sdmc:/nfcprobe/oath.txt`). Works with ykneo-oath on a JavaCard (`ant oath` in javacard/).
 - A new applet tool: a screen file, its open function in `app.h`, an entry in `scApplets[]`.
 
+Card emulation (`source/emu.c`, `source/emuui.c`): the 3DS as an ISO14443-4A card through the ROM's NCI
+listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answered by the app as NCI DATA).
+- NDEF tag: an NFC Forum Type 4 tag (T4T 2.0: NDEF application, CC file E103, NDEF file E104) with a URL,
+  a text or an empty message. Writable: what a reader writes with UPDATE BINARY shows up on the screen.
+- A weak card: the reader has to lie under the 3DS (bottom screen down onto it). A new emulated card type is
+  an `EmuApdu` handler passed to `emuRun`.
+
 - Chip info: reset / init / patch version.
 
 `sim/` builds the UI for the PC with fake citro2d / libctru and mock cards, renders every screen to
@@ -76,5 +83,5 @@ ops 0x10-0x1F and 0x22 in `source/netsrv.c`; `mfwrite` is an encrypted Mifare Cl
 user page write, both WRITE THE CARD).
 `nfcnet.py HOST put LOCAL [sdmc:/nfcprobe/...]` copies a file onto the SD card (CAP files go to `cap/`).
 `nfcnet.py HOST shot [OUT.png]` grabs the top screen and `nfcnet.py HOST keys a down ...` presses
-buttons (ops 0x20/0x21, served even while a job holds the chip). Drive it from the PC with
+buttons (ops 0x20/0x21, served even while a job holds the chip, as is the ping every client starts with). Drive it from the PC with
 `tools/nfcnet.py HOST probe|spd FILE.ncd|send HEX...|release`, or import `Nfc` from it.

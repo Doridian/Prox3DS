@@ -50,8 +50,8 @@ def main():
         "21010C" "0002" "000300" "0100" "010300" "0104",
         "2103030180" "01",
     ]
-    if patch == "memrw":
-        mon.write(0x380A0, b"\1\1")  # FRAME_LOG TX + RX
+    if patch == "memrw" and __import__("os").environ.get("FLOG", "1") == "1":
+        mon.write(0x380A0, b"\1\1")  # FRAME_LOG TX + RX (env FLOG=0: off)
     for c in cmds:
         for p in nfc.cmd(bytes.fromhex("10" + c)):
             print("  " + nfcnet.describe(p))

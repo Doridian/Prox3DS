@@ -174,6 +174,7 @@ static void dialogDraw(void)
 static Thread worker;
 static volatile bool jobBusy, jobFinished;
 static const char *jobTitle;
+static const char *jobHint, *nextHint;
 static void (*jobRun)(void), (*jobDone)(void);
 static bool jobCancellable;
 static float (*jobView)(float x, float y, float w);
@@ -192,6 +193,11 @@ static void jobThread(void *arg)
 	jobFinished = true;
 }
 
+void jobNextHint(const char *hint)
+{
+	nextHint = hint;
+}
+
 void jobStart(const char *title, void (*run)(void), void (*done)(void), bool cancellable)
 {
 	jobStartView(title, run, done, cancellable, NULL);
@@ -202,6 +208,8 @@ void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool
 {
 	if (jobBusy) return;
 	jobView = view;
+	jobHint = nextHint ? nextHint : "Keep the card on the bottom screen.";
+	nextHint = NULL;
 	progJob();
 	jobTitle = title;
 	jobRun = run;
@@ -281,7 +289,7 @@ static void busyDraw(void)
 	float hy = bottom - 16;
 	if (jobCancellable) {
 		uiText(x + 10, hy, S_SMALL, uiCol[mfCancel ? COL_WARN : COL_DIM], mfCancel ? "Stopping..." : BTN_B " stop");
-		uiTextRight(x + w - 10, hy, S_SMALL, uiCol[COL_DIM], "Keep the card on the bottom screen.");
+		uiTextRight(x + w - 10, hy, S_SMALL, uiCol[COL_DIM], "%s", jobHint);
 	}
 }
 
@@ -602,7 +610,7 @@ static void menuExit(void)
 	quit = true;
 }
 
-static MenuEntry rootEntries[6 + NFAMILIES + 1];
+static MenuEntry rootEntries[7 + NFAMILIES + 1];
 static void rootExtra(float x, float y, float w);
 static Menu rootMenu = { "nfcprobe", rootEntries, 0, rootExtra };
 
@@ -638,6 +646,8 @@ static void rootInit(void)
 		rootEntries[n++] = (MenuEntry){ families[i]->name, families[i]->help, families[i]->menu };
 	rootEntries[n++] = (MenuEntry){ "iClass / PicoPass", "HID iClass (legacy and elite keys): key search, dump, the "
 		"Wiegand credential. Not in the generic scan: iClass is ISO15693, polled on its own.", iclassOpenMenu };
+	rootEntries[n++] = (MenuEntry){ "Emulate (card mode)", "The 3DS as a card for another reader: an NFC Forum Type 4 "
+		"tag with a URL or text a phone can read (and write).", emuOpenMenu };
 	rootEntries[n++] = (MenuEntry){ "Amiibo", "Read and copy Amiibo with this console's own keys, or make new ones "
 		"from the figure list (AmiiboAPI, downloaded over Wi-Fi).", amiiboOpenMenu };
 	rootEntries[n++] = (MenuEntry){ "Log", "Everything the card operations logged (also in sdmc:/nfcprobe.log).", openLog };

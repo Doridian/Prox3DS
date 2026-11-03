@@ -844,6 +844,8 @@ static void serveClient(int fd)
 		Result res;
 		if (hdr[0] == OP_SHOT || hdr[0] == OP_KEYS || hdr[0] == OP_LOG) {
 			res = handleDebug(hdr[0], in, len, out, &outLen);
+		} else if (hdr[0] == OP_PING) { // no chip access: answers while a job runs (every client starts with it)
+			res = handle(hdr[0], in, len, out, &outLen);
 		} else {
 			LightLock_Lock(&hwLock);
 			res = handle(hdr[0], in, len, out, &outLen);

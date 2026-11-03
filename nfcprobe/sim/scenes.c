@@ -636,6 +636,9 @@ static void kbDone(const char *s) { (void)s; }
 static void scnKbText(void) { entryText("Write a URL", "https://..., tel:..., mailto:...", "https://example.org/a?b=c", 511, 0, kbDone); }
 static void scnKbHex(void) { entryText("APDU", "CLA INS P1 P2 [Lc data] [Le], in hex.", "00A4040007A0000000041010", 522, ENTRY_HEX, kbDone); }
 static void scnKbPw(void) { entryText("OATH password", "This applet has a password.", "hunter2", 127, ENTRY_HIDE, kbDone); }
+static void scnEmuMenu(void) { simEmuMenu(); }
+static void scnEmuIdle(void) { simEmuRun(false); }
+static void scnEmuWritten(void) { simEmuRun(true); }
 static void scnTear(void) { simTearScan(); }
 static void scnTearCnt(void) { simTearCounter(); }
 
@@ -858,6 +861,9 @@ static const SimStep script[] = {
 	CALL(reset), CALL(scnKbText), SHOT("kb_text"), CALL(reset), CALL(scnKbHex), SHOT("kb_hex"),
 	CALL(reset), CALL(scnKbPw), SHOT("kb_password"),
 
+	// card emulation
+	CALL(reset), CALL(scnEmuMenu), SHOT("emu_menu"), CALL(reset), CALL(scnEmuIdle), SHOT("emu_idle"), CALL(simBusyEnd),
+	CALL(reset), CALL(scnEmuWritten), SHOT("emu_written"), CALL(simBusyEnd), CALL(simEmuDone), SHOT("emu_done"),
 	// tear-off
 	CALL(reset), CALL(scnTear), SHOT("tear_scan"), D, D, D, D, D, D, D, D, D, D, SHOT("tear_scan_end"),
 	CALL(reset), CALL(scnTearCnt), SHOT("tear_counter"), CALL(simBusyEnd),

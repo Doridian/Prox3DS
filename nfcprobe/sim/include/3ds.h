@@ -42,6 +42,8 @@ void threadFree(Thread t);
 
 void svcSleepThread(s64 ns);
 u64 osGetTime(void);
+static inline u64 svcGetSystemTick(void) { return 0; }
+#define R_FAILED(r) ((Result)(r) < 0)
 
 bool aptMainLoop(void);
 bool aptCheckHomePressRejected(void);
