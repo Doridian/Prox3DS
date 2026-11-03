@@ -1836,3 +1836,33 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   JcVm / JcCard are static only; -Wstack-usage=2048 is clean on the jc files now.
 - UI: Emulate > Java Card applets (jcui.c): the applets, A emulates (emuStartJc: random UID, SAK 20), X:
   install a CAP from sdmc:/nfcprobe/cap, delete its package, wipe. Sim scenes jc_empty / jc_list / jc_emu.
+
+## Java Card VM: ground truth from the J3H145 (javacard/cprobe, tools/exp/cprobe) -- 2026-11-03
+- VmTest (dspm-vmtest.cap) installed on the card with gpload.py and run through the pm3: all 17 answers
+  are the same as the C VM's (jch), byte for byte. `8011` (all tests) is 6F00 on both: tests 1-11 write
+  ~333 bytes into the 256-byte `out` (an AIOOBE in the test, not the VM).
+- CryptoProbe (`ant cprobe`, package F0334453504D20, applet F0334453504D03, still on the card next to VmTest):
+  a generic Cipher / Signature / MessageDigest / KeyAgreement / KeyBuilder runner, keys and data in the
+  APDU. tools/exp/cprobe: gen.py -> cases.txt (557 cases; random values kept in fixed.json, RSA test keys
+  in rsa.json), run.py (inside the pm3 client) -> j3h145.txt (the card's answers), check.py (Python crypto
+  reference: 235 OK, 0 DIFF; the rest are error SWs or have no reference), merge.py. constants.txt = the
+  3.0.4 ALG_ constants (Signature 7/8 are DES_MAC_PKCS5, 19/20 the ISO 9797-1 M2 ALG3 MACs).
+- J3H145 supports: Cipher DES CBC/ECB NOPAD/M1/M2 (no PKCS5), RSA PKCS1 / NOPAD / OAEP, AES-128 CBC/ECB
+  NOPAD (any key size) + M1/M2 (no PKCS5, no AES_BLOCK_192/256 algs); Signature DES MAC8 NOPAD/M1, MAC4/8 M2,
+  ALG3 M2 MAC4/8 + M1 MAC8, AES_MAC_128, RSA SHA-1/224/256/384/512 PKCS1 + PSS, RSA_SHA_ISO9796, ECDSA
+  SHA-1/224/256/384/512; no HMAC (no HMAC key type either), no MD5 anywhere; MessageDigest SHA-1/224/256/
+  384/512; RandomData 1, 2; KeyAgreement EC_SVDP_DH/DHC (SHA-1 of x) and the _PLAIN ones (x).
+- Behaviour to copy: after doFinal / sign the object starts over with a ZERO IV, not the init IV (the spec
+  says the init state). update() returns whole blocks only (split 5 / 11 of 24 -> 0 / 8). M1 with no data ->
+  no output. M2 decrypt with no 0x80 in the last block drops that block, no exception. Wrong lengths for
+  NOPAD -> ILLEGAL_USE (5); an IV on ECB, a wrong IV length, a key of the wrong family, mode 3 -> ILLEGAL_VALUE
+  (1); unsupported alg / key size -> NO_SUCH_ALGORITHM (3). PSS verify needs salt length = hash length.
+  ECDH with a compressed or off-curve point -> ILLEGAL_VALUE. DES getKey keeps the parity bits as given.
+- APDU: buffer 261 bytes, in / out block size 254 / 252, protocol 0x81. Extended APDUs work (600 bytes in,
+  609 out) when the next blocks are received at offset 0; receiveBytes(offsetCdata = 7) -> APDUException
+  BUFFER_BOUNDS.
+- On the 3DS (2026-11-03, pm3 on the 3DS, apps installed from sdmc:/nfcprobe/cap in Emulate > Java Card
+  applets): no crash any more. VmTest: all 17 answers the same as the J3H145's (8311 bytecodes). ykneo-oath
+  natively in C: PUT + CALCULATE at T=1 -> 94287082 (RFC 6238), LIST; TestApplet + VmTest + OATH installed
+  together and selected in turn in one session. After an app restart (card.bin restored) the OATH
+  credential is still there and calculates the same, and the CLEAR_ON_RESET / DESELECT arrays read 0.
