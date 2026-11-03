@@ -122,3 +122,7 @@ user page write, both WRITE THE CARD).
 `nfcnet.py HOST shot [OUT.png]` grabs the top screen and `nfcnet.py HOST keys a down ...` presses
 buttons (ops 0x20/0x21, served even while a job holds the chip, as is the ping every client starts with). Drive it from the PC with
 `tools/nfcnet.py HOST probe|spd FILE.ncd|send HEX...|release`, or import `Nfc` from it.
+
+## License
+
+AGPL-3.0-or-later (the whole repository, see `LICENSE` at the top).

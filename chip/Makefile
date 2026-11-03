@@ -8,11 +8,13 @@ all: $(TARGETS:=.bin) ../nfcprobe/data/reader_ncd.bin ../nfcprobe/data/emu_mfu_n
 
 # The monitor as an SPD patch, embedded in the app.
 ../nfcprobe/data/reader_ncd.bin: reader.bin ../tools/mkpatch.py
+	@mkdir -p $(@D)
 	python3 ../tools/mkpatch.py $< $@ --aon reader.aon.bin
 
 # The card emulation images (one per card family, emu.c built twice), loaded in its place for chip-answered
 # card mode.
 ../nfcprobe/data/emu_%_ncd.bin: emu_%.bin ../tools/mkpatch.py
+	@mkdir -p $(@D)
 	python3 ../tools/mkpatch.py $< $@ --aon emu_$*.aon.bin
 
 # reader: its variables end at 0x68410 too; the AON code (listen re-arm) takes the rest.
