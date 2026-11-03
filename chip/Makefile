@@ -12,13 +12,17 @@ all: $(TARGETS:=.bin) ../nfcprobe/data/memrw_ncd.bin ../nfcprobe/data/emu_ncd.bi
 
 # The card emulation image, loaded in its place for chip-answered card mode.
 ../nfcprobe/data/emu_ncd.bin: emu.bin ../tools/mkpatch.py
-	python3 ../tools/mkpatch.py $< $@
+	python3 ../tools/mkpatch.py $< $@ --aon emu.aon.bin
+
+# emu: more AON code (hook, reply), its variables still end below 0x68410 (NOTES.md: not free above).
+emu.elf: CFLAGS += -Wl,--defsym=AON_SPLIT=0x68180
 
 %.elf: %.c link.ld
 	$(PREFIX)gcc $(CFLAGS) -T link.ld -o $@ $<
 
 %.bin: %.elf
-	$(PREFIX)objcopy -O binary $< $@
+	$(PREFIX)objcopy -O binary -j .image $< $@
+	$(PREFIX)objcopy -O binary -j .aon $< $*.aon.bin
 	$(PREFIX)objdump -d $< > $*.s
 
 clean:

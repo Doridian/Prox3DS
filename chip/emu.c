@@ -71,7 +71,9 @@ static void put32(u8 *p, u32 v)
 	for (int i = 0; i < 4; i++) p[i] = v >> (8 * i);
 }
 
-static void reply(u32 status, const u8 *data, u32 len)
+#define AON __attribute__((section(".aon"), noinline)) // code in the AON RAM (link.ld): no room in the image
+
+AON static void reply(u32 status, const u8 *data, u32 len)
 {
 	u8 *pkt = nci_alloc(3 + 1 + len, 2);
 	if (!pkt) return;
@@ -190,8 +192,8 @@ nack:
 
 // --- MIFARE Classic, card side ---
 // Crypto1 as in chip/memrw.c (crapto1's odd/even halves). The reader's frames arrive with the parity
-// bits stripped (encrypted parity or not); ours go out with the hardware's plain parity, which is the
-// right encrypted parity only by chance: readers that don't check it (pm3) take the answers.
+// bits stripped (encrypted parity or not); ours go out with their encrypted parity as a raw bit stream
+// (tx_par).
 static u32 c1_odd, c1_even;
 
 static u32 parity(u32 x)
@@ -242,14 +244,42 @@ static u32 prng_successor(u32 x, int n)
 	return swap32(x);
 }
 
-static u32 be32(const u8 *p)
-{
-	return (u32)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3];
-}
-
 static enum { C_IDLE, C_NT, C_AUTH } cst;
 static u32 c_nt;
 static u8 c_wblock; // WRITE: block + 1 between the command and its data
+
+// A frame with our own parity bits (bit i of par: byte i's): the ROM's listen TX 0xF8E0 (no CRC; 0x5C580 bit 7
+// clear, as in listen A) with slot 0's mode 1 -> 5 between its setup and the FIFO (0x5C000 bit 2: no hardware
+// parity, the FIFO bytes go out as a bit stream, MSB first) + 0x20 (whole 9-bit groups only, the padding
+// dropped): 9 bits per byte packed into the FIFO. With the mode set before the TX command, the frame came
+// out a bit early or late.
+static void tx_par(const u8 *d, u32 n, u32 par)
+{
+	volatile u32 *z = (volatile u32 *)0x5C000, *f = (volatile u32 *)0x5C55C, *fifo = (volatile u32 *)0x5C600;
+	f[4] = 2;        // 0x5C56C
+	z[7] |= 0x10;    // 0x5C01C
+	z[16] |= 0x80;   // 0x5C040
+	f[1] = 0x44;     // 0x5C560
+	f[0] = 0x88;     // 0x5C55C
+	u32 old = z[0];
+	z[0] = old | 0x34;
+	u32 acc = 0, nb = 0;
+	for (u32 i = 0; i < n; i++) {
+		u32 w = d[i] | (par >> i & 1) << 8;
+		for (u32 k = 0; k < 9; k++) {
+			acc = acc << 1 | (w >> k & 1);
+			if (!(++nb & 7)) *fifo = acc;
+		}
+	}
+	if (nb & 7) *fifo = acc << (8 - (nb & 7));
+	u32 t0 = TIMER;
+	while (f[14] & 1 && t0 - TIMER < 30000) // 0x5C594: TX busy
+		;
+	z[0] = old;
+	z[7] &= ~0x10;
+	z[16] &= ~0x80;
+	f[1] = 0x84;
+}
 
 static void c1_key(const u8 *key)
 {
@@ -261,21 +291,36 @@ static void c1_key(const u8 *key)
 	}
 }
 
+// Encrypts in place, feeding feed (NULL: zeros); parity: the plain byte's, encrypted with the next keystream bit.
+static void c_tx(u8 *d, u32 n, const u8 *feed)
+{
+	u32 par = 0;
+	for (u32 i = 0; i < n; i++) {
+		u32 p = parity(d[i]) ^ 1;
+		d[i] ^= c1_byte(feed ? feed[i] : 0);
+		par |= (p ^ c1_filter()) << i;
+	}
+	tx_par(d, n, par);
+}
+
 // AUTH: load the sector's key, feed uid ^ nt; nt goes out plain (first auth) or encrypted (nested).
 static void c_auth(u32 keyB, u32 blk, u32 nested)
 {
-	static u8 b[4];
+	static u8 b[4], un[4];
 	const u8 *tr = emem + (blk | 3) * 16;
 	// a real PRNG state, some steps on from the last one (stepping to a random index takes too long)
 	c_nt = prng_successor(c_nt ? c_nt : 0x01200145, 16 + (TIMER & 63));
 	c1_key(tr + (keyB ? 10 : 0));
-	u32 un = be32(emu.version) ^ c_nt;
-	for (u32 i = 0; i < 4; i++) b[i] = c_nt >> (24 - 8 * i);
-	for (u32 i = 0; i < 32; i++) {
-		u32 k = c1_bit(un >> (i ^ 24) & 1);
-		if (nested) b[i >> 3] ^= k << (i & 7);
+	for (u32 i = 0; i < 4; i++) {
+		b[i] = c_nt >> (24 - 8 * i);
+		un[i] = b[i] ^ emu.version[i];
 	}
-	la_tx(b, 4, 0);
+	if (nested) {
+		c_tx(b, 4, un);
+	} else {
+		for (u32 i = 0; i < 4; i++) c1_byte(un[i]);
+		la_tx(b, 4, 0);
+	}
 	cst = C_NT;
 }
 
@@ -284,12 +329,6 @@ static void c_tx4(u32 nib)
 	u32 k = 0;
 	for (int i = 0; i < 4; i++) k |= c1_bit(0) << i;
 	tx4(nib ^ k);
-}
-
-static void c_tx(u8 *d, u32 n) // encrypts in place
-{
-	for (u32 i = 0; i < n; i++) d[i] ^= c1_byte(0);
-	la_tx(d, n, 0);
 }
 
 static void c_nack(void)
@@ -320,7 +359,7 @@ static u32 mfc(const u8 *f, u32 len)
 		}
 		u32 at = prng_successor(c_nt, 96);
 		for (u32 i = 0; i < 4; i++) d[i] = at >> (24 - 8 * i);
-		c_tx(d, 4);
+		c_tx(d, 4, 0);
 		cst = C_AUTH;
 		c_wblock = 0;
 		return 1;
@@ -374,7 +413,7 @@ static u32 mfc(const u8 *f, u32 len)
 		}
 		u32 c = crc_a(d, 16);
 		d[16] = c, d[17] = c >> 8;
-		c_tx(d, 18);
+		c_tx(d, 18, 0);
 		return 1;
 	}
 	case 0xA0: // WRITE
@@ -420,7 +459,7 @@ static u32 rx_hook(void)
 	return mfu(f, len);
 }
 
-static int hook(u8 *msg)
+AON static int hook(u8 *msg)
 {
 	if ((msg[0] & 0xF) != 0xF || (msg[1] & 0x3F) != OID_DEBUG) return 0;
 	u32 len = msg[2];
@@ -436,8 +475,7 @@ static int hook(u8 *msg)
 	switch (p[0]) {
 	case OP_READ8:
 		if (n < 1 || arg[0] > MAX_DATA) break;
-		for (u32 i = 0; i < arg[0]; i++) buf[i] = ((volatile u8 *)addr)[i];
-		reply(0, buf, arg[0]);
+		reply(0, (const u8 *)addr, arg[0]);
 		return 1;
 	case OP_WRITE8:
 		for (u32 i = 0; i < n; i++) ((volatile u8 *)addr)[i] = arg[i];

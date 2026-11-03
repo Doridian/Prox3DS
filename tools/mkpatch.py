@@ -3,16 +3,17 @@
 
 Everything is generated here, nothing is copied from the stock patch: the header is
 built field by field (values as in the stock B5 patch), the AON segment is a thunk to
-the ROM init the stock AON entry calls, the hook table is ours (default: no hooks), the
+the ROM init the stock AON entry calls (plus our AON code at 0x68018, if any), the hook table is ours (default: no hooks), the
 SRAM segment is ours, the signature is 48 zero bytes (not checked, see NOTES.md).
 
-    mkpatch.py SRAM.bin OUT.ncd [--chipver STR16] [--hook ROMADDR:HALFWORDS ...]
+    mkpatch.py SRAM.bin OUT.ncd [--aon AON.bin] [--chipver STR16] [--hook ROMADDR:HALFWORDS ...]
 """
 import argparse
 import struct
 
 CHUNK = 0xF0
 AON_LOAD = 0x68008
+AON_CODE = 0x68018  # chip/link.ld's aoncode region: free AON RAM after the thunk
 AON_ROM_INIT = 0x11888  # what the stock AON entry calls: [0x68C80] = 0x32E0, [0x68C84] = 0
 PROJECT = 0x0004
 VERSION = (11, 64)  # shown as major.minor by GET_PATCH_VERSION
@@ -41,7 +42,7 @@ def header(sram_load, chipver):
             + chipver.ljust(16, b"\0")[:16] + bytes([VERSION[0], 0, VERSION[1], 0]))
 
 
-def build(sram, chipver=None, hooks=()):
+def build(sram, chipver=None, hooks=(), aon=b""):
     load = (struct.unpack_from("<I", sram)[0] & ~1) - 4
 
     # Hook table: N ROM word addresses, enable mask, N replacement words.
@@ -50,7 +51,10 @@ def build(sram, chipver=None, hooks=()):
     hook += struct.pack(f"<{len(hooks)}I", *(w for _, w in hooks))
 
     out = frame(0, header(load, chipver or b"20791B5")) + frame(3, hook)
-    for seg_type, seg in ((2, aon_thunk()), (1, sram)):
+    aon_seg = aon_thunk()
+    if aon:
+        aon_seg = aon_seg.ljust(AON_CODE - AON_LOAD, b"\0") + aon
+    for seg_type, seg in ((2, aon_seg), (1, sram)):
         for i in range(0, len(seg), CHUNK):
             out += frame(seg_type, seg[i:i + CHUNK])
     return out + frame(6, bytes(48))
@@ -60,11 +64,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("sram")
     ap.add_argument("out")
+    ap.add_argument("--aon", help="code for the AON RAM at 0x68018 (chip/<name>.aon.bin)")
     ap.add_argument("--chipver", help="16-byte chip version string in the header")
     ap.add_argument("--hook", action="append", default=[], help="ROMADDR:WORD (hex)")
     a = ap.parse_args()
     hooks = [tuple(int(x, 16) for x in h.split(":")) for h in a.hook]
-    ncd = build(open(a.sram, "rb").read(), a.chipver.encode() if a.chipver else None, hooks)
+    ncd = build(open(a.sram, "rb").read(), a.chipver.encode() if a.chipver else None, hooks,
+                open(a.aon, "rb").read() if a.aon else b"")
     open(a.out, "wb").write(ncd)
     print(f"{a.out}: {len(ncd)} bytes")
 

@@ -9,6 +9,7 @@
     chipmon.py HOST call ADDR [R0 [R1 [R2 [R3]]]]   call a Thumb function, print r0
 All numbers hex. Commands other than load expect the monitor to be loaded already.
 """
+import os
 import struct
 import sys
 
@@ -35,7 +36,9 @@ class Mon:
     def load(self, image="memrw.bin"):
         nfc = self.nfc
         nfc.takeover()
-        if dumpchip.load(nfc, mkpatch.build(open(CHIP + image, "rb").read())) is None:
+        aon = CHIP + image[:-4] + ".aon.bin"
+        aon = open(aon, "rb").read() if os.path.exists(aon) else b""
+        if dumpchip.load(nfc, mkpatch.build(open(CHIP + image, "rb").read(), aon=aon)) is None:
             raise MonError("chip dead after download")
         nfc.cmd(nfcnet.CORE_INIT)
 

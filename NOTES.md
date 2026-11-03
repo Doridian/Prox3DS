@@ -1485,28 +1485,54 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   cipher state lives there anyway. 1K (1024 bytes, keys in the trailers) and Mini fit; 4K doesn't.
 - RX: the reader's encrypted frames reach the listen-A hook with the parity bits stripped, whatever their
   parity ({nr}{ar}: 8 bytes, encrypted commands 4, WRITE data 18). So the card side never sees reader parity.
-- TX: no way found to send chosen parity bits in listen mode. 0x5C560 is a set/clear register (0x40 | mask
-  sets, 0x80 | mask clears, other values plain writes; listen value 2); none of its bits, plain 8 (reader-mode
-  parity off) or 0x5C574 = 1 (bit mode) changes the listen TX: always 9 bits per byte with plain odd parity.
-  0x5C578 bit 0 appends a CRC in listen (bits 1, 6: no TX), 0x5C57C bits 0/1 hang the chip. 0x5C55C bit 1:
-  garbled frame. Phones emulate Classic through an SE over SWP (CLT mode, raw frames with parity from the SE),
-  so the RF block can probably do it, but the ROM never feeds the TX port from anywhere but 0x11DE/0x1280
-  (reader) and 0xF8E0 (listen): CLT is likely wired in hardware.
-- So the answers carry the hardware's parity: right for plain frames, a coin toss per byte for encrypted ones.
-  pm3 doesn't check the parity of card answers (mifareutil.c only records it), NXP reader chips with Crypto1
-  in hardware (and phones) do.
+- TX: (SUPERSEDED, see "Listen-mode parity" below) ~~no way found to send chosen parity bits~~. What was
+  ruled out: 0x5C560 is a set/clear register (0x40 | mask sets, 0x80 | mask clears, other values plain writes;
+  listen value 2); none of its bits, plain 8 (reader-mode parity off) or 0x5C574 = 1 (bit mode) changes the
+  listen TX. 0x5C578 bit 0 appends a CRC in listen (bits 1, 6: no TX), 0x5C57C bits 0/1 hang the chip.
+  0x5C55C bit 1: garbled frame.
 - Card side: AUTH (first: plain nt; nested: nt encrypted with the new key's stream), {nr}{ar} (nr fed in
   encrypted, ar = suc64(nt) checked, wrong key: silence and state 0), {at} = suc96(nt), then encrypted READ
   (trailer: key A as zeros, key B only for trailer access 000 / 001 / 010), WRITE (encrypted 4-bit ACK, block 0
   refused), HALT (state 5). nt from a running PRNG state, 16-79 steps per AUTH: stepping the PRNG to a random
   index (up to 65535 steps) took longer than the reader waits. AUTH -> nt 0.33 ms, {nr}{ar} -> {at} 0.77 ms,
   READ -> data 1.0 ms. The log entries of encrypted frames get the plaintext (state | 0x80).
-- Image space: the code is ~2.3 KB, so struct emu and the frame log moved to zeroed AON RAM (0x68100-0x682F4,
-  below the 0x68410 limit) and only the 1 KB page / block memory is in the image; CALL / WRITE32 dropped.
-  3360 of 3364 bytes. RAM after 0x3C530 holds data: the image can't grow.
+- Image space: the code is ~2.3 KB, so struct emu and the frame log moved to zeroed AON RAM and only the 1 KB
+  page / block memory is in the image; CALL / WRITE32 dropped. RAM after 0x3C530 holds data: the image can't
+  grow. With the parity TX it overflowed: code in the AON RAM below (.aon).
 - pm3 under the 3DS: hf mf rdbl / rdsc with each sector's key, wrbl + read back, hf mf chk --1k (dozens of
   wrong-key auths, all silent, every key found), hf mf dump twice identical; a few single reads NACKed or
   auth errors, retried by pm3.
+
+## Listen-mode parity: raw 9-bit frames (chip/ptest.c, tools/exp/parity/) -- 2026-11-02
+- Found by a bit sweep on air (ptest.c: the ROM's listen TX rebuilt, one register write per answered E5 frame,
+  the TX time measured on the chip; the pm3 holds the selection and chains `hf 14a raw -k -c e5 NN`): flip
+  each bit of 0x5C000-0x5C0FC, 0x5C540-0x5C5FC, 0x5C640-0x5C6FC, 0x5C780-0x5C7FC (sw2.log). TX time = on-air
+  bits * 9.44 + ~70 ticks. A listen TX from the command context (no reader frame just received) stays busy:
+  it only goes out as an answer. Answering with an empty FIFO wedges listen until a reload.
+- 0x5C000-0x5C01C: 8 slot registers (the ROM indexes them; 0x5C580 bit 7 + bits 6:4 pick one in the listen
+  TX, else 0x5C01C bit 4 + 0x5C040 bit 7 are its no-CRC flags). Low nibble = framing mode, bit 4 no CRC,
+  bit 5 a flag. Listen A runs in slot 0, value 0x01. Modes seen with a 5-byte frame: 0/2/6/7/9 like 1 (9 bits
+  per byte), 3/4/A longer, 8 very long, B-E 4 bits shorter, F hangs.
+- **Mode 5 (0x5C000 bit 2) = no hardware parity: the FIFO bytes go out as a raw bit stream, each byte MSB
+  first.** Flag 0x20 with it: only whole 9-bit groups go out, the padding bits of the last FIFO byte dropped
+  (40 -> 36 bits, 168 -> 162). 0x5C568 must be 0 (else the padding is sent). So a frame with parity = bytes +
+  parity bits packed 9 per byte into the FIFO, 0x5C000 = old | 0x34 during the TX: the pm3 shows exactly the
+  parity bits chosen (`!` where flipped, 4 and 18-byte frames).
+- Order matters: 0x5C56C = 2 (TX command), then the mode, then the FIFO. With the mode set before the command
+  (around the ROM's 0xF8E0) frames came out a bit early or late. Writing the command last: no TX.
+- chip/emu.c tx_par(): {at}, READ data and the nested AUTH's encrypted nt go out with their encrypted parity
+  (parity of the plain byte ^ the filter output after the byte, as crapto1). Verified from pm3 traces against
+  tools/crypto1.py: {at} and parity exact, READ answers 0 parity errors in 18 bytes (20 of 20), nested nt +
+  its parity exact. The occasional one-bit-shifted decode (`50! D9! E1! EA` for A1 B2 C3 D4) is the pm3 missing
+  the start bit at marginal coupling: hardware-parity frames get it as often.
+- AON code: 0x68018 up to the zeroed variables is free (the stock patch's AON code went there, we only load the
+  14-byte thunk at 0x68008). link.ld's .aon section (`aoncode` region, the split AON_SPLIT a --defsym, emu:
+  0x68180, its variables still end below 0x68410) is extracted as <name>.aon.bin and appended to the AON
+  segment by mkpatch.py --aon (chipmon.load picks it up). emu.c keeps the monitor's hook() and reply() there:
+  3336 + 292 bytes.
+- pm3's `hf mf nested` against the emulation stops early: "PRNG is not predictable" (nt steps 16-79 at random).
+- Research (no public register docs for the BCM2079x RF block): Android's nfc_brcm_defs.h names
+  NCI_PARAM_ID_DH_PARITY_CRC_CTL 0xC7 and GID_PROP SET / GET_CLF_REGISTERS 0x03 / 0x2A, no layout known.
 
 ## pm3 dictionaries for MFC / DESFire / UL-C (nfcprobe pm3dict.c) -- 2026-11-02
 

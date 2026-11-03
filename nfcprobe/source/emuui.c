@@ -143,7 +143,7 @@ static float emuView(float x, float y, float w)
 		if (emu.writes)
 			uiText(x, y, S_SMALL, uiCol[COL_WARN], "%lu block%s written by readers (saved on stop if you like)",
 				(unsigned long)emu.writes, emu.writes == 1 ? "" : "s");
-		else uiText(x, y, S_SMALL, dim, "Encrypted parity not exact: strict readers (phones) refuse");
+		else uiText(x, y, S_SMALL, dim, "Encrypted answers with their encrypted parity, as a real card");
 	} else if (mode == MODE_NDEF) {
 		u32 len;
 		const u8 *msg = emuNdefGet(&len);
