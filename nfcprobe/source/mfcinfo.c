@@ -1,5 +1,6 @@
 // Classic dump extras: MAD, Saflok, originality signature; see mfcinfo.h. Ported from pm3
 // client/src/mifare/mad.c and client/src/cmdhfsaflok.c.
+// Derived from Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later; see CREDITS.md.
 
 #include <stdarg.h>
 #include <stdio.h>

@@ -179,6 +179,7 @@ static u32 txsched(const u8 *a, const u8 *sched, u32 n, const u8 *data, u32 len)
 }
 
 // Crypto1, crapto1's reference form (odd/even LFSR halves); tools/crypto1.py is the same.
+// Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md.
 static u32 c1_odd, c1_even;
 
 static u32 parity(u32 x)

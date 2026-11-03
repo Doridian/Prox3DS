@@ -6,6 +6,7 @@ with the backdoor key we learn the CLEAR static nonce nt (decrypt the backdoor-e
 and a normal nested auth gives the SAME nonce encrypted under the real key (nt_enc) plus its parity.
 candidates(uid, nt, nt_enc, nt_par_enc) enumerates the key candidates; one static nonce gives tens
 of thousands, cut to a unique key by key-reuse / verifying against the card.
+Derived from Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later (staticnested_1nt.c by Philippe Teuwen); see CREDITS.md.
 """
 from crapto1 import lfsr_recovery32, lfsr_rollback_word, crypto1_get_lfsr
 from crypto1 import Crypto1, odd_parity_bit

@@ -2,6 +2,7 @@
 // tools/crapto1.py: lfsr_recovery32 (extend_table / recover with top-byte bucketing) + rollback.
 // Self-contained (no 3DS headers) so it host-compiles for testing. The big table passes run on
 // every core (par.h), the results in the same order as one core would give them.
+// Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md.
 
 #include <stddef.h>
 #include <stdint.h>

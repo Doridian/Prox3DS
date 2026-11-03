@@ -1,5 +1,6 @@
 // Zip archives and inflate, see zip.h. Inflate after the structure of zlib's puff.c: canonical Huffman
 // codes decoded a bit at a time, counts per length.
+// puff.c (C) Mark Adler, zlib license; see CREDITS.md.
 
 #include <string.h>
 

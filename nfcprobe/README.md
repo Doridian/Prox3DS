@@ -125,4 +125,4 @@ buttons (ops 0x20/0x21, served even while a job holds the chip, as is the ping e
 
 ## License
 
-AGPL-3.0-or-later (the whole repository, see `LICENSE` at the top).
+AGPL-3.0-or-later (the whole repository, see `LICENSE` at the top). Third-party credits: `CREDITS.md`.

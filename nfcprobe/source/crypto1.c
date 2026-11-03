@@ -1,3 +1,5 @@
+// Crypto1, see crypto1.h. Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md.
+
 #include "crypto1.h"
 
 #define LF_POLY_ODD  0x29CE5C

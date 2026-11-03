@@ -3,6 +3,7 @@
 
 // Crypto1 (Mifare Classic), the crapto1 reference cipher; see tools/crypto1.py.
 // Words are big-endian as on the wire, bytes go through the cipher LSB first.
+// Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md.
 
 typedef struct {
 	u32 odd, even;

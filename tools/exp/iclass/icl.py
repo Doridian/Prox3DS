@@ -3,6 +3,7 @@
 stalled V poll, RX with the V analog setup, iClass anticollision / select / read / auth.
 
     icl.py HOST [KD_HEX]     read blocks 0-2 and 5 plain; with the diversified Kd, auth and read all
+The MAC is derived from loclass (C) 2014 Martin Holst Swende and the Proxmark3 contributors, GPL-3.0-or-later; see CREDITS.md.
 """
 import os
 import struct

@@ -5,7 +5,9 @@ lfsr_recovery32(ks2, in) -> candidate (odd, even) states (crypto1.py representat
 after feeding `in`; roll them back over `in` and read the key with recover_keys().
 
 Faithful port of bla's crapto1 (extend_table / recover / rollback); the odd/even state split and
-the filter match crypto1.py, so recovered states plug straight into Crypto1.from_state()."""
+the filter match crypto1.py, so recovered states plug straight into Crypto1.from_state().
+
+Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md."""
 
 from crypto1 import filter_bit, _parity, Crypto1
 

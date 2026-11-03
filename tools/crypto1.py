@@ -1,7 +1,9 @@
 """Crypto1 (Mifare Classic), straight port of crapto1's reference cipher (odd/even LFSR halves).
 
 Words are big-endian as on the wire (uid, nt, nr as uint32 from 4 bytes MSB first); bytes go
-through the cipher LSB first."""
+through the cipher LSB first.
+
+Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md."""
 
 LF_POLY_ODD = 0x29CE5C
 LF_POLY_EVEN = 0x870804

@@ -4,6 +4,7 @@
 // Mifare Classic keys derived from the UID: pm3 `hf mf keygen` (common/generator.c KDFTable): Saflok /
 // Maid, MIZIP, Disney Infinity (7-byte UID), Skylanders, Bambu Lab and Snapmaker filament spools,
 // Vanderbilt ACT. The dump tries them per sector before the dictionary and the attacks.
+// Derived from Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later; see CREDITS.md.
 
 #define MFC_KDF_MAX 8
 

@@ -1,4 +1,6 @@
 // HID iClass card math, see iclass.h. No hardware here (the host sim builds it too).
+// The cipher, key diversification and elite keys derived from loclass (C) 2014 Martin Holst Swende and the Proxmark3 contributors, GPL-3.0-or-later; the config block and
+// credential decoding from Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later. See CREDITS.md.
 
 #include <stdint.h>
 #include <stdio.h>

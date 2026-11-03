@@ -323,6 +323,7 @@ nack:
 // Crypto1 as in chip/reader.c (crapto1's odd/even halves). The reader.c's frames arrive with the parity
 // bits stripped (encrypted parity or not); ours go out with their encrypted parity as a raw bit stream
 // (tx_par).
+// Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md.
 static u32 c1_odd, c1_even;
 
 static u32 parity(u32 x)

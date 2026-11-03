@@ -11,6 +11,8 @@ yields a large candidate list, and the key is the one common to several runs (in
 This module is the Python proof of the recovery math; the collection is done on-chip (the 3DS
 can't time auths finely enough from the host). Validated here against synthetic data from a
 known key (no hardware), including the par_info == 0 multi-run intersection path.
+Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL, and mfkey.c (C) 2009 Roel Verdult and the Proxmark3 contributors, GPL;
+see CREDITS.md.
 """
 import sys
 

@@ -3,6 +3,7 @@
 
 // Crypto1 key recovery (crapto1 port), running on the ARM11. See tools/crapto1.py for the reference
 // and NOTES.md for the nested attack. ks = enc_nt ^ nt_T (32 target-cipher keystream bits).
+// Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md.
 
 // The long recoveries (all but crapto1_nt_decrypt / crapto1_ks32) spread over every core (par.h), one
 // at a time; their results are the same as on one core.
