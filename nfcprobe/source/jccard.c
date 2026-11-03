@@ -146,6 +146,15 @@ bool jcCardDeletePkg(int pkg)
 {
 	JcCard *c = &jcCard;
 	if (pkg < 0 || pkg >= c->vm.npkgs) return false;
+	for (int i = 0; i < c->vm.npkgs; i++) {
+		const JcPkg *q = &c->vm.pkgs[i];
+		for (int k = 0; i != pkg && q->path[0] && k < q->nimports; k++)
+			if (q->imports[k] == JC_API_PKGS + pkg) {
+				const char *n = strrchr(q->path, '/');
+				snprintf(c->vm.why, sizeof(c->vm.why), "%.80s uses it", n ? n + 1 : q->path);
+				return false;
+			}
+	}
 	for (int i = 0; i < c->napplets;)
 		if (c->applets[i].pkg == pkg) {
 			memmove(&c->applets[i], &c->applets[i + 1], (c->napplets - i - 1) * sizeof(JcApplet));

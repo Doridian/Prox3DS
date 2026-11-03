@@ -1881,8 +1881,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - bn.c: 32-bit limbs, 66 of them (RSA-2048, a product of 1024-bit primes), Montgomery (CIOS), 4-bit window
   exponentiation, CRT, Miller-Rabin primes, e^-1 mod m for a small prime e. ecc.c: any prime curve the
   applet gives (to 521 bits), Jacobian, ECDSA (DER), ECDH, key pairs. Not constant time; big temporaries
-  static (the VM is one thread, functions stay under 2 KB of stack). nxpsig.c has its own small EC code
-  (could use ecc.c). dfcrypto: AES-192 / 256 added (DF_AES192 / DF_AES256; DESFire uses DF_AES only).
+  static (the VM is one thread, functions stay under 2 KB of stack). nxpsig.c uses ecc.c now (see "Java
+  Card VM: library packages"). dfcrypto: AES-192 / 256 added (DF_AES192 / DF_AES256; DESFire uses DF_AES only).
 - gen_jcapi.py: a constructor and an init(...) method of the same class (KeyAgreement) got the same C name;
   they are told apart like overloads now (jn_security_KeyAgreement_init_PrivateKey, ..._init_V).
 - Extended APDUs (jccard.c, JC_EXT 2048): only for applets implementing javacardx.apdu.ExtendedLength (else
@@ -1926,3 +1926,34 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   saved file right. uisim scenes fido_key (this card's real getInfo bytes through the parser), fido_key_pin,
   fido_u2f. YubiKey 5 NFC (fw 05.04.03, PIN set) the same day: AAGUID 2fc0579f-... named right, getPINRetries
   = 8, FIDO_2_1_PRE + credentialMgmtPreview; firmware moved next to the AAGUID so its screen fits.
+
+## Java Card VM: library packages; nxpsig.c on ecc.c -- 2026-11-03
+- jcvm.c links CAP packages to library packages loaded before them: imports match a loaded package by AID
+  (major equal, minor at least), its index as JC_API_PKGS + package. External class tokens, static field
+  tokens and static method tokens go through the library's Export component (class_export_info: class
+  offset, static field / method offsets). JcCp.pkg says whose static image / Method component a static
+  field or method is in (journal entries too). Virtual / interface / super calls, instance fields (token
+  after the supers' cells), instanceof, catch, save / restore needed nothing new. A package imported by
+  another can't be deleted (jcCardDeletePkg false, "X uses it"): the J3H145 says 6985 to a GP DELETE of it.
+- javacard/libtest (ant libtest): dspm-lib.cap (library dspm.lib F0334453504D30: Counter, Visitor,
+  LibException; libraries may not have static array initializers, the converter refuses them) and
+  dspm-libuse.cap (LibUse, F0334453504D04 in F0334453504D40). Tests 1-9 (00 10 P1 / 00 11 for all): static
+  methods, static fields incl. a reference and an int, a library object, a subclass overriding a library
+  method (super calls, protected field; a package-private library method is NOT overridden from another
+  package: callSecret 100, secret 200), instanceof / checkcast, interfaces both ways, a library exception
+  class, a transaction on library statics, persistent state (test 9 moves on each run).
+- Ground truth: J3H145 in the contact reader (PC/SC, gp.jar --load / --install), 00 11 on a fresh install:
+  0106002A10203015 021305012C01020304000308012D01020404080101 0311000B000C000C00000017030064FFFD03E9
+  04170009001100110000001A0000002B000703006400C80008 0507010001000000CC 06060011000D0096
+  0707123423450134 5608030101 01090A003A0000003A0007012D; then 00 10 09 twice: 00420000007C0008012D,
+  004A000000C60009012D. Host VM (jch) and the 3DS (pm3 on it, Java Card emulation) answer the same, byte
+  for byte. Installing dspm-libuse.cap first: "imports F0334453504D30 (not available)".
+- UI: the Java Card list has the libraries after the applets ("Library 1.0", AID, CAP file), header "N
+  applets, M libraries"; delete works on them (refused while used). uisim shots jc_lib, jc_lib_del,
+  jc_lib_used.
+- nxpsig.c: its own 256-bit EC code is gone; the curves (secp128r1, secp224r1, now with a and b) go through
+  ecCurveInit / ecVerify (ecVerify's hash truncation = the old leading bytes on both curves). Checked on the
+  PC against the old code: 400 random signatures (both curves, half tampered, UIDs of 4 / 7 / 10 bytes and
+  data longer than the order) and the pm3 recover_pk.py NXP samples: 0 differences. 0.64 ms a check on the
+  PC (old 0.38). Not re-checked on a card on the 3DS (the 3DS did not pick up the pm3's UL EV1 sim at that
+  placement); the same C as the -m32 host build. ecc.c is not reentrant: VM and readers never run together.

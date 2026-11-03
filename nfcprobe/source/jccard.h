@@ -44,7 +44,9 @@ void jcCardInit(void); // an empty card: the API, no packages
 // (jcCard.vm.why).
 int jcCardInstallCap(const char *path);
 int jcCardInstall(int pkg, const u8 *appletAid, u8 appletAidLen, const u8 *instAid, u8 instAidLen);
-bool jcCardDeletePkg(int pkg); // the package and its applets (objects stay until a reset of the card)
+// The package and its applets (objects stay until the card is restored); false: another package imports it
+// (vm.why).
+bool jcCardDeletePkg(int pkg);
 void jcCardReset(void);       // a new session: nothing selected, transient memory cleared
 u32 jcCardApdu(const u8 *cmd, u32 len, u8 *resp, u32 max); // EmuApdu; cmd NULL = a new session
 

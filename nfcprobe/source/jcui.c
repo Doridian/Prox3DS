@@ -15,7 +15,7 @@
 #include "ui.h"
 
 static bool restored;
-static UiList al;
+static UiList al; // the applets, then the packages without one (libraries)
 
 static void aidHex(char *o, const u8 *aid, int len)
 {
@@ -27,6 +27,32 @@ static const char *capName(int pkg)
 {
 	const char *p = jcCard.vm.pkgs[pkg].path, *s = strrchr(p, '/');
 	return s ? s + 1 : p;
+}
+
+// The packages without applets (libraries) into libs; how many.
+static int libraries(int *libs)
+{
+	int n = 0;
+	for (int p = 0; p < jcCard.vm.npkgs; p++) {
+		bool has = !jcCard.vm.pkgs[p].path[0];
+		for (int i = 0; i < jcCard.napplets; i++) has |= jcCard.applets[i].pkg == p;
+		if (!has) libs[n++] = p;
+	}
+	return n;
+}
+
+static int rows(void)
+{
+	int libs[JC_PKGS];
+	return jcCard.napplets + libraries(libs);
+}
+
+// The package of list row i.
+static int rowPkg(int i)
+{
+	int libs[JC_PKGS];
+	libraries(libs);
+	return i < jcCard.napplets ? jcCard.applets[i].pkg : libs[i - jcCard.napplets];
 }
 
 // --- CAP files on the SD card ---
@@ -72,7 +98,8 @@ static void capsInput(u32 kDown, u32 kRepeat)
 		return;
 	}
 	jcCardSave();
-	toast("%s: %d applet%s installed", caps[cl.sel].name, jcCard.napplets - n, jcCard.napplets - n == 1 ? "" : "s");
+	if (jcCard.napplets == n) toast("%s: library loaded", caps[cl.sel].name);
+	else toast("%s: %d applet%s installed", caps[cl.sel].name, jcCard.napplets - n, jcCard.napplets - n == 1 ? "" : "s");
 }
 
 static void capsDraw(void)
@@ -109,22 +136,26 @@ static void installCap(void)
 
 static void deleteGo(void)
 {
-	int pkg = jcCard.applets[al.sel].pkg;
+	int pkg = rowPkg(al.sel);
 	char name[64];
 	snprintf(name, sizeof(name), "%s", capName(pkg));
-	jcCardDeletePkg(pkg);
+	if (!jcCardDeletePkg(pkg)) {
+		msgBox("Delete", "%s can't go: %s.", name, jcCard.vm.why);
+		return;
+	}
 	jcCardSave();
 	jcCardRestore(); // drops the package's code and objects for good
-	if (al.sel >= jcCard.napplets) al = (UiList){ 0 };
+	if (al.sel >= rows()) al = (UiList){ 0 };
 	toast("Deleted %s", name);
 }
 
 static void deletePkg(void)
 {
-	if (!jcCard.napplets) return;
-	int pkg = jcCard.applets[al.sel].pkg, n = 0;
+	if (!rows()) return;
+	int pkg = rowPkg(al.sel), n = 0;
 	for (int i = 0; i < jcCard.napplets; i++) n += jcCard.applets[i].pkg == pkg;
-	confirm("Delete", deleteGo, "Delete %s with its %d applet%s and their data?", capName(pkg), n, n == 1 ? "" : "s");
+	if (!n) confirm("Delete", deleteGo, "Delete the library %s?", capName(pkg));
+	else confirm("Delete", deleteGo, "Delete %s with its %d applet%s and their data?", capName(pkg), n, n == 1 ? "" : "s");
 }
 
 static void wipeGo(void)
@@ -152,14 +183,14 @@ static void show(void)
 		restored = true;
 		jcCardRestore();
 	}
-	if (al.sel >= jcCard.napplets) al = (UiList){ 0 };
+	if (al.sel >= rows()) al = (UiList){ 0 };
 }
 
 static void input(u32 kDown, u32 kRepeat)
 {
-	uiListNav(&al, jcCard.napplets, 9, kRepeat);
+	uiListNav(&al, rows(), 9, kRepeat);
 	if (kDown & KEY_B) appBack();
-	if (kDown & KEY_X) popup("Java Card", actions, jcCard.napplets ? 3 : 1);
+	if (kDown & KEY_X) popup("Java Card", actions, rows() ? 3 : 1);
 	if (kDown & KEY_A) {
 		if (jcCard.napplets) emuStartJc();
 		else installCap();
@@ -168,22 +199,33 @@ static void input(u32 kDown, u32 kRepeat)
 
 static void draw(void)
 {
-	char hdr[32];
-	snprintf(hdr, sizeof(hdr), "%d applet%s", jcCard.napplets, jcCard.napplets == 1 ? "" : "s");
+	char hdr[48];
+	int libs[JC_PKGS], nlibs = libraries(libs), n = jcCard.napplets + nlibs;
+	int o = snprintf(hdr, sizeof(hdr), "%d applet%s", jcCard.napplets, jcCard.napplets == 1 ? "" : "s");
+	if (nlibs) snprintf(hdr + o, sizeof(hdr) - o, ", %d librar%s", nlibs, nlibs == 1 ? "y" : "ies");
 	uiHeader("Java Card", hdr);
 	u32 dim = uiCol[COL_DIM];
-	if (!jcCard.napplets) {
+	if (!n) {
 		uiTextCenter(UI_W / 2, 90, S_BODY, dim, "No applets installed.");
 		uiTextCenter(UI_W / 2, 108, S_SMALL, dim, "A installs a CAP file from " GP_CAPS);
 		uiTextCenter(UI_W / 2, 122, S_SMALL, dim, "The 3DS then answers as a card with its applets.");
 		uiFooter(BTN_A " install   " BTN_B " back");
 		return;
 	}
-	for (int i = 0; i < 9 && al.top + i < jcCard.napplets; i++) {
-		const JcApplet *a = &jcCard.applets[al.top + i];
+	for (int i = 0; i < 9 && al.top + i < n; i++) {
 		float y = 24 + i * (LINE_H + SMALL_H);
 		if (al.top + i == al.sel) uiRect(4, y - 1, UI_W - 8, LINE_H + SMALL_H, uiCol[COL_SEL]);
 		char aid[40], cap[64];
+		if (al.top + i >= jcCard.napplets) {
+			const JcPkg *p = &jcCard.vm.pkgs[libs[al.top + i - jcCard.napplets]];
+			aidHex(aid, p->aid, p->aidLen);
+			uiText(10, y, S_BODY, uiCol[COL_TEXT], "Library %u.%u", p->major, p->minor);
+			snprintf(cap, sizeof(cap), "%s", capName(libs[al.top + i - jcCard.napplets]));
+			uiTextRight(UI_W - 10, y + 1, S_SMALL, dim, "%s", uiFit(cap, 150, S_SMALL));
+			uiText(10, y + LINE_H - 2, S_SMALL, dim, "%s", aid);
+			continue;
+		}
+		const JcApplet *a = &jcCard.applets[al.top + i];
 		aidHex(aid, a->aid, a->aidLen);
 		const ScApplet *k = scAppletFor(a->aid, a->aidLen);
 		uiText(10, y, S_BODY, uiCol[COL_TEXT], "%s", k ? k->name : aid);

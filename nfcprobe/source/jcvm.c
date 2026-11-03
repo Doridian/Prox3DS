@@ -94,6 +94,18 @@ static bool sizeCaps(const ZipEntry *e, void *ctx)
 	return true;
 }
 
+// A library package's Export component: class token tok's class_export_info (class offset, static field
+// and method counts, their offsets); NULL = no such class.
+static const u8 *exportClass(const JcPkg *q, int tok)
+{
+	const u8 *e = q->comp[10];
+	if (!e || q->compLen[10] < 1 || tok >= e[0]) return NULL;
+	const u8 *end = e + q->compLen[10];
+	e++;
+	for (int i = 0; i < tok && e + 4 <= end; i++) e += 4 + 2 * (e[2] + e[3]);
+	return e + 4 <= end && e + 4 + 2 * (e[2] + e[3]) <= end ? e : NULL;
+}
+
 // A class_ref of package p -> class index; -1 = unknown.
 static int classRef(JcVm *vm, const JcPkg *p, u16 ref)
 {
@@ -109,8 +121,13 @@ static int classRef(JcVm *vm, const JcPkg *p, u16 ref)
 		const JcApiPkg *a = &jcApiPkgs[ip];
 		for (int i = a->first; i < a->first + a->count; i++)
 			if (jcApiClasses[i].token == tok) return i;
+		return -1;
 	}
-	return -1; // classes of other CAP packages: not supported yet
+	const JcPkg *q = &vm->pkgs[ip - JC_API_PKGS];
+	const u8 *x = exportClass(q, tok);
+	for (int i = 0; x && i < q->nclasses; i++)
+		if (q->classOff[i] == be16(x)) return q->classBase + i;
+	return -1;
 }
 
 // Instance cells (supers included) and native state size of class ci of the package being loaded; its
@@ -165,7 +182,8 @@ int jcLoadCap(JcVm *vm, const u8 *zip, u32 zlen, const char *path)
 		free(x.buf);
 		return fail(vm, "%s", "package already loaded");
 	}
-	// imports: API packages (a major version that matches, a minor at least as new as needed)
+	// imports: API packages, then library packages loaded before (a major version that matches, a minor at
+	// least as new as needed)
 	const u8 *im = p->comp[4];
 	p->nimports = im[0];
 	if (p->nimports > 16) {
@@ -180,6 +198,11 @@ int jcLoadCap(JcVm *vm, const u8 *zip, u32 zlen, const char *path)
 			if (jcApiPkgs[k].aidLen == alen && !memcmp(jcApiPkgs[k].aid, aid, alen) && jcApiPkgs[k].major == major &&
 				jcApiPkgs[k].minor >= minor)
 				p->imports[i] = k;
+		for (int k = 0; k < vm->npkgs && p->imports[i] < 0; k++) {
+			const JcPkg *q = &vm->pkgs[k];
+			if (q->aidLen == alen && !memcmp(q->aid, aid, alen) && q->major == major && q->minor >= minor)
+				p->imports[i] = JC_API_PKGS + k;
+		}
 		if (p->imports[i] < 0) {
 			char hex[40];
 			for (int k = 0; k < alen && k < 16; k++) sprintf(hex + 2 * k, "%02X", aid[k]);
@@ -249,6 +272,7 @@ int jcLoadCap(JcVm *vm, const u8 *zip, u32 zlen, const char *path)
 		const u8 *e = cp + 2 + 4 * i;
 		JcCp *r = &p->cp[i];
 		r->tag = e[0];
+		r->pkg = vm->npkgs - 1;
 		switch (e[0]) {
 		case CP_CLASS:
 			if ((r->cls = classRef(vm, p, be16(e + 1))) < 0) goto badref;
@@ -268,7 +292,16 @@ int jcLoadCap(JcVm *vm, const u8 *zip, u32 zlen, const char *path)
 			break;
 		case CP_SFIELD:
 		case CP_SMETHOD:
-			if (e[1] & 0x80) {
+			if (e[1] & 0x80 && (e[1] & 0x7F) < p->nimports && p->imports[e[1] & 0x7F] >= JC_API_PKGS) {
+				// a library package's: its offsets from the Export component (static fields: in its image)
+				int ip = p->imports[e[1] & 0x7F] - JC_API_PKGS;
+				const u8 *x = exportClass(&vm->pkgs[ip], e[2]);
+				int k = e[0] == CP_SFIELD ? e[3] : x ? x[2] + e[3] : 0;
+				if (!x || e[3] >= (e[0] == CP_SFIELD ? x[2] : x[3])) goto badref;
+				r->cls = -1;
+				r->pkg = ip;
+				r->off = be16(x + 4 + 2 * k);
+			} else if (e[1] & 0x80) {
 				if ((r->cls = classRef(vm, p, 0x8000 | (e[1] & 0x7F) << 8 | e[2])) < 0) goto badref;
 				r->token = e[3];
 				if (e[0] == CP_SMETHOD) {
@@ -319,7 +352,7 @@ badref:
 	vm->npkgs--;
 	vm->nclasses = p->classBase;
 	free(x.buf);
-	return fail(vm, "%s", "a reference the VM can't resolve (another CAP package?)");
+	return fail(vm, "%s", "a reference the VM can't resolve");
 nomem:
 	vm->npkgs--;
 	vm->nclasses = p->classBase;
@@ -888,29 +921,30 @@ static int run(JcVm *vm, int stopAt)
 			const JcCp *e = &cp[be16(pc + 1)];
 			len = 3;
 			if (e->cls >= 0) {
-				fail(vm, "%s", "static field of another package");
+				fail(vm, "%s", "static field of an API class");
 				goto vmfail;
 			}
+			JcPkg *q = &vm->pkgs[e->pkg]; // this package or a library
 			if (k == 0) {
 				u16 i = e->off / 2;
-				if (op < 0x7F) PUSH(p->srefs[i]);
+				if (op < 0x7F) PUSH(q->srefs[i]);
 				else {
 					u16 v = POPH();
-					if (!journal(vm, JE_SREF, f->pkg, i, (u8 *)&p->srefs[i], 2)) goto exception;
-					p->srefs[i] = v;
+					if (!journal(vm, JE_SREF, e->pkg, i, (u8 *)&q->srefs[i], 2)) goto exception;
+					q->srefs[i] = v;
 				}
 				break;
 			}
-			u16 o = e->off - 2 * p->nsrefs;
+			u16 o = e->off - 2 * q->nsrefs;
 			int n = k == 1 ? 1 : k == 2 ? 2 : 4;
-			u8 *b = p->sprims + o;
+			u8 *b = q->sprims + o;
 			if (op < 0x7F) {
 				if (k == 1) PUSH((s8)b[0]);
 				else if (k == 2) PUSH(sbe16(b));
 				else PUSHI((int32_t)((u32)be16(b) << 16 | be16(b + 2)));
 			} else {
 				int32_t v = k == 3 ? POPI() : POP();
-				if (!journal(vm, JE_SPRIM, f->pkg, o, b, n)) goto exception;
+				if (!journal(vm, JE_SPRIM, e->pkg, o, b, n)) goto exception;
 				for (int i = 0; i < n; i++) b[i] = v >> 8 * (n - 1 - i);
 			}
 			break;
@@ -988,8 +1022,8 @@ static int run(JcVm *vm, int stopAt)
 					nargs = nat->nargs;
 					if (op == 0x8C) NPE(S[-nargs]);
 				} else {
-					tpkg = f->pkg, toff = e->off;
-					nargs = methodNargs(p->comp[7] + toff);
+					tpkg = e->pkg, toff = e->off;
+					nargs = methodNargs(vm->pkgs[tpkg].comp[7] + toff);
 					if (op == 0x8C) NPE(S[-nargs]);
 				}
 			}

@@ -3,7 +3,8 @@
 #include <stdint.h>
 
 // Java Card virtual machine (issue #19; the Python prototype in tools/jcvm/ is the reference): CAP files
-// loaded into packages and classes, the API in C (jcapi.c) linked by the export file tokens
+// loaded into packages and classes (library packages too, linked by their Export component), the API in C
+// (jcapi.c) linked by the export file tokens
 // (jcapitab.c, tools/gen_jcapi.py), a heap of objects behind 16-bit handles, the bytecode interpreter.
 // Cells are 16 bits; an int takes two (high word first), a reference is a handle (0 = null).
 // The card around it (applets, SELECT, APDUs, saving the heap) is jccard.c.
@@ -60,7 +61,8 @@ typedef struct {
 	u8 tag;      // 1 class, 2 instance field, 3 virtual method, 4 super method, 5 static field, 6 static method
 	u8 token;    // methods
 	s16 cls;     // class index (classes, fields, virtual / super methods)
-	u16 off;     // instance field: cell offset; static field: image offset; internal static method: method offset
+	s8 pkg;      // static fields and methods: the package (this one or a library)
+	u16 off;     // instance field: cell offset; static field: image offset (pkg's); static method: method offset
 	const JcNativeMethod *nat; // static method / constructor of the API
 } JcCp;
 

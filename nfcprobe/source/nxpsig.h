@@ -3,7 +3,8 @@
 
 // NXP originality signatures: ECDSA without a hash (e = the UID as a big-endian number), r || s, on
 // secp128r1 (Ultralight EV1, NTAG21x: 32 bytes) or secp224r1 (DESFire, NTAG 4xx: 56 bytes), checked
-// against NXP's public keys (pm3 client/src/crypto/originality.c). Plain C, see tools/ecref.py.
+// against NXP's public keys (pm3 client/src/crypto/originality.c). The curve arithmetic is ecc.c's (not
+// reentrant).
 
 enum { SIG_MFU, SIG_DESFIRE, SIG_MFC }; // which keys to try
 

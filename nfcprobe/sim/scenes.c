@@ -917,7 +917,7 @@ static const SimStep script[] = {
 	CALL(reset), CALL(simEmuMfc), SHOT("emu_mfc"), CALL(simBusyEnd),
 	CALL(reset), CALL(simEmuDf), SHOT("emu_df"), CALL(simBusyEnd),
 	CALL(reset), CALL(scnJcEmpty), SHOT("jc_empty"), CALL(reset), CALL(scnJc), SHOT("jc_list"), KEYS(KEY_X),
-	SHOT("jc_actions"), B, CALL(simEmuJc), SHOT("jc_emu"), CALL(simBusyEnd),
+	SHOT("jc_actions"), B, D, D, D, D, SHOT("jc_lib"), KEYS(KEY_X), D, A, SHOT("jc_lib_del"), A, SHOT("jc_lib_used"), B, CALL(simEmuJc), SHOT("jc_emu"), CALL(simBusyEnd),
 	// tear-off
 	CALL(reset), CALL(scnTear), SHOT("tear_scan"), D, D, D, D, D, D, D, D, D, D, SHOT("tear_scan_end"),
 	CALL(reset), CALL(scnTearCnt), SHOT("tear_counter"), CALL(simBusyEnd),

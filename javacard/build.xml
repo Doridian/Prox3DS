@@ -6,6 +6,8 @@
      JAVA_HOME=/usr/lib/jvm/java-17-openjdk ant
      ant vmtest: dspm-vmtest.cap, the VM conformance applet (vmtest/, ints on) for nfcprobe's Java Card VM
      ant cprobe: dspm-cprobe.cap, crypto ground truth (cprobe/: Cipher, Signature, MessageDigest, KeyBuilder)
+     ant libtest: dspm-lib.cap (a library package, libtest/lib) and dspm-libuse.cap (an applet using it,
+       libtest/use), for the VM's links between CAP packages; export file and jar in build/exp
      ant oath: Yubico's ykneo-oath (GPLv3, YubiKey OATH protocol: nfcprobe's OATH tool works with it) from
      git clone https://github.com/Yubico/ykneo-oath (here, not in git) -> ykneo-oath.cap -->
 <project name="dspm-test" default="cap">
@@ -31,6 +33,16 @@
     <javacard jckit="${jc.home}">
       <cap targetsdk="${jc.target}" aid="F0334453504D20" output="dspm-cprobe.cap" sources="cprobe" version="1.0">
         <applet class="dspm.cprobe.CryptoProbe" aid="F0334453504D03"/>
+      </cap>
+    </javacard>
+  </target>
+  <target name="libtest">
+    <javacard jckit="${jc.home}">
+      <cap targetsdk="${jc.target}" aid="F0334453504D30" package="dspm.lib" output="dspm-lib.cap" sources="libtest/lib"
+           version="1.0" ints="true" export="build/exp"/>
+      <cap targetsdk="${jc.target}" aid="F0334453504D40" output="dspm-libuse.cap" sources="libtest/use" version="1.0" ints="true">
+        <import exps="build/exp" jar="build/exp/lib.jar"/>
+        <applet class="dspm.libuse.LibUse" aid="F0334453504D04"/>
       </cap>
     </javacard>
   </target>

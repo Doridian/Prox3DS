@@ -11,6 +11,8 @@ void simJc(bool empty)
 		jcCardInstallCap("../../../javacard/ykneo-oath.cap");
 		jcCardInstallCap("../../../javacard/dspm-test.cap");
 		jcCardInstallCap("../../../javacard/dspm-vmtest.cap");
+		jcCardInstallCap("../../../javacard/dspm-lib.cap");
+		jcCardInstallCap("../../../javacard/dspm-libuse.cap");
 	}
 	appScreen(&jcScreen);
 }
