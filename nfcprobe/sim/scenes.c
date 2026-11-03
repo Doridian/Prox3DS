@@ -315,7 +315,7 @@ static void busyRead(void) { simBusy("Reading card", true, false); }
 static void busyStop(void) { simBusy("Writing to magic card", true, true); }
 static void busyChip(void) { simBusy("Chip info", false, false); }
 static void busyEnd(void) { simBusyEnd(); }
-static void toastHome(void) { toast("HOME is off while NFC is ours: START exits"); }
+static void toastHome(void) { toast("Touch locked: HOME unlocks, START exits"); }
 static void toastLong(void) { toast("Deleted hotel_keycard_from_the_conference_in_2025_backup.bin"); }
 
 static void mfcMenu(void) { simMfcMenu(); }
@@ -783,6 +783,7 @@ static const SimStep script[] = {
 	SHOT("root_5"), D, SHOT("root_6"),
 	CALL(reset), CALL(tagOdd), SHOT("tag_unsupported"), B, SHOT("root_lastcard"),
 	CALL(fillLog), KEYS(KEY_SELECT), SHOT("log"), B,
+	CALL(simHome), SHOT("touch_locked"), TOUCH(150, 200), D, SHOT("touch_locked_tap"), CALL(simHome), SHOT("touch_unlocked"),
 	CALL(busyRead), SHOT("busy_read"), CALL(busyStop), SHOT("busy_stopping"), CALL(busyChip), SHOT("busy_chip"),
 	CALL(busyEnd), CALL(toastHome), SHOT("toast_home"), CALL(toastLong), SHOT("toast_long"),
 

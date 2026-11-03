@@ -17,3 +17,4 @@ typedef struct {
 
 void simScript(const SimStep *s);
 void simSetOutDir(const char *dir);
+void simHome(void); // a HOME press, seen next frame

@@ -17,7 +17,8 @@ Mifare Classic Crypto1 (`source/mon.c`, `source/mfc.c`, `source/crypto1.c`).
 generates the whole patch (header, a 4-instruction AON thunk into ROM, our SRAM image).
 
 The UI is on the top screen and driven by buttons only: a card on the reader covers the whole
-bottom screen, which just mirrors the log (SELECT shows it on top). Card
+bottom screen, which just mirrors the log (SELECT shows it on top). HOME toggles a touch lock (a card
+on the reader can register as taps): the bottom screen then shows only the log and ignores touch. Card
 operations ask for confirmation before writing anything and can be stopped with B.
 
 Like the Proxmark's `hf search` / `hf mf`, the root menu's Scan card identifies any ISO14443-A card

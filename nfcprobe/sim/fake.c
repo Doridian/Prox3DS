@@ -64,7 +64,14 @@ bool aptMainLoop(void)
 	return true;
 }
 
-bool aptCheckHomePressRejected(void) { return false; }
+static bool home;
+void simHome(void) { home = true; }
+bool aptCheckHomePressRejected(void)
+{
+	bool h = home;
+	home = false;
+	return h;
+}
 void hidScanInput(void) {}
 u32 hidKeysDown(void) { return keys; }
 u32 hidKeysDownRepeat(void) { return keys; }

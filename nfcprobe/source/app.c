@@ -661,7 +661,7 @@ static Menu rootMenu = { "nfcprobe", rootEntries, 0, rootExtra };
 
 static void rootExtra(float x, float y, float w)
 {
-	y = uiTextWrap(x, y, w, S_SMALL, uiCol[COL_DIM], "Cards go on the bottom screen. HOME is off while NFC is ours.");
+	y = uiTextWrap(x, y, w, S_SMALL, uiCol[COL_DIM], "Cards go on the bottom screen. HOME locks the touchscreen.");
 	if (tag.uidLen) {
 		char uid[32], s[96];
 		uidHex(&tag, uid, "");
@@ -781,6 +781,27 @@ static void bottomDraw(void)
 	if (uiButton(0, UI_H - 26, 3 * c, 24, uiCol[COL_PANEL], "Log")) appPress(KEY_SELECT);
 }
 
+// Touch locked (HOME toggles it: a card on the reader can touch the screen): the bottom screen is all log.
+static bool touchLocked;
+
+static void lockedDraw(void)
+{
+	uiRect(0, 0, UI_BW, 18, uiCol[COL_WARN]);
+	uiTextCenter(UI_BW / 2, 2, S_SMALL, uiCol[COL_BG], "Touch locked: HOME unlocks");
+	int n = uiLogCount(), rows = 0, i = n;
+	char line[100];
+	for (; i > 0; i--) { // the tail that fits, wrapped, oldest at the top
+		uiLogLine(i - 1, line, sizeof(line));
+		int k = uiWrapLines(UI_BW - 8, S_LOG, line);
+		if (rows + k > (UI_H - 22) / 12) break;
+		rows += k;
+	}
+	for (float y = 22; i < n; i++) {
+		uiLogLine(i, line, sizeof(line));
+		y = uiTextWrap(4, y, UI_BW - 8, S_LOG, uiCol[i == n - 1 ? COL_TEXT : COL_DIM], line);
+	}
+}
+
 // --- loop ---
 
 // The saved dump lists, scanned once in the background: their first open doesn't wait for every file's date.
@@ -811,10 +832,13 @@ void appRun(void)
 		// touch: a new tap, then after a delay repeats while held (for D-pad and digit buttons)
 		static u32 held;
 		touchPosition tp = { 0 };
-		if (hidKeysHeld() & KEY_TOUCH) hidTouchRead(&tp), held++;
+		if (aptCheckHomePressRejected()) {
+			touchLocked = !touchLocked;
+			toast(touchLocked ? "Touch locked: HOME unlocks, START exits" : "Touch unlocked");
+		}
+		if ((hidKeysHeld() & KEY_TOUCH) && !touchLocked) hidTouchRead(&tp), held++;
 		else held = 0;
 		uiTouch(held == 1 || (held > 24 && held % 5 == 0), held > 1, tp.px, tp.py);
-		if (aptCheckHomePressRejected()) toast("HOME is off while NFC is ours: START exits");
 		jobReap();
 		if (kDown & KEY_START) {
 			mfCancel = true;
@@ -844,8 +868,14 @@ void appRun(void)
 			uiRect((UI_W - w) / 2, UI_H - 44, 2, 20, uiCol[COL_CURSOR]);
 			uiTextCenter(UI_W / 2, UI_H - 41, S_SMALL, uiCol[COL_TEXT], "%s", t);
 		}
+		if (touchLocked) {
+			u32 c = uiCol[COL_WARN];
+			uiRect(0, 0, UI_W, 2, c), uiRect(0, UI_H - 2, UI_W, 2, c);
+			uiRect(0, 0, 2, UI_H, c), uiRect(UI_W - 2, 0, 2, UI_H, c);
+		}
 		uiBottom();
-		if (!jobBusy && !dlg.kind && stack[depth - 1]->bottom) stack[depth - 1]->bottom();
+		if (touchLocked) lockedDraw();
+		else if (!jobBusy && !dlg.kind && stack[depth - 1]->bottom) stack[depth - 1]->bottom();
 		else bottomDraw();
 		uiFrameEnd();
 	}
