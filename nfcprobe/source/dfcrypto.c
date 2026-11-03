@@ -82,6 +82,14 @@ static void desKey(u64 *sub, const u8 *key)
 	}
 }
 
+void dfDesSubkeys(const u8 key[8], u8 ks[16][8])
+{
+	u64 sub[16];
+	desKey(sub, key);
+	for (int r = 0; r < 16; r++)
+		for (int s = 0; s < 8; s++) ks[r][s] = sub[r] >> (42 - 6 * s) & 0x3F;
+}
+
 static u64 des(const u64 *sub, u64 b, bool enc)
 {
 	b = perm(b, IP, 64, 64);

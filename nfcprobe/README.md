@@ -75,7 +75,8 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   our own chip image (`chip/emu.c`, loaded instead of the reader image: no WTX outside ISO-DEP, the host is far too
   slow for a READ). READ, FAST_READ, GET_VERSION (made up from the page count for dumps without one),
   READ_SIG, READ_CNT, PWD_AUTH (the dump's password if it has one, else any), WRITE / COMPATIBILITY WRITE.
-  What readers wrote can be saved as a new dump afterwards. No UL-C 3DES, no AUTH0 protection.
+  Ultralight C: its 3DES AUTH with the dump's key (or the factory key). What readers wrote can be saved as a
+  new dump afterwards. No AUTH0 protection.
 - MIFARE Classic Mini / 1K / 2K / 4K: a saved dump the same way, Crypto1 on the chip (AUTH, nested AUTH, READ,
   WRITE, HALT). The encrypted answers go out with their encrypted parity, as raw 9-bit frames (NOTES.md:
   listen-mode parity). Classic and Ultralight each have their own chip image (chip/emu.c built twice); a 2K /

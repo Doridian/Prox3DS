@@ -3,7 +3,7 @@
 // within ~100 us). reader.c's protocol (2F 2C) with READ8 0, WRITE8 1 and READ32 3 only (no room for
 // CALL / WRITE32), so tools/chipmon.py and the app's mon.c drive it, plus:
 //   op 5 EMU     -> 4F 2C | 00 | addresses (u32) of struct emu, the frame log, the page / block memory,
-//                   and (Classic) where blocks 64 and 173 start
+//                   and (Classic) where blocks 64 and 173 start / (Ultralight) the UL-C 3DES subkeys
 // Built twice (Makefile): emu_mfu (-DEMU_MFU, Ultralight / NTAG) and emu_mfc (-DEMU_MFC, Classic), as the
 // image has no room for both.
 // The host fills struct emu (WRITE8) and sets mode; the rest happens in the RX hook.
@@ -44,7 +44,7 @@ enum { MODE_OFF, MODE_MFU, MODE_MFC = 3 };
 struct emu {
 	u8 mode;
 	u8 npages;       // MFU: pages in mem (READ rolls over here); MFC: blocks (20 Mini, 64 1K, 128 2K, 0 4K)
-	u8 flags;        // bit 0 GET_VERSION answers, bit 1 READ_SIG answers, bit 2 check PWD_AUTH
+	u8 flags;        // bit 0 GET_VERSION answers, bit 1 READ_SIG answers, bit 2 check PWD_AUTH, bit 3 UL-C AUTH
 	u8 pad0;
 	u8 version[8];   // MFC: [0..3] = the UID bytes Crypto1 takes (the last 4 of a 7-byte UID)
 	u8 sig[32];
@@ -141,6 +141,120 @@ static void write_page(u32 p, const u8 *d)
 	emu.writes++;
 }
 
+// --- Ultralight C 3DES authentication, card side ---
+// 2K3DES (EDE, K1 K2 K1) with the subkeys the host computed (emu_ks: K1's and K2's 16 rounds, 8 six-bit
+// S-box inputs each), bit loops: small, fast enough for the AF answer.
+static const u8 des_ip[64] = {
+	58, 50, 42, 34, 26, 18, 10, 2, 60, 52, 44, 36, 28, 20, 12, 4, 62, 54, 46, 38, 30, 22, 14, 6,
+	64, 56, 48, 40, 32, 24, 16, 8, 57, 49, 41, 33, 25, 17, 9, 1, 59, 51, 43, 35, 27, 19, 11, 3,
+	61, 53, 45, 37, 29, 21, 13, 5, 63, 55, 47, 39, 31, 23, 15, 7,
+};
+static const u8 des_p[32] = {
+	16, 7, 20, 21, 29, 12, 28, 17, 1, 15, 23, 26, 5, 18, 31, 10, 2, 8, 24, 14, 32, 27, 3, 9,
+	19, 13, 30, 6, 22, 11, 4, 25,
+};
+// S-boxes: box j, index row * 16 + col, two per byte (even index in the low nibble)
+static const u8 des_s[256] = {
+	0x4E, 0x1D, 0xF2, 0x8B, 0xA3, 0xC6, 0x95, 0x70, 0xF0, 0x47, 0x2E, 0x1D, 0x6A, 0xBC, 0x59, 0x83,
+	0x14, 0x8E, 0x6D, 0xB2, 0xCF, 0x79, 0xA3, 0x05, 0xCF, 0x28, 0x94, 0x71, 0xB5, 0xE3, 0x0A, 0xD6,
+	0x1F, 0xE8, 0xB6, 0x43, 0x79, 0xD2, 0x0C, 0xA5, 0xD3, 0x74, 0x2F, 0xE8, 0x0C, 0xA1, 0x96, 0x5B,
+	0xE0, 0xB7, 0x4A, 0x1D, 0x85, 0x6C, 0x39, 0xF2, 0x8D, 0x1A, 0xF3, 0x24, 0x6B, 0xC7, 0x50, 0x9E,
+	0x0A, 0xE9, 0x36, 0x5F, 0xD1, 0x7C, 0x4B, 0x82, 0x7D, 0x90, 0x43, 0xA6, 0x82, 0xE5, 0xBC, 0x1F,
+	0x6D, 0x94, 0xF8, 0x03, 0x1B, 0xC2, 0xA5, 0x7E, 0xA1, 0x0D, 0x96, 0x78, 0xF4, 0x3E, 0x5B, 0xC2,
+	0xD7, 0x3E, 0x60, 0xA9, 0x21, 0x58, 0xCB, 0xF4, 0x8D, 0x5B, 0xF6, 0x30, 0x74, 0xC2, 0xA1, 0x9E,
+	0x6A, 0x09, 0xBC, 0xD7, 0x1F, 0xE3, 0x25, 0x48, 0xF3, 0x60, 0x1A, 0x8D, 0x49, 0xB5, 0x7C, 0xE2,
+	0xC2, 0x14, 0xA7, 0x6B, 0x58, 0xF3, 0x0D, 0x9E, 0xBE, 0xC2, 0x74, 0x1D, 0x05, 0xAF, 0x93, 0x68,
+	0x24, 0xB1, 0xDA, 0x87, 0x9F, 0x5C, 0x36, 0xE0, 0x8B, 0x7C, 0xE1, 0xD2, 0xF6, 0x90, 0x4A, 0x35,
+	0x1C, 0xFA, 0x29, 0x86, 0xD0, 0x43, 0x7E, 0xB5, 0xFA, 0x24, 0xC7, 0x59, 0x16, 0xED, 0xB0, 0x83,
+	0xE9, 0x5F, 0x82, 0x3C, 0x07, 0xA4, 0xD1, 0x6B, 0x34, 0xC2, 0x59, 0xAF, 0xEB, 0x71, 0x06, 0xD8,
+	0xB4, 0xE2, 0x0F, 0xD8, 0xC3, 0x79, 0xA5, 0x16, 0x0D, 0x7B, 0x94, 0xA1, 0x3E, 0xC5, 0xF2, 0x68,
+	0x41, 0xDB, 0x3C, 0xE7, 0xFA, 0x86, 0x50, 0x29, 0xB6, 0x8D, 0x41, 0x7A, 0x59, 0xF0, 0x2E, 0xC3,
+	0x2D, 0x48, 0xF6, 0x1B, 0x9A, 0xE3, 0x05, 0x7C, 0xF1, 0x8D, 0x3A, 0x47, 0x5C, 0xB6, 0xE0, 0x29,
+	0xB7, 0x14, 0xC9, 0x2E, 0x60, 0xDA, 0x3F, 0x85, 0x12, 0x7E, 0xA4, 0xD8, 0xCF, 0x09, 0x53, 0xB6,
+};
+static u8 emu_ks[2][16][8] __attribute__((section(".data")));
+
+// One DES block in place; dec runs the subkeys backwards.
+static void des(u8 *b, const u8 (*ks)[8], u32 dec)
+{
+	u32 l = 0, r = 0;
+	for (u32 i = 0; i < 64; i++) { // IP
+		u32 k = des_ip[i] - 1, bit = b[k >> 3] >> (7 - (k & 7)) & 1;
+		if (i < 32) l = l << 1 | bit;
+		else r = r << 1 | bit;
+	}
+	for (u32 n = 0; n < 16; n++) {
+		const u8 *k = ks[dec ? 15 - n : n];
+		u32 f = 0, p = 0;
+		for (u32 j = 0; j < 8; j++) { // E: R's bits 4j..4j+5 (1-based, wrapping), S-box j
+			u32 e = j == 0 ? (r & 1) << 5 | r >> 27 : j == 7 ? (r & 0x1F) << 1 | r >> 31 : r >> (27 - 4 * j) & 0x3F;
+			e ^= k[j];
+			u32 idx = (e & 0x20) | (e & 1) << 4 | (e >> 1 & 0xF), s = des_s[j * 32 + (idx >> 1)];
+			f = f << 4 | (idx & 1 ? s >> 4 : s & 0xF);
+		}
+		for (u32 j = 0; j < 32; j++) p = p << 1 | (f >> (32 - des_p[j]) & 1);
+		p ^= l;
+		l = r;
+		r = p;
+	}
+	for (u32 i = 0; i < 8; i++) b[i] = 0;
+	for (u32 i = 0; i < 64; i++) { // FP = IP^-1 on R16 L16
+		u32 bit = i < 32 ? r >> (31 - i) & 1 : l >> (63 - i) & 1, k = des_ip[i] - 1;
+		b[k >> 3] |= bit << (7 - (k & 7));
+	}
+}
+
+// 2K3DES CBC over 8 bytes: iv in, the next iv out (the ciphertext).
+static void tdes_cbc(u8 *b, u8 *iv, u32 dec)
+{
+	u8 c[8];
+	for (u32 i = 0; i < 8; i++) {
+		c[i] = b[i];
+		if (!dec) b[i] ^= iv[i];
+	}
+	des(b, emu_ks[0], dec);
+	des(b, emu_ks[1], !dec);
+	des(b, emu_ks[0], dec);
+	for (u32 i = 0; i < 8; i++) {
+		if (dec) b[i] ^= iv[i];
+		iv[i] = dec ? c[i] : b[i];
+	}
+}
+
+static u8 ulc_rndb[8], ulc_iv[8], ulc_step; // after 1A: RndB, the IV (ek(RndB)), 1
+
+// 1A 00 -> AF ek(RndB); AF ek(RndA || RndB') -> 00 ek(RndA') when RndB' is RndB rotated, else NACK.
+static u32 ulc_auth(const u8 *f, u32 n)
+{
+	static u8 b[17], x = 0x5A;
+	if (f[0] == 0x1A) {
+		if (n != 2 || f[1]) return 0;
+		for (u32 i = 0; i < 8; i++) {
+			x = x * 37 + (TIMER >> (i & 3)) + 1;
+			ulc_rndb[i] = b[1 + i] = x;
+			ulc_iv[i] = 0;
+		}
+		b[0] = 0xAF;
+		tdes_cbc(b + 1, ulc_iv, 0);
+		la_tx(b, 9, 1);
+		ulc_step = 1;
+		return 1;
+	}
+	if (n != 17 || ulc_step != 1) return 0;
+	ulc_step = 0;
+	for (u32 i = 0; i < 16; i++) b[i] = f[1 + i];
+	tdes_cbc(b, ulc_iv, 1);     // RndA
+	tdes_cbc(b + 8, ulc_iv, 1); // RndB'
+	for (u32 i = 0; i < 8; i++)
+		if (b[8 + i] != ulc_rndb[(i + 1) & 7]) return 0;
+	for (u32 i = 0; i < 8; i++) b[9 + i] = b[(i + 1) & 7]; // RndA'
+	b[0] = 0;
+	for (u32 i = 0; i < 8; i++) b[1 + i] = b[9 + i];
+	tdes_cbc(b + 1, ulc_iv, 0);
+	la_tx(b, 9, 1);
+	return 1;
+}
+
 static u32 mfu(const u8 *f, u32 len)
 {
 	u32 n = len - 2, np = emu.npages;
@@ -191,6 +305,9 @@ static u32 mfu(const u8 *f, u32 len)
 		tx4(0xA);
 		return 1;
 	case 0xE0: // RATS: an Ultralight has no ISO-DEP, stays quiet
+		return 1;
+	case 0x1A: case 0xAF: // Ultralight C AUTH
+		if (!(emu.flags & 8) || !ulc_auth(f, n)) break;
 		return 1;
 	}
 nack:
@@ -526,7 +643,7 @@ AON static int hook(u8 *msg)
 		put32(buf + 12, (u32)BLK2);
 		put32(buf + 16, (u32)BLK3);
 #else
-		put32(buf + 12, 0);
+		put32(buf + 12, (u32)emu_ks);
 		put32(buf + 16, 0);
 #endif
 		reply(0, buf, 20);

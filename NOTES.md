@@ -1482,6 +1482,15 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   signature: "Signature verification: successful", 4 dumps with identical pages (one run's GET_VERSION was
   lost: zero version in pm3's header).
 
+- Ultralight C (2026-11-02): the 3DES AUTH card side in emu_mfu (1A 00 -> AF ek(RndB); AF ek(RndA || RndB')
+  -> 00 ek(RndA'), CBC with the running IV, 2K3DES EDE). DES as bit loops (IP / P / nibble-packed S-boxes,
+  ~600 bytes) with the 16 round subkeys per half precomputed by the host (dfDesSubkeys, 256 bytes in the image,
+  MON_EMU's fourth address). Checked on the PC against dfcrypto.c (200 random blocks, both directions).
+  Speed: ~0.8 ms per DES block on the chip, so AF ek(RndB) goes out ~2.5 ms after 1A and the final answer
+  (9 DES) ~7.3 ms after the reader's AF; pm3 waits for it. READ rolls over at 0x2C (key pages unreadable),
+  key from pages 2C-2F (mfuUlcDumpKey, also the clone's), else the factory key. pm3: hf mfu info -> MF0ULC,
+  cauth with the dump's key ok (twice), a wrong key fails, hf mfu dump -k identical to the source.
+
 ## MIFARE Classic emulation on the chip (chip/emu.c MODE_MFC, tools/exp/listen/mfcemu.py) -- 2026-11-02
 - The data has to be on the chip: a reader wants nt, {at} and every encrypted answer within a few ms, and the
   cipher state lives there anyway. 1K (1024 bytes, keys in the trailers) and Mini fit; 4K doesn't.

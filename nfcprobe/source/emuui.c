@@ -133,7 +133,11 @@ static float emuView(float x, float y, float w)
 		if (emu.writes)
 			uiText(x, y, S_SMALL, uiCol[COL_WARN], "%lu page%s written by readers (saved on stop if you like)",
 				(unsigned long)emu.writes, emu.writes == 1 ? "" : "s");
-		else uiText(x, y, S_SMALL, dim, runDump.pwdOk ? "PWD_AUTH takes the dump's password only" :
+		else if (runDump.info.type == &mfuTypeULC) {
+			u8 k[16];
+			uiText(x, y, S_SMALL, dim, mfuUlcDumpKey(&runDump, k) ? "3DES AUTH with the dump's key" :
+				"3DES AUTH with the factory key (none in the dump)");
+		} else uiText(x, y, S_SMALL, dim, runDump.pwdOk ? "PWD_AUTH takes the dump's password only" :
 			"PWD_AUTH takes any password (none in the dump)");
 	} else if (mode == MODE_MFC) {
 		char nm[64];

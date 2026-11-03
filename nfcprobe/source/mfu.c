@@ -185,6 +185,19 @@ int mfuUlcAuth(const u8 key[16])
 	return 1;
 }
 
+bool mfuUlcDumpKey(const MfuDump *d, u8 key[16])
+{
+	static const u8 factory[16] = { 0x49, 0x45, 0x4D, 0x4B, 0x41, 0x45, 0x52, 0x42, 0x21, 0x4E, 0x41, 0x43, 0x55,
+		0x4F, 0x59, 0x46 };
+	static const u8 zero[16];
+	memcpy(key, factory, 16);
+	if (d->pages < 0x30 || !d->valid[0x2C] || !d->valid[0x2D] || !d->valid[0x2E] || !d->valid[0x2F]) return false;
+	mfuUlcKeyFromPages(d->data + 0x2C, key);
+	if (memcmp(key, zero, 16)) return true;
+	memcpy(key, factory, 16); // what a dump without the key holds (pm3's too)
+	return false;
+}
+
 int mfuUlcFindKey(u8 key[16])
 {
 	static MfuKey keys[MFU_MAX_KEYS];
@@ -600,21 +613,12 @@ int mfuCloneToGtu(const MfuDump *d)
 	// Config pages the dump lacks (read-protected on the original) get the factory defaults: no
 	// password protection, not whatever the GTU held there.
 	static const u8 cfgDefault[2][4] = { { 0x00, 0x00, 0x00, 0xFF }, { 0x00, 0x05, 0x00, 0x00 } };
-	// UL-C: the key pages from the dump (pm3 dumps may stop before them), else the factory key;
-	// lock / counter / AUTH0 / AUTH1 the dump lacks: factory (AUTH0 30 = no auth needed)
+	// UL-C: the dump's key (mfuUlcDumpKey); lock / counter / AUTH0 / AUTH1 the dump lacks: factory
+	// (AUTH0 30 = no auth needed)
 	static const u8 ulcDefault[4][4] = { { 0 }, { 0 }, { 0x30 }, { 0 } };
-	static const u8 ulcFactory[16] = { 0x49, 0x45, 0x4D, 0x4B, 0x41, 0x45, 0x52, 0x42, 0x21, 0x4E, 0x41, 0x43, 0x55,
-		0x4F, 0x59, 0x46 };
 	bool ulc = t == &mfuTypeULC;
 	u8 ulcKey[16], kp[4][4];
-	memcpy(ulcKey, ulcFactory, 16);
-	static const u8 zero[16];
-	if (ulc && d->pages >= 0x30 && d->valid[0x2C] && d->valid[0x2D] && d->valid[0x2E] && d->valid[0x2F])
-		mfuUlcKeyFromPages(d->data + 0x2C, ulcKey);
-	if (ulc && !memcmp(ulcKey, zero, 16)) { // what a dump without the key holds (pm3's too)
-		logp("gtu: key pages all zero (not read?): factory key\n");
-		memcpy(ulcKey, ulcFactory, 16);
-	}
+	if (ulc && !mfuUlcDumpKey(d, ulcKey)) logp("gtu: no key pages in the dump: factory key\n");
 	mfuUlcKeyPages(ulcKey, kp);
 	int end = ulc ? 0x30 : d->pages;
 	progOp("Writing pages");

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "dfcrypto.h"
 #include "emu.h"
 #include "mfc.h"
 #include "mon.h"
@@ -292,7 +293,8 @@ static bool chipMemIo(u8 *mem, u32 memLen, bool write)
 	return true;
 }
 
-static bool chipRun(u8 *hdr, u8 *mem, u32 memLen, u32 mode)
+// extra: written at the image's fourth address (Ultralight: the UL-C 3DES subkeys), NULL = none.
+static bool chipRun(u8 *hdr, u8 *mem, u32 memLen, u32 mode, const void *extra, u32 extraLen)
 {
 	if (!chipUp(mode)) return false;
 	u8 a[20];
@@ -302,6 +304,7 @@ static bool chipRun(u8 *hdr, u8 *mem, u32 memLen, u32 mode)
 	chipSeen = chipNlog = 0;
 	// The mode byte last: the chip starts answering with everything in place.
 	if (!monWrite(chipBase + 1, hdr + 1, CE_SIZE - 1) || !chipMemIo(mem, memLen, true)) return false;
+	if (extra && !monWrite(chipMem2, extra, extraLen)) return false;
 	u8 m = mode;
 	if (!monWrite(chipBase + CE_MODE, &m, 1)) return false;
 	if (!listenAs(NULL)) return false;
@@ -312,9 +315,11 @@ static bool chipRun(u8 *hdr, u8 *mem, u32 memLen, u32 mode)
 
 bool emuRunMfu(MfuDump *d)
 {
-	static u8 hdr[CE_SIZE], mem[4 * 255];
+	static u8 hdr[CE_SIZE], mem[4 * 255], ks[2][16][8];
 	const MfuType *t = d->info.type;
+	bool ulc = t == &mfuTypeULC;
 	int np = d->pages > 255 ? 255 : d->pages;
+	if (ulc && np > 0x2C) np = 0x2C; // the key pages can't be read: READ rolls over before them
 	memset(&emu, 0, sizeof(emu));
 	EmuId id = { .uidLen = 7, .atqa = { 0x44, 0x00 }, .sak = 0x00 };
 	memcpy(id.uid, d->data[0], 3);
@@ -341,7 +346,14 @@ bool emuRunMfu(MfuDump *d)
 		if (d->valid[cfg + 3]) memcpy(hdr + CE_PACK, d->data[cfg + 3], 2);
 		memset(mem + 4 * (cfg + 2), 0, 8);
 	}
-	if (!chipRun(hdr, mem, 4 * np, CM_MFU)) return false;
+	if (ulc) { // 3DES AUTH with the dump's key
+		u8 key[16];
+		mfuUlcDumpKey(d, key);
+		dfDesSubkeys(key, ks[0]);
+		dfDesSubkeys(key + 8, ks[1]);
+		hdr[CE_FLAGS] |= 8;
+	}
+	if (!chipRun(hdr, mem, 4 * np, CM_MFU, ulc ? ks : NULL, sizeof(ks))) return false;
 	// What readers wrote goes back into the dump (PWD / PACK stay as they were).
 	if (emu.writes)
 		for (int p = 2; p < np; p++) {
@@ -394,7 +406,7 @@ bool emuRunMfc(MfDump *d)
 		memcpy(mem + 16 * i, d->keyFound[sec][0] ? d->keys[sec][0] : (const u8 *)"\0\0\0\0\0\0", 6);
 		memcpy(mem + 16 * i + 10, d->keyFound[sec][1] ? d->keys[sec][1] : (const u8 *)"\0\0\0\0\0\0", 6);
 	}
-	if (!chipRun(hdr, mem, 16 * nb, CM_MFC)) return false;
+	if (!chipRun(hdr, mem, 16 * nb, CM_MFC, NULL, 0)) return false;
 	if (emu.writes)
 		for (int i = 1; i < nb; i++) {
 			if (i == (i < 128 ? i | 3 : i | 15)) continue; // trailers: the keys stay as the dump has them

@@ -57,6 +57,9 @@ int mfuUlcAuth(const u8 key[16]);
 // The 3DES key as pages 2C-2F hold it (each 8-byte half byte-reversed), and back.
 void mfuUlcKeyPages(const u8 key[16], u8 pages[4][4]);
 void mfuUlcKeyFromPages(const u8 pages[4][4], u8 key[16]);
+// A UL-C dump's key: pages 2C-2F (the key that read it is saved there), else the factory key
+// (BREAKMEIFYOUCAN!, false: the dump has no key pages or zeros there).
+bool mfuUlcDumpKey(const MfuDump *d, u8 key[16]);
 // UL-C: the dictionary (mfukeys.h: remembered for this UID, MFU_KEYS, defaults) until a key works.
 // 1 = found (into key, the card is authenticated), 0 = none, -1 = monitor error.
 int mfuUlcFindKey(u8 key[16]);

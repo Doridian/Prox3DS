@@ -20,4 +20,6 @@ void dfBlock(const DfCipher *c, u8 *b, bool enc);
 void dfCbc(const DfCipher *c, u8 *iv, u8 *p, u32 len, bool enc);
 // CMAC with iv as the starting chain value (EV1 keeps it running); iv and mac get the full result.
 void dfCmac(const DfCipher *c, u8 *iv, const u8 *p, u32 len, u8 *mac);
+// A DES key's 16 round subkeys as 8 six-bit S-box inputs each (the chip's UL-C emulation, chip/emu.c des()).
+void dfDesSubkeys(const u8 key[8], u8 ks[16][8]);
 u32 dfCrc32(const u8 *p, u32 len); // init FFFFFFFF, no final xor, appended LSB first

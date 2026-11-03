@@ -42,8 +42,8 @@ bool emuRun(const EmuId *id, EmuApdu fn);
 
 // An Ultralight / NTAG from a dump, answered by our chip image (chip/emu.c, the ROM can't: NOTES.md): its
 // UID (ATQA 0044, SAK 00), READ, FAST_READ, GET_VERSION, READ_SIG, READ_CNT, PWD_AUTH (the dump's
-// password if known, else any; PACK from the dump), WRITE, COMPATIBILITY WRITE. No UL-C 3DES, no AUTH0
-// protection. Pages readers wrote end up in *d (emu.changed).
+// password if known, else any; PACK from the dump), WRITE, COMPATIBILITY WRITE, Ultralight C 3DES AUTH (the
+// dump's key, mfuUlcDumpKey). No AUTH0 protection. Pages readers wrote end up in *d (emu.changed).
 bool emuRunMfu(MfuDump *d);
 // MIFARE Classic Mini / 1K / 2K / 4K from a dump, the same way (Crypto1 on the chip, its own image): its
 // UID / ATQA / SAK from block 0, AUTH (first and nested) with the keys the dump found, READ (key A reads as
