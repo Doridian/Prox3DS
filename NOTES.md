@@ -1955,5 +1955,6 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   ecCurveInit / ecVerify (ecVerify's hash truncation = the old leading bytes on both curves). Checked on the
   PC against the old code: 400 random signatures (both curves, half tampered, UIDs of 4 / 7 / 10 bytes and
   data longer than the order) and the pm3 recover_pk.py NXP samples: 0 differences. 0.64 ms a check on the
-  PC (old 0.38). Not re-checked on a card on the 3DS (the 3DS did not pick up the pm3's UL EV1 sim at that
-  placement); the same C as the -m32 host build. ecc.c is not reentrant: VM and readers never run together.
+  PC (old 0.38). On the 3DS with real cards (the user, same day): NTAG215 and DESFire EV3 both "verified"
+  (secp128r1 and secp224r1). The 3DS did not pick up the pm3's UL EV1 sim at that placement. ecc.c is not
+  reentrant: VM and readers never run together.
