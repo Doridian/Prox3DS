@@ -15,11 +15,7 @@ static char hints[256];
 static C2D_TextBuf frameBuf, monoBuf;
 static C2D_Text mono[95]; // ' ' .. '~'
 static u8 asciiW[128];     // glyph advances, wrapping measures a lot
-static u32 frames;         // the header's blinking cursor
 
-// The non-binary flag, for the stripes on headers and dialogs
-static const u32 flagRGB[4] = { 0xFCF434, 0xFFFFFF, 0x9C59D1, 0x2C2C2C };
-static u32 flag[4];
 #define SCANLINES 0x16 // alpha of the CRT scanline every other row, 0 = none
 
 void uiInit(void)
@@ -45,7 +41,6 @@ void uiInit(void)
 		[COL_KEYB] = 0x4DD8FF, [COL_ACL] = 0xFF9A3D, [COL_CHANGED] = 0xFFF27A,
 	};
 	for (int i = 0; i < COL_N; i++) uiCol[i] = C2D_Color32(rgb[i] >> 16, rgb[i] >> 8 & 0xFF, rgb[i] & 0xFF, 0xFF);
-	for (int i = 0; i < 4; i++) flag[i] = C2D_Color32(flagRGB[i] >> 16, flagRGB[i] >> 8 & 0xFF, flagRGB[i] & 0xFF, 0xFF);
 }
 
 void uiExit(void)
@@ -64,7 +59,6 @@ void uiFrameBegin(void)
 	C2D_SceneBegin(top);
 	C2D_TextBufClear(frameBuf);
 	*hints = 0;
-	frames++;
 }
 
 // Over everything, last: a CRT's dark rows
@@ -92,7 +86,7 @@ void uiTouch(bool down, bool repeat, float x, float y)
 static void face(float x, float y, float w, float h, u32 color, bool hit)
 {
 	uiRect(x, y, w, h, hit ? uiCol[COL_ACCENT] : color);
-	uiRect(x, y + h - 1, w, 1, hit ? flag[0] : uiCol[COL_ACCENT]);
+	uiRect(x, y + h - 1, w, 1, hit ? uiCol[COL_CURSOR] : uiCol[COL_ACCENT]);
 	uiRect(x, y, 3, 1, uiCol[COL_DIM]);
 	uiRect(x, y, 1, 3, uiCol[COL_DIM]);
 }
@@ -154,7 +148,7 @@ void uiBar(float x, float y, float w, float h, float frac, u32 color)
 	uiRect(x, y + h - 1, w, 1, uiCol[COL_SEL]);
 	float f = w * frac;
 	for (float sx = x; sx < x + f; sx += 4) uiRect(sx, y, (x + f - sx < 3 ? x + f - sx : 3), h, color); // segments
-	if (frac > 0 && frac < 1) uiRect(x + f - 2, y - 1, 2, h + 2, flag[0]);
+	if (frac > 0 && frac < 1) uiRect(x + f - 2, y - 1, 2, h + 2, uiCol[COL_CURSOR]);
 }
 
 void uiTri(float x0, float y0, float x1, float y1, float x2, float y2, u32 color)
@@ -309,12 +303,6 @@ void uiMono(float x, float y, u32 color, const char *s)
 	uiMonoS(x, y, S_MONO, MONO_W, color, s);
 }
 
-// The flag as h tall stripes from (x, y)
-static void flagChip(float x, float y, float w, float h)
-{
-	for (int i = 0; i < 4; i++) uiRect(x, y + i * h / 4, w, h / 4, flag[i]);
-}
-
 // Text with a chromatic glitch: purple and yellow ghosts a pixel off either side
 static float glitch(float x, float y, float scale, const char *s)
 {
@@ -329,9 +317,7 @@ void uiHeader(const char *title, const char *right)
 	snprintf(t, sizeof(t), "%s", title);
 	uiRect(0, 0, UI_W, 20, uiCol[COL_BAR]);
 	uiRect(0, 19, UI_W, 1, uiCol[COL_ACCENT]);
-	flagChip(0, 0, 5, 20);
-	float w = glitch(12, 2, S_BODY, uiFit(t, UI_W - 26 - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
-	if (frames / 30 % 2) uiRect(12 + w + 3, 5, 6, 11, flag[0]); // the prompt's cursor
+	glitch(6, 2, S_BODY, uiFit(t, UI_W - 12 - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
 	if (right) uiTextRight(UI_W - 6, 3, S_SMALL, uiCol[COL_DIM], "%s", right);
 }
 
@@ -339,7 +325,6 @@ void uiFooter(const char *h)
 {
 	uiRect(0, UI_H - 18, UI_W, 18, uiCol[COL_BAR]);
 	uiRect(0, UI_H - 18, UI_W, 1, uiCol[COL_SEL]);
-	uiRect(0, UI_H - 18, 40, 1, uiCol[COL_ACCENT]);
 	uiText(6, UI_H - 16, S_SMALL, uiCol[COL_DIM], "%s", h);
 	uiHints(h);
 }
@@ -347,7 +332,7 @@ void uiFooter(const char *h)
 void uiSel(float x, float y, float w, float h)
 {
 	uiRect(x, y, w, h, uiCol[COL_SEL]);
-	uiRect(x, y, 2, h, flag[0]);
+	uiRect(x, y, 2, h, uiCol[COL_CURSOR]);
 }
 
 void uiHints(const char *h)
@@ -368,9 +353,8 @@ float uiBox(float w, float h, const char *title)
 	uiRect(x, y, w, h, uiCol[COL_PANEL]);
 	uiRect(x, y, w, 18, uiCol[COL_BAR]);
 	uiRect(x, y + 18, w, 1, uiCol[COL_SEL]);
-	flagChip(x, y, 4, 18);
 	// targeting brackets on the corners
-	u32 c = flag[0];
+	u32 c = uiCol[COL_CURSOR];
 	float r = x + w, b = y + h, a = 9;
 	uiRect(x - 3, y - 3, a, 2, c), uiRect(x - 3, y - 3, 2, a, c);
 	uiRect(r + 3 - a, y - 3, a, 2, c), uiRect(r + 1, y - 3, 2, a, c);
@@ -378,7 +362,7 @@ float uiBox(float w, float h, const char *title)
 	uiRect(r + 3 - a, b + 1, a, 2, c), uiRect(r + 1, b + 3 - a, 2, a, c);
 	char t[128];
 	snprintf(t, sizeof(t), "%s", title);
-	glitch(x + 10, y + 1, S_BODY, uiFit(t, w - 16, S_BODY));
+	glitch(x + 6, y + 1, S_BODY, uiFit(t, w - 12, S_BODY));
 	return y + 22;
 }
 
