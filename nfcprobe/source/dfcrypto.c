@@ -1,4 +1,4 @@
-// DES / 3DES / AES-128, CBC, CMAC and CRC32 for DESFire, see dfcrypto.h.
+// DES / 3DES / AES (128 for DESFire, 192 / 256 for the Java Card), CBC, CMAC and CRC32, see dfcrypto.h.
 
 #include <string.h>
 
@@ -107,7 +107,7 @@ static u64 des(const u64 *sub, u64 b, bool enc)
 	return perm((u64)r << 32 | l, FP, 64, 64);
 }
 
-// --- AES-128 ---
+// --- AES ---
 
 static u8 sbox[256], isbox[256];
 
@@ -139,29 +139,32 @@ static void aesTables(void)
 	}
 }
 
-static void aesKey(u8 *rk, const u8 *key)
+// nk = key length in bytes (16 / 24 / 32): 16 * (nk / 4 + 7) bytes of round keys
+static void aesKey(u8 *rk, const u8 *key, int nk)
 {
-	memcpy(rk, key, 16);
+	memcpy(rk, key, nk);
 	u8 rcon = 1;
-	for (int i = 16; i < 176; i += 4) {
+	for (int i = nk; i < 16 * (nk / 4 + 7); i += 4) {
 		u8 t[4];
 		memcpy(t, rk + i - 4, 4);
-		if (!(i % 16)) {
+		if (!(i % nk)) {
 			u8 x = t[0];
 			t[0] = sbox[t[1]] ^ rcon, t[1] = sbox[t[2]], t[2] = sbox[t[3]], t[3] = sbox[x];
 			rcon = xtime(rcon);
+		} else if (nk == 32 && i % nk == 16) {
+			for (int k = 0; k < 4; k++) t[k] = sbox[t[k]];
 		}
-		for (int k = 0; k < 4; k++) rk[i + k] = rk[i - 16 + k] ^ t[k];
+		for (int k = 0; k < 4; k++) rk[i + k] = rk[i - nk + k] ^ t[k];
 	}
 }
 
-static void aesEnc(const u8 *rk, u8 *s)
+static void aesEnc(const u8 *rk, int nr, u8 *s)
 {
 	for (int i = 0; i < 16; i++) s[i] ^= rk[i];
-	for (int r = 1; r <= 10; r++) {
+	for (int r = 1; r <= nr; r++) {
 		u8 t[16];
 		for (int i = 0; i < 16; i++) t[i] = sbox[s[(i + 4 * (i % 4)) % 16]]; // SubBytes + ShiftRows
-		for (int c = 0; c < 4 && r < 10; c++) {
+		for (int c = 0; c < 4 && r < nr; c++) {
 			u8 *m = t + 4 * c, a = m[0] ^ m[1] ^ m[2] ^ m[3], m0 = m[0];
 			m[0] ^= a ^ xtime(m[0] ^ m[1]);
 			m[1] ^= a ^ xtime(m[1] ^ m[2]);
@@ -172,12 +175,12 @@ static void aesEnc(const u8 *rk, u8 *s)
 	}
 }
 
-static void aesDec(const u8 *rk, u8 *s)
+static void aesDec(const u8 *rk, int nr, u8 *s)
 {
-	for (int r = 10; r >= 1; r--) {
+	for (int r = nr; r >= 1; r--) {
 		u8 t[16];
 		for (int i = 0; i < 16; i++) t[i] = s[i] ^ rk[16 * r + i];
-		for (int c = 0; c < 4 && r < 10; c++) {
+		for (int c = 0; c < 4 && r < nr; c++) {
 			u8 *m = t + 4 * c, a = m[0], b = m[1], cc = m[2], d = m[3];
 			m[0] = gmul(a, 14) ^ gmul(b, 11) ^ gmul(cc, 13) ^ gmul(d, 9);
 			m[1] = gmul(a, 9) ^ gmul(b, 14) ^ gmul(cc, 11) ^ gmul(d, 13);
@@ -193,23 +196,23 @@ static void aesDec(const u8 *rk, u8 *s)
 
 u32 dfKeyLen(u8 type)
 {
-	return type == DF_DES ? 8 : type == DF_3K3DES ? 24 : 16;
+	return type == DF_DES ? 8 : type == DF_3K3DES || type == DF_AES192 ? 24 : type == DF_AES256 ? 32 : 16;
 }
 
 const char *dfKeyTypeName(u8 type)
 {
-	static const char *n[] = { "DES", "2K3DES", "3K3DES", "AES" };
-	return type < 4 ? n[type] : "?";
+	static const char *n[] = { "DES", "2K3DES", "3K3DES", "AES", "AES-192", "AES-256" };
+	return type < 6 ? n[type] : "?";
 }
 
 void dfCipherInit(DfCipher *c, u8 type, const u8 *key)
 {
 	memset(c, 0, sizeof(*c));
 	c->type = type;
-	c->bs = type == DF_AES ? 16 : 8;
-	if (type == DF_AES) {
+	c->bs = type >= DF_AES ? 16 : 8;
+	if (type >= DF_AES) {
 		aesTables();
-		aesKey(c->rk, key);
+		aesKey(c->rk, key, dfKeyLen(type));
 		return;
 	}
 	desKey(c->sub[0], key);
@@ -219,9 +222,10 @@ void dfCipherInit(DfCipher *c, u8 type, const u8 *key)
 
 void dfBlock(const DfCipher *c, u8 *b, bool enc)
 {
-	if (c->type == DF_AES) {
-		if (enc) aesEnc(c->rk, b);
-		else aesDec(c->rk, b);
+	if (c->type >= DF_AES) {
+		int nr = dfKeyLen(c->type) / 4 + 6;
+		if (enc) aesEnc(c->rk, nr, b);
+		else aesDec(c->rk, nr, b);
 		return;
 	}
 	u64 v = load64(b);

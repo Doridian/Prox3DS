@@ -5,7 +5,7 @@ SRC     := fake.c hw.c scenes.c hook_app.c hook_mfui.c hook_editor.c hook_mfuui.
            ../source/ui.c ../source/mfc.c ../source/mfu.c ../source/desfire.c ../source/isodep.c \
            ../source/crypto1.c ../source/crapto1.c ../source/par.c ../source/dfcrypto.c ../source/entry.c ../source/nxpsig.c ../source/aidnames.c ../source/mfukeys.c ../source/mfckeys.c ../source/mfcinfo.c ../source/ndef.c ../source/madnames.c \
            ../source/iso7816.c ../source/scard.c ../source/gp.c ../source/zip.c ../source/sha1.c ../source/oath.c ../source/emv.c ../source/iclass.c ../source/iclassdict.c ../source/pm3dict.c ../source/iclasskeys.c ../source/amiibodb.c ../source/emu.c ../source/dumplist.c ../source/dfemu.c \
-           ../source/jcvm.c ../source/jcapi.c ../source/jccard.c ../source/jcapitab.c
+           ../source/jcvm.c ../source/jcapi.c ../source/jccard.c ../source/jcapitab.c ../source/jccrypto.c ../source/bn.c ../source/ecc.c
 OUT     := out
 
 uisim: $(SRC) $(wildcard *.h include/*.h ../source/*.h ../source/*.c)

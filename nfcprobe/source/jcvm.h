@@ -156,6 +156,10 @@ static inline u32 jcObjSize(const JcObj *o)
 	return (u32)o->len * (o->type == JT_SHORT || o->type == JT_REF ? 2 : o->type == JT_INT ? 4 : 1);
 }
 void *jcNat(JcVm *vm, u16 h); // an object's native state
+// For natives (jcapi.c): a[off .. off + len) of a byte (or boolean) array, NULL after throwing; jcPut copies
+// into one (atomic: through the transaction journal), false after throwing.
+u8 *jcBytes(JcVm *vm, u16 h, s16 off, s16 len);
+bool jcPut(JcVm *vm, u16 h, s16 off, const u8 *src, s16 len, bool atomic);
 bool jcSubclass(JcVm *vm, int cls, int of);
 bool jcInstanceOf(JcVm *vm, u16 h, int cls);
 
@@ -177,6 +181,8 @@ void jcBeginTransaction(JcVm *vm);
 void jcCommit(JcVm *vm);
 void jcAbort(JcVm *vm);
 void jcClearTransients(JcVm *vm, u8 event);
+void jcClearObj(JcObj *o); // a transient object's contents (an instance: its native state, jcNatClear)
 
-// The native state size of an API class's instances (jcapi.c).
+// The native state size of an API class's instances, and clearing a transient one (a transient key) (jcapi.c).
 u16 jcNatSize(int apiCls);
+void jcNatClear(int apiCls, void *nat);

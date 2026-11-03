@@ -207,7 +207,7 @@ static void chipStats(const u8 *p, u32 len)
 // Listens as emu.id until mfCancel; APDUs go to fn, or (fn NULL, chipBase) the chip answers by itself.
 static bool listenAs(EmuApdu fn)
 {
-	static u8 cmd[0x400], resp[0x200];
+	static u8 cmd[0x800], resp[0x810]; // Java Card extended APDUs (jccard.h JC_EXT)
 	u8 pkt[4 + 0x100];
 	const EmuId *e = &emu.id;
 	// LA_BIT_FRAME_SDD and LA_PLATFORM_CONFIG: the ATQA (the ROM adds the UID size bits), LA_SEL_INFO: the

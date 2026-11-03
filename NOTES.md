@@ -1866,3 +1866,39 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   natively in C: PUT + CALCULATE at T=1 -> 94287082 (RFC 6238), LIST; TestApplet + VmTest + OATH installed
   together and selected in turn in one session. After an app restart (card.bin restored) the OATH
   credential is still there and calculates the same, and the CLEAR_ON_RESET / DESELECT arrays read 0.
+
+## Java Card VM, step 3: crypto natives (jccrypto.c, bn.c, ecc.c) -- 2026-11-03
+- jccrypto.c: keys (KeyBuilder incl. the 3.0.4 buildKey(algType, memType, ..), transient keys cleared on
+  reset / deselect and restore via jcNatClear), KeyPair (RSA, RSA CRT, EC FP; EC without a curve: UNINITIALIZED_KEY, as the card),
+  Cipher, Signature, KeyAgreement, MessageDigest (moved from jcapi.c). The J3H145's algorithm set exactly
+  (the rest: NO_SUCH_ALGORITHM), its error reasons, its quirks: zero IV after doFinal / sign, M2 decrypt
+  drops a last block without 80, update() returns whole blocks (padded decrypt keeps the last one back),
+  PSS verify only with salt = hash length. KeyAgreement 5 / 6 of 3.0.5, which the card has: ALG_EC_PACE_GM
+  = d * G + the public data (TR-03110 generic mapping, the private key as the nonce: found by trying on the
+  card), ALG_EC_SVDP_DH_PLAIN_XY = the shared point 04 x y. Signature 9 ALG_RSA_SHA_ISO9796: ISO 9796-2
+  scheme 1, SHA-1, laid out as Bouncy Castle's ISO9796d2Signer (4B BB..BA M H BC full recovery, 6A M1 H BC
+  partial; tools/exp/cprobe/iso9796.py): the card's signatures are byte for byte the same.
+- bn.c: 32-bit limbs, 66 of them (RSA-2048, a product of 1024-bit primes), Montgomery (CIOS), 4-bit window
+  exponentiation, CRT, Miller-Rabin primes, e^-1 mod m for a small prime e. ecc.c: any prime curve the
+  applet gives (to 521 bits), Jacobian, ECDSA (DER), ECDH, key pairs. Not constant time; big temporaries
+  static (the VM is one thread, functions stay under 2 KB of stack). nxpsig.c has its own small EC code
+  (could use ecc.c). dfcrypto: AES-192 / 256 added (DF_AES192 / DF_AES256; DESFire uses DF_AES only).
+- gen_jcapi.py: a constructor and an init(...) method of the same class (KeyAgreement) got the same C name;
+  they are told apart like overloads now (jn_security_KeyAgreement_init_PrivateKey, ..._init_V).
+- Extended APDUs (jccard.c, JC_EXT 2048): only for applets implementing javacardx.apdu.ExtendedLength (else
+  6700); offsetCdata 7; receive at most 255 bytes a time and BUFFER_BOUNDS when they don't fit (as the
+  card); Le up to 32767. getProtocol was 0x91 (type B): 0x81 now, getOutBlockSize 0xFC (the card's).
+  emu.c buffers 0x800 / 0x810.
+- Host: the sim's u32 is unsigned long: build anything with it -m32 (as tools/exp/jcvm/build.sh). vm.py runs
+  cases.txt through jch and compares with j3h145.txt: 544 the same, 13 random (all verified by check.py),
+  30 new cases without card answers yet (ISO 9796-2, genKeyPair). check.py on the VM's answers: 265 OK, 0 DIFF.
+- On the 3DS (pm3 on it, dspm-cprobe.cap installed next to VmTest / OATH / TestApplet): all 587 cases in 39 s
+  (the card: ~8 min), answers in tools/exp/cprobe/3ds.txt: the same as the J3H145's on all 544 it has, the
+  13 random ones verified, the 30 new ones the same as the host VM's (genKeyPair incl. RSA-2048 passes the
+  applet's own sign / verify). One answer lost once on the air (asked again: fine). VmTest and OATH still
+  right in the same session (VmTest test 5 changes its statics each run: the 3DS's third run = the host's).
+- The J3H145 again (2026-11-03 later): the new cases (ISO 9796-2, KeyAgreement 5 / 6, genKeyPair incl. EC
+  with P-256 set) run there too: j3h145.txt has all 590. Host VM vs card: 573 the same, 17 random (verified);
+  check.py: 267 OK, 0 DIFF on both. PACE_GM and the EC key pair without a curve were wrong in the VM before
+  that (fixed). 3ds.txt is from the run before those two fixes. The card sometimes misses the first
+  APDU of a gpload.py run ("no answer"): run it again.

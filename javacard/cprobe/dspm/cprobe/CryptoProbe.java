@@ -18,6 +18,7 @@ import javacard.security.HMACKey;
 import javacard.security.Key;
 import javacard.security.KeyAgreement;
 import javacard.security.KeyBuilder;
+import javacard.security.KeyPair;
 import javacard.security.MessageDigest;
 import javacard.security.PrivateKey;
 import javacard.security.RSAPrivateCrtKey;
@@ -50,6 +51,8 @@ import javacardx.crypto.Cipher;
  * 80 36 P1 00 b2   KeyBuilder.buildKey(P1, bits, false): size(2) type(1) initialized(1), after setKey(00..)
  *                  initialized(1) getKey
  * 80 37 00 00     KeyAgreement: alg | private key | public point -> secret
+ * 80 38 P1 00 b2   KeyPair(P1, bits).genKeyPair(): verify(1) of a signature over 32 bytes (in) made with
+ *                  it, then the public key (RSA modulus / EC W). EC: a curve after the 32 bytes is set first
  * key = keyType(1) keyBits(2) keyLen(2) key; RSA: modLen(2) modulus exponent; RSA CRT: P Q DP1 DQ1 PQ,
  * each len(2) value; EC (FP): p a b G r W-or-S, each len(2) value (cofactor 1). A CryptoException while
  * making the key: 64kr, k = 1 buildKey, 2 setKey / modulus / P / field, 3 exponent / Q / A, 4.. the rest.
@@ -216,6 +219,39 @@ public class CryptoProbe extends Applet implements ExtendedLength {
         n = a.generateSecret(in, p, len, out, (short) 0);
     }
 
+    // KeyPair(alg, bits).genKeyPair(), then a signature over in[] with the private key checked with the
+    // public one: 1 byte verify result, then the public key (RSA: modulus, EC: W)
+    private void pair(byte alg) {
+        short bits = Util.getShort(in, (short) 0);
+        KeyPair kp = new KeyPair(alg, bits);
+        if (n > 32) { // a curve after the 32 bytes: p a b G r (each len(2) value) on both keys
+            p = 32;
+            for (byte i = 0; i < 5; i++) {
+                short l = u16();
+                for (byte w = 0; w < 2; w++) {
+                    ECKey e = (ECKey) (w == 0 ? (Object) kp.getPublic() : (Object) kp.getPrivate());
+                    switch (i) {
+                    case 0: e.setFieldFP(in, p, l); break;
+                    case 1: e.setA(in, p, l); break;
+                    case 2: e.setB(in, p, l); break;
+                    case 3: e.setG(in, p, l); break;
+                    case 4: e.setR(in, p, l); e.setK((short) 1); break;
+                    }
+                }
+                p += l;
+            }
+        }
+        kp.genKeyPair();
+        Signature s = Signature.getInstance(alg == KeyPair.ALG_EC_FP ? Signature.ALG_ECDSA_SHA_256
+                : Signature.ALG_RSA_SHA_256_PKCS1, false);
+        s.init(kp.getPrivate(), Signature.MODE_SIGN);
+        short sl = s.sign(in, (short) 0, (short) 32, out, (short) 600);
+        s.init(kp.getPublic(), Signature.MODE_VERIFY);
+        out[0] = (byte) (s.verify(in, (short) 0, (short) 32, out, (short) 600, sl) ? 1 : 0);
+        if (alg == KeyPair.ALG_EC_FP) n = (short) (1 + ((ECPublicKey) kp.getPublic()).getW(out, (short) 1));
+        else n = (short) (1 + ((RSAPublicKey) kp.getPublic()).getModulus(out, (short) 1));
+    }
+
     private void digest(byte flags) {
         byte alg = in[p++];
         short split = u16();
@@ -270,6 +306,7 @@ public class CryptoProbe extends Applet implements ExtendedLength {
             case 0x32: signature(p2); break;
             case 0x33: digest(p2); break;
             case 0x37: agree(); break;
+            case 0x38: pair(p1); break;
             case 0x34:
                 Util.setShort(out, (short) 0, apdu.getIncomingLength());
                 Util.setShort(out, (short) 2, cd);

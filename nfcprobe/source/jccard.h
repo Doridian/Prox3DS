@@ -7,7 +7,8 @@
 
 #define JC_DIR   "sdmc:/nfcprobe/jc"
 #define JC_STATE JC_DIR "/card.bin"
-#define JC_BUF   261 // APDU buffer: header + 255 bytes + Le, as JCOP
+#define JC_BUF   261  // APDU buffer: header + 255 bytes + Le, as JCOP
+#define JC_EXT   2048 // the longest command / response (extended length, applets with ExtendedLength)
 
 typedef struct {
 	u8 aid[16], aidLen;
@@ -26,10 +27,11 @@ typedef struct {
 	s8 installPkg;
 	// the APDU being processed
 	u16 apdu, buf; // the APDU object and its buffer (system-owned)
-	u8 cmd[JC_BUF];
-	u16 cmdLen, lc, le, received;
+	u8 cmd[JC_EXT];
+	u16 cmdLen, lc, le, received, cdata; // cdata: 5, or 7 (extended)
 	u8 state; // APDU.STATE_*
-	u8 out[256];
+	bool ext; // extended length
+	u8 out[JC_EXT];
 	u16 outLen, outExpected;
 	bool dirty; // persistent memory may have changed since the last save
 	u32 apdus;

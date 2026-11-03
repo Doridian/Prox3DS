@@ -11,9 +11,9 @@ int main(int argc, char **argv)
 	jcCardInit();
 	for (int i = 1; i < argc; i++)
 		if (jcCardInstallCap(argv[i]) < 0) return printf("install %s: %s\n", argv[i], jcCard.vm.why), 1;
-	char line[2048];
+	char line[8192];
 	while (fgets(line, sizeof(line), stdin)) {
-		u8 c[1024], r[1024];
+		u8 c[4096], r[4096];
 		u32 n = 0;
 		unsigned x;
 		line[strcspn(line, "\r\n")] = 0;

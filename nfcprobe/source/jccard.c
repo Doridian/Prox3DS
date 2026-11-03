@@ -202,11 +202,20 @@ u32 jcCardApdu(const u8 *cmd, u32 len, u8 *resp, u32 max)
 		jcCardReset();
 		return 0;
 	}
-	if (len < 4 || max < 2) return sw(resp, 0, 0x6700);
-	if (len > JC_BUF) return sw(resp, 0, 0x6700); // extended length: not yet
+	if (len < 4 || max < 2 || len > JC_EXT) return sw(resp, 0, 0x6700);
 	memcpy(c->cmd, cmd, len);
 	c->cmdLen = len, c->lc = 0, c->le = 256, c->received = 0, c->state = 0, c->outLen = c->outExpected = 0;
-	if (len > 5) {
+	c->cdata = 5, c->ext = len >= 7 && !cmd[4];
+	if (c->ext) { // 00 Lc(2) data [Le(2)], or 00 Le(2)
+		c->cdata = 7;
+		u32 n = cmd[5] << 8 | cmd[6];
+		if (len > 7) {
+			c->lc = n;
+			if (!n || (len != 7 + n && len != 9 + n)) return sw(resp, 0, 0x6700);
+			n = len == 9 + n ? cmd[7 + n] << 8 | cmd[8 + n] : 0;
+		}
+		c->le = !n || n > 32767 ? 32767 : n; // setOutgoing() is a short
+	} else if (len > 5) {
 		c->lc = cmd[4];
 		if (len < 5u + c->lc) return sw(resp, 0, 0x6700);
 		if (len > 5u + c->lc) c->le = cmd[5 + c->lc] ? cmd[5 + c->lc] : 256;
@@ -215,7 +224,7 @@ u32 jcCardApdu(const u8 *cmd, u32 len, u8 *resp, u32 max)
 	}
 	JcObj *b = jcObj(&c->vm, c->buf);
 	memset(b->data, 0, JC_BUF);
-	memcpy(b->data, cmd, len < 5 ? len : 5);
+	memcpy(b->data, cmd, len < c->cdata ? len : c->cdata);
 	c->apdus++;
 	c->selecting = c->reselecting = false;
 	if ((cmd[0] & 0xFC) == 0 && cmd[1] == 0xA4 && cmd[2] == 0x04 && len >= 5) {
@@ -233,6 +242,8 @@ u32 jcCardApdu(const u8 *cmd, u32 len, u8 *resp, u32 max)
 		}
 	}
 	if (c->selected < 0) return sw(resp, 0, 0x6D00);
+	if (c->ext && !jcInstanceOf(&c->vm, c->applets[(int)c->selected].obj, JCC_x_apdu_ExtendedLength))
+		return sw(resp, 0, 0x6700);
 	c->dirty = true;
 	u16 s = 0x9000;
 	int r = invoke(TOK_PROCESS, c->selected, NULL);
@@ -362,7 +373,7 @@ bool jcCardRestore(void)
 		}
 		o.cls = cls;
 		if (ok) {
-			if (o.flags & (JO_RESET | JO_DESELECT)) memset(o.data, 0, size);
+			if (o.flags & (JO_RESET | JO_DESELECT)) jcClearObj(&o);
 			vm->objs[h - 1] = o;
 		} else {
 			free(o.data);

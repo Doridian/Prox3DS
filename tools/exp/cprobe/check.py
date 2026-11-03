@@ -2,6 +2,7 @@
 reference, DIFF = not, SW = an error status (listed as is), INFO = no reference (random, probes, keys).
     python3 check.py j3h145.txt [-v]"""
 import hashlib
+import os
 import struct
 import sys
 
@@ -9,6 +10,9 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import iso9796  # noqa: E402
 
 
 class R:
@@ -147,7 +151,7 @@ def pkcs1_sig(n, d, h, msg):
     return rsa_priv(n, d)(em)
 
 
-def ref(ins, p2, b):
+def ref(ins, p2, b, p1=0):
     """The expected answer (bytes), a list of acceptable answers, or None when there is no reference."""
     r = R(b)
     if ins == 0x33:
@@ -189,6 +193,10 @@ def ref(ins, p2, b):
             ml = r.u16()
             msg = r.take(ml)
             sig = b[r.p:]
+            if kt in (4, 5) and alg == 9:
+                n, e = k
+                em = pow(int.from_bytes(sig, "big"), e, n).to_bytes((n.bit_length() + 7) // 8, "big")
+                return b"\x01" if em == iso9796.encode(msg, n.bit_length()) else b"\x00"
             if kt in (4, 5) and alg in (21, 44):
                 return None  # PSS verify: the answers are checked against Python's own result below
             if kt in (4, 5) and alg in RSAH:
@@ -203,6 +211,10 @@ def ref(ins, p2, b):
         d = b[r.p:]
         if kt == 12 or alg in (21, 44):
             return ("verify", alg, kt, k, d)
+        if kt in (5, 6) and alg == 9:
+            n, dd = k
+            s = iso9796.sign(dd, n, d)
+            return s + s if p2 & 1 else s
         if kt in (5, 6) and alg in RSAH:
             n, dd = k
             s = pkcs1_sig(n, dd, RSAH[alg], d)
@@ -211,6 +223,8 @@ def ref(ins, p2, b):
             m = mac(alg, k, iv, d)
             # a second sign without init starts from a zero IV (the J3H145; the spec says the init state)
             return m + mac(alg, k, b"", d) if p2 & 1 else m
+    if ins == 0x38:
+        return ("pair", p1, struct.unpack(">H", b[:2])[0])
     if ins == 0x37:
         alg = r.u8()
         kt, k = key(r)
@@ -223,9 +237,38 @@ def ec_parts(k):
     return [r.take(r.u16()) for _ in range(6)]
 
 
+P256 = 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF
+
+
+def pt_add(g, q, d):
+    """d * g + q on P-256 (affine, plain Python: cryptography has no point arithmetic)."""
+    p, a = P256, P256 - 3
+
+    def add(P, Q):
+        if P is None:
+            return Q
+        if Q is None:
+            return P
+        if P[0] == Q[0] and (P[1] + Q[1]) % p == 0:
+            return None
+        lam = (3 * P[0] * P[0] + a) * pow(2 * P[1], -1, p) if P == Q else (Q[1] - P[1]) * pow(Q[0] - P[0], -1, p)
+        x = (lam * lam - P[0] - Q[0]) % p
+        return x, (lam * (P[0] - x) - P[1]) % p
+    r = None
+    while d:
+        if d & 1:
+            r = add(r, g)
+        g = add(g, g)
+        d >>= 1
+    return add(r, q)
+
+
 def check_special(e, data):
     """Random signatures (verified with the public key) and ECDH; True / False."""
     from cryptography.hazmat.primitives.asymmetric import ec
+    if e[0] == "pair":  # the applet's own check passed, the public key is as long as it should be
+        _, alg, bits = e
+        return data[0] == 1 and len(data) == 1 + (1 + 2 * ((bits + 7) // 8) if alg == 5 else bits // 8)
     if e[0] == "verify":
         _, alg, kt, k, d = e
         if kt == 12:
@@ -246,7 +289,14 @@ def check_special(e, data):
             return False
     _, alg, k, pt = e
     priv = ec.derive_private_key(int.from_bytes(ec_parts(k)[5], "big"), ec.SECP256R1())
-    x = priv.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), pt))
+    q = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), pt)
+    x = priv.exchange(ec.ECDH(), q)
+    if alg == 5:  # PACE generic mapping, the J3H145's: d * G + the public data
+        G = ec.derive_private_key(1, ec.SECP256R1()).public_key().public_numbers()
+        r = pt_add((G.x, G.y), (q.public_numbers().x, q.public_numbers().y), d=priv.private_numbers().private_value)
+        return data == b"\x04" + r[0].to_bytes(32, "big") + r[1].to_bytes(32, "big")
+    if alg == 6:  # the shared point
+        return len(data) == 65 and data[0] == 4 and data[1:33] == x
     return data == (x if alg in (3, 4) else hashlib.sha1(x).digest())
 
 
@@ -263,7 +313,7 @@ for line in open(sys.argv[1]):
         counts["SW"] = counts.get("SW", 0) + 1
         continue
     try:
-        e = ref(a[1], a[3], body(a))
+        e = ref(a[1], a[3], body(a), a[2])
     except Exception as x:
         e = None
         print("refErr", label, x)

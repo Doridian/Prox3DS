@@ -455,11 +455,17 @@ void jcStore(JcVm *vm, u16 h, u32 off, const void *v, u8 len)
 	memcpy(o->data + off, v, len);
 }
 
+void jcClearObj(JcObj *o)
+{
+	if (o->type == JT_INSTANCE) jcNatClear(o->cls, o->data + jcNatOff(o->len));
+	else memset(o->data, 0, (u32)elemSize(o->type) * o->len);
+}
+
 void jcClearTransients(JcVm *vm, u8 event)
 {
 	for (int i = 0; i < JC_OBJS; i++) {
 		JcObj *o = &vm->objs[i];
-		if (o->data && o->flags & event) memset(o->data, 0, (u32)elemSize(o->type) * o->len);
+		if (o->data && o->flags & event) jcClearObj(o);
 	}
 }
 

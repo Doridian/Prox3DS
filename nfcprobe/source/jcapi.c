@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include "jccard.h"
-#include "sha1.h"
+#include "jccrypto.h"
 
 #define CARD ((JcCard *)vm->card)
 #define S(i) ((s16)a[i])
@@ -16,7 +16,7 @@
 // --- helpers ---
 
 // a[off .. off + len) of a byte (or boolean) array; NULL after throwing.
-static u8 *bytes(JcVm *vm, u16 h, s16 off, s16 len)
+u8 *jcBytes(JcVm *vm, u16 h, s16 off, s16 len)
 {
 	JcObj *o = jcObj(vm, h);
 	if (!o) return jcThrow(vm, JCC_lang_NullPointerException, 0), NULL;
@@ -26,9 +26,9 @@ static u8 *bytes(JcVm *vm, u16 h, s16 off, s16 len)
 }
 
 // Copies into a byte array; atomic: through the transaction journal (persistent arrays).
-static bool put(JcVm *vm, u16 h, s16 off, const u8 *src, s16 len, bool atomic)
+bool jcPut(JcVm *vm, u16 h, s16 off, const u8 *src, s16 len, bool atomic)
 {
-	u8 *d = bytes(vm, h, off, len);
+	u8 *d = jcBytes(vm, h, off, len);
 	if (!d) return false;
 	if (atomic) {
 		for (s16 i = 0; i < len; i += 4) jcStore(vm, h, off + i, src + i, len - i < 4 ? len - i : 4);
@@ -55,21 +55,17 @@ typedef struct {
 	u8 pin[32];
 } NatPin;
 
-typedef struct {
-	u8 alg;
-	union {
-		Sha1 s1;
-		Sha256 s256;
-	};
-} NatDigest;
-
 u16 jcNatSize(int c)
 {
 	if (isA(c, JCC_framework_CardException) || isA(c, JCC_framework_CardRuntimeException)) return 2;
 	if (c == JCC_framework_AID) return sizeof(NatAid);
 	if (c == JCC_framework_OwnerPIN) return sizeof(NatPin);
-	if (c == JCC_security_MessageDigest) return sizeof(NatDigest);
-	return 0;
+	return jcCryptoNatSize(c);
+}
+
+void jcNatClear(int c, void *nat)
+{
+	jcCryptoNatClear(c, nat);
 }
 
 // --- java.lang ---
@@ -179,7 +175,7 @@ int jn_framework_Applet_register_V(JcVm *vm, u16 *a)
 
 int jn_framework_Applet_register_aBSB(JcVm *vm, u16 *a)
 {
-	u8 *d = bytes(vm, a[1], S(2), (s8)a[3]);
+	u8 *d = jcBytes(vm, a[1], S(2), (s8)a[3]);
 	return d ? registerAs(vm, a[0], d, (s8)a[3]) : -1;
 }
 
@@ -234,28 +230,31 @@ int jn_framework_APDU_getCurrentAPDUBuffer(JcVm *vm, u16 *a)
 	RET(CARD->buf);
 }
 
-static int receive(JcVm *vm, u16 *a, s16 off)
+// The next block of the command data into the buffer at off: at most 255 bytes (what is left), which must
+// fit (as the J3H145: an extended APDU's next blocks go at 0, at offsetCdata they don't).
+static int receive(JcVm *vm, u16 *a, s16 off, s16 max)
 {
 	JcCard *c = CARD;
 	s16 n = c->lc - c->received;
+	if (n > max) n = max;
 	if (off < 0 || off + n > JC_BUF) return apduErr(vm, AE_BUFFER_BOUNDS);
-	memcpy(jcObj(vm, c->buf)->data + off, c->cmd + 5 + c->received, n);
-	c->received = c->lc;
-	c->state = ST_FULL_INCOMING;
+	memcpy(jcObj(vm, c->buf)->data + off, c->cmd + c->cdata + c->received, n);
+	c->received += n;
+	c->state = c->received == c->lc ? ST_FULL_INCOMING : ST_PARTIAL_INCOMING;
 	RET(n);
 }
 
 int jn_framework_APDU_setIncomingAndReceive(JcVm *vm, u16 *a)
 {
 	if (CARD->state != ST_INITIAL) return apduErr(vm, AE_ILLEGAL_USE);
-	return receive(vm, a, 5);
+	return receive(vm, a, CARD->cdata, JC_BUF - CARD->cdata);
 }
 
 int jn_framework_APDU_receiveBytes(JcVm *vm, u16 *a)
 {
 	u8 st = CARD->state;
 	if (st != ST_PARTIAL_INCOMING && st != ST_FULL_INCOMING) return apduErr(vm, AE_ILLEGAL_USE);
-	return receive(vm, a, S(1));
+	return receive(vm, a, S(1), 255);
 }
 
 int jn_framework_APDU_getIncomingLength(JcVm *vm, u16 *a)
@@ -265,7 +264,7 @@ int jn_framework_APDU_getIncomingLength(JcVm *vm, u16 *a)
 
 int jn_framework_APDU_getOffsetCdata(JcVm *vm, u16 *a)
 {
-	RET(5);
+	RET(CARD->cdata);
 }
 
 int jn_framework_APDU_setOutgoing(JcVm *vm, u16 *a)
@@ -284,7 +283,7 @@ int jn_framework_APDU_setOutgoingLength(JcVm *vm, u16 *a)
 {
 	JcCard *c = CARD;
 	if (c->state != ST_OUTGOING) return apduErr(vm, AE_ILLEGAL_USE);
-	if (S(1) < 0 || S(1) > 256) return apduErr(vm, AE_BAD_LENGTH);
+	if (S(1) < 0 || S(1) > (c->ext ? JC_EXT - 2 : 256)) return apduErr(vm, AE_BAD_LENGTH);
 	c->outExpected = S(1);
 	c->state = ST_OUTGOING_LENGTH_KNOWN;
 	return 0;
@@ -309,7 +308,7 @@ int jn_framework_APDU_sendBytes(JcVm *vm, u16 *a)
 
 int jn_framework_APDU_sendBytesLong(JcVm *vm, u16 *a)
 {
-	u8 *d = bytes(vm, a[1], S(2), S(3));
+	u8 *d = jcBytes(vm, a[1], S(2), S(3));
 	return d ? apduSend(vm, d, S(3)) : -1;
 }
 
@@ -363,12 +362,12 @@ int jn_framework_APDU_getInBlockSize(JcVm *vm, u16 *a)
 
 int jn_framework_APDU_getOutBlockSize(JcVm *vm, u16 *a)
 {
-	RET(0xFE);
+	RET(0xFC); // the J3H145's
 }
 
 int jn_framework_APDU_getProtocol(JcVm *vm, u16 *a)
 {
-	RET((s8)0x91); // PROTOCOL_MEDIA_CONTACTLESS_TYPE_A | PROTOCOL_T1
+	RET((s8)0x81); // PROTOCOL_MEDIA_CONTACTLESS_TYPE_A | PROTOCOL_T1
 }
 
 int jn_framework_APDU_waitExtension(JcVm *vm, u16 *a)
@@ -483,7 +482,7 @@ int jn_framework_JCSystem_getPreviousContextAID(JcVm *vm, u16 *a)
 
 int jn_framework_JCSystem_lookupAID(JcVm *vm, u16 *a)
 {
-	u8 *d = bytes(vm, a[0], S(1), (s8)a[2]);
+	u8 *d = jcBytes(vm, a[0], S(1), (s8)a[2]);
 	if (!d) return -1;
 	JcCard *c = CARD;
 	for (int i = 0; i < c->napplets; i++)
@@ -516,7 +515,7 @@ int jn_framework_JCSystem_getAssignedChannel(JcVm *vm, u16 *a)
 
 int jn_framework_Util_arrayCompare(JcVm *vm, u16 *a)
 {
-	u8 *x = bytes(vm, a[0], S(1), S(4)), *y = x ? bytes(vm, a[2], S(3), S(4)) : NULL;
+	u8 *x = jcBytes(vm, a[0], S(1), S(4)), *y = x ? jcBytes(vm, a[2], S(3), S(4)) : NULL;
 	if (!y) return -1;
 	for (s16 i = 0; i < S(4); i++)
 		if (x[i] != y[i]) RET((s8)x[i] < (s8)y[i] ? -1 : 1);
@@ -525,8 +524,8 @@ int jn_framework_Util_arrayCompare(JcVm *vm, u16 *a)
 
 static int copy(JcVm *vm, u16 *a, bool atomic)
 {
-	u8 *src = bytes(vm, a[0], S(1), S(4));
-	if (!src || !jcObj(vm, a[2]) || !put(vm, a[2], S(3), src, S(4), atomic)) {
+	u8 *src = jcBytes(vm, a[0], S(1), S(4));
+	if (!src || !jcObj(vm, a[2]) || !jcPut(vm, a[2], S(3), src, S(4), atomic)) {
 		if (!vm->exc) jcThrow(vm, JCC_lang_NullPointerException, 0);
 		return -1;
 	}
@@ -545,7 +544,7 @@ int jn_framework_Util_arrayCopyNonAtomic(JcVm *vm, u16 *a)
 
 int jn_framework_Util_arrayFillNonAtomic(JcVm *vm, u16 *a)
 {
-	u8 *d = bytes(vm, a[0], S(1), S(2));
+	u8 *d = jcBytes(vm, a[0], S(1), S(2));
 	if (!d) return -1;
 	memset(d, (u8)a[3], S(2));
 	RET(S(1) + S(2));
@@ -553,7 +552,7 @@ int jn_framework_Util_arrayFillNonAtomic(JcVm *vm, u16 *a)
 
 int jn_framework_Util_getShort(JcVm *vm, u16 *a)
 {
-	u8 *d = bytes(vm, a[0], S(1), 2);
+	u8 *d = jcBytes(vm, a[0], S(1), 2);
 	if (!d) return -1;
 	RET(d[0] << 8 | d[1]);
 }
@@ -566,7 +565,7 @@ int jn_framework_Util_makeShort(JcVm *vm, u16 *a)
 int jn_framework_Util_setShort(JcVm *vm, u16 *a)
 {
 	u8 v[2] = { a[2] >> 8, a[2] };
-	if (!put(vm, a[0], S(1), v, 2, true)) return -1;
+	if (!jcPut(vm, a[0], S(1), v, 2, true)) return -1;
 	RET(S(1) + 2);
 }
 
@@ -575,7 +574,7 @@ int jn_framework_Util_setShort(JcVm *vm, u16 *a)
 int jn_framework_AID_init(JcVm *vm, u16 *a)
 {
 	s8 n = a[3];
-	u8 *d = bytes(vm, a[1], S(2), n);
+	u8 *d = jcBytes(vm, a[1], S(2), n);
 	if (!d) return -1;
 	if (n < 5 || n > 16) return jcThrow(vm, JCC_framework_SystemException, 1);
 	NatAid *x = jcNat(vm, a[0]);
@@ -596,7 +595,7 @@ int jn_framework_AID_equals_aBSB(JcVm *vm, u16 *a)
 {
 	NatAid *x = jcNat(vm, a[0]);
 	if (!a[1]) RET(0);
-	u8 *d = bytes(vm, a[1], S(2), (s8)a[3]);
+	u8 *d = jcBytes(vm, a[1], S(2), (s8)a[3]);
 	if (!d) return -1;
 	RET(x->len == (s8)a[3] && !memcmp(x->aid, d, x->len));
 }
@@ -605,7 +604,7 @@ int jn_framework_AID_partialEquals(JcVm *vm, u16 *a)
 {
 	NatAid *x = jcNat(vm, a[0]);
 	if (!a[1]) RET(0);
-	u8 *d = bytes(vm, a[1], S(2), (s8)a[3]);
+	u8 *d = jcBytes(vm, a[1], S(2), (s8)a[3]);
 	if (!d) return -1;
 	RET((s8)a[3] <= x->len && !memcmp(x->aid, d, (s8)a[3]));
 }
@@ -620,7 +619,7 @@ int jn_framework_AID_RIDEquals(JcVm *vm, u16 *a)
 int jn_framework_AID_getBytes(JcVm *vm, u16 *a)
 {
 	NatAid *x = jcNat(vm, a[0]);
-	if (!put(vm, a[1], S(2), x->aid, x->len, true)) return -1;
+	if (!jcPut(vm, a[1], S(2), x->aid, x->len, true)) return -1;
 	RET(x->len);
 }
 
@@ -630,7 +629,7 @@ int jn_framework_AID_getPartialBytes(JcVm *vm, u16 *a)
 	s16 from = S(1), n = (s8)a[4];
 	if (from < 0 || from > x->len) return jcThrow(vm, JCC_lang_ArrayIndexOutOfBoundsException, 0);
 	if (!n || n > x->len - from) n = x->len - from;
-	if (!put(vm, a[2], S(3), x->aid + from, n, true)) return -1;
+	if (!jcPut(vm, a[2], S(3), x->aid + from, n, true)) return -1;
 	RET(n);
 }
 
@@ -673,7 +672,7 @@ int jn_framework_OwnerPIN_check(JcVm *vm, u16 *a)
 	validated(vm, p)[0] = 0;
 	if (!p->tries) RET(0);
 	s8 n = a[3];
-	u8 *d = bytes(vm, a[1], S(2), n);
+	u8 *d = jcBytes(vm, a[1], S(2), n);
 	if (!d) return -1;
 	u8 t = p->tries - 1;
 	pinSet(vm, a[0], offsetof(NatPin, tries), &t, 1); // counted before the compare
@@ -729,7 +728,7 @@ int jn_framework_OwnerPIN_update(JcVm *vm, u16 *a)
 {
 	NatPin *p = pinOf(vm, a[0]);
 	s8 n = a[3];
-	u8 *d = bytes(vm, a[1], S(2), n);
+	u8 *d = jcBytes(vm, a[1], S(2), n);
 	if (!p || !d) return -1;
 	if (n > p->size) return jcThrow(vm, JCC_framework_PINException, 1);
 	u8 len = n;
@@ -760,66 +759,7 @@ int jn_framework_PIN_reset(JcVm *vm, u16 *a)
 	return jn_framework_OwnerPIN_reset(vm, a);
 }
 
-// --- javacard.security.MessageDigest, RandomData ---
-
-enum { MD_SHA = 1, MD_SHA_256 = 4 };
-
-static void mdStart(NatDigest *d)
-{
-	if (d->alg == MD_SHA) sha1Init(&d->s1);
-	else sha256Init(&d->s256);
-}
-
-int jn_security_MessageDigest_getInstance(JcVm *vm, u16 *a)
-{
-	s8 alg = a[0];
-	if (alg != MD_SHA && alg != MD_SHA_256) return jcThrow(vm, JCC_security_CryptoException, 3); // NO_SUCH_ALGORITHM
-	u16 h = jcNew(vm, JCC_security_MessageDigest);
-	if (!h) return jcThrow(vm, JCC_framework_SystemException, 3);
-	NatDigest *d = jcNat(vm, h);
-	d->alg = alg;
-	mdStart(d);
-	RET(h);
-}
-
-int jn_security_MessageDigest_update(JcVm *vm, u16 *a)
-{
-	NatDigest *d = jcNat(vm, a[0]);
-	u8 *m = bytes(vm, a[1], S(2), S(3));
-	if (!m) return -1;
-	if (d->alg == MD_SHA) sha1Add(&d->s1, m, S(3));
-	else sha256Add(&d->s256, m, S(3));
-	return 0;
-}
-
-int jn_security_MessageDigest_doFinal(JcVm *vm, u16 *a)
-{
-	NatDigest *d = jcNat(vm, a[0]);
-	u8 *m = bytes(vm, a[1], S(2), S(3)), h[32];
-	if (!m) return -1;
-	int n = d->alg == MD_SHA ? 20 : 32;
-	if (d->alg == MD_SHA) sha1Add(&d->s1, m, S(3)), sha1Done(&d->s1, h);
-	else sha256Add(&d->s256, m, S(3)), sha256Done(&d->s256, h);
-	mdStart(d);
-	if (!put(vm, a[4], S(5), h, n, false)) return -1;
-	RET(n);
-}
-
-int jn_security_MessageDigest_reset(JcVm *vm, u16 *a)
-{
-	mdStart(jcNat(vm, a[0]));
-	return 0;
-}
-
-int jn_security_MessageDigest_getAlgorithm(JcVm *vm, u16 *a)
-{
-	RET(((NatDigest *)jcNat(vm, a[0]))->alg);
-}
-
-int jn_security_MessageDigest_getLength(JcVm *vm, u16 *a)
-{
-	RET(((NatDigest *)jcNat(vm, a[0]))->alg == MD_SHA ? 20 : 32);
-}
+// --- javacard.security.RandomData (the rest of the crypto: jccrypto.c) ---
 
 int jn_security_RandomData_getInstance(JcVm *vm, u16 *a)
 {
@@ -829,11 +769,9 @@ int jn_security_RandomData_getInstance(JcVm *vm, u16 *a)
 	RET(h);
 }
 
-void jcRandom(u8 *out, u32 len); // jccard.c: the console's RNG
-
 int jn_security_RandomData_generateData(JcVm *vm, u16 *a)
 {
-	u8 *d = bytes(vm, a[1], S(2), S(3));
+	u8 *d = jcBytes(vm, a[1], S(2), S(3));
 	if (!d) return -1;
 	jcRandom(d, S(3));
 	return 0;
@@ -841,5 +779,5 @@ int jn_security_RandomData_generateData(JcVm *vm, u16 *a)
 
 int jn_security_RandomData_setSeed(JcVm *vm, u16 *a)
 {
-	return bytes(vm, a[1], S(2), S(3)) ? 0 : -1;
+	return jcBytes(vm, a[1], S(2), S(3)) ? 0 : -1;
 }

@@ -2,14 +2,15 @@
 #include <3ds.h>
 
 // The ciphers of DESFire EV1 secure messaging: DES, 2K3DES, 3K3DES (EDE) and AES-128, CBC with a running
-// IV, CMAC, and DESFire's CRC32. Plain C, nothing fast; see tools/dfcrypto_test.py for the checks.
+// IV, CMAC, and DESFire's CRC32 (and AES-192 / 256 for the Java Card). Plain C, nothing fast; see
+// tools/dfcrypto_test.py for the checks.
 
-enum { DF_DES, DF_2K3DES, DF_3K3DES, DF_AES };
+enum { DF_DES, DF_2K3DES, DF_3K3DES, DF_AES, DF_AES192, DF_AES256 }; // the AES-192 / 256 for the Java Card
 
 typedef struct {
 	u8 type, bs;      // DF_*, block size (8 / 16)
 	u64 sub[3][16];   // DES: K1 K2 K3 round keys (DES: all K1, 2K3DES: K3 = K1)
-	u8 rk[176];       // AES round keys
+	u8 rk[240];       // AES round keys
 } DfCipher;
 
 u32 dfKeyLen(u8 type); // 8 / 16 / 24 / 16

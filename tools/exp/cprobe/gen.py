@@ -12,9 +12,9 @@ D = os.path.dirname(os.path.abspath(__file__))
 SEL = "00A4040007F0334453504D03"
 
 
-def apdu(ins, p1, p2, data=b""):
+def apdu(ins, p1, p2, data=b"", ext=False):
     h = bytes([0x80, ins, p1, p2])
-    if len(data) > 255:
+    if len(data) > 255 or ext:
         return h + b"\x00" + struct.pack(">H", len(data)) + data + b"\x00\x00"
     return h + (bytes([len(data)]) + data if data else b"") + b"\x00"
 
@@ -52,8 +52,8 @@ def once(name, fn):
     return bytes.fromhex(fixed[name])
 
 
-def add(label, ins, p1, p2, data=b""):
-    cases.append((label, apdu(ins, p1, p2, data)))
+def add(label, ins, p1, p2, data=b"", ext=False):
+    cases.append((label, apdu(ins, p1, p2, data, ext)))
 
 
 DES8 = bytes.fromhex("0123456789ABCDEF")
@@ -194,6 +194,35 @@ for b, k in RSA.items():
             ver(f"{name} {b} verify {sn}", alg, pub, MSG,
                 once(f"{name} {b} {sn}", lambda: k.sign(MSG, padding.PSS(padding.MGF1(h), slen), h)))
 
+# ISO 9796-2 scheme 1 (SHA-1): full recovery (short messages) and partial; verify of the reference's
+import iso9796  # noqa: E402
+
+for b, k in RSA.items():
+    pv, n = k.private_numbers(), k.public_key().public_numbers()
+    crt = key(6, b, b"".join(struct.pack(">H", b // 16) + v.to_bytes(b // 16, "big")
+                             for v in (pv.p, pv.q, pv.dmp1, pv.dmq1, pv.iqmp)))
+    pub = rsakey(4, b, n.n, n.e)
+    for ln in (20, 48, 200, 300):
+        m = bytes(i & 0xFF for i in range(ln))
+        sig(f"RSA_SHA_ISO9796 {b} crt sign {ln}", 9, crt, b"", m, 7)
+        good = iso9796.sign(pv.d, n.n, m)
+        ver(f"RSA_SHA_ISO9796 {b} verify {ln} good", 9, pub, m, good)
+        ver(f"RSA_SHA_ISO9796 {b} verify {ln} bad", 9, pub, m[:-1] + b"x", good)
+    sig(f"RSA_SHA_ISO9796 {b} crt sign 48 twice", 9, crt, b"", MSG, 0, 1)
+
+# KeyPair.genKeyPair (random: the answer is 01 + the public key; the signature check runs in the applet)
+for alg, bits, name in [(1, 1024, "RSA"), (2, 1024, "RSA_CRT"), (2, 2048, "RSA_CRT"), (5, 256, "EC_FP")]:
+    add(f"genKeyPair {name} {bits} (random)", 0x38, alg, 0, struct.pack(">H", bits) + bytes(range(30)), bits > 1024)
+
+add("genKeyPair EC_FP 256 with P-256 set (random)", 0x38, 5, 0, struct.pack(">H", 256) + bytes(range(30))
+    + b"".join(struct.pack(">H", len(v)) + v for v in [bytes.fromhex(x) for x in (
+        "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF",
+        "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFC",
+        "5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B",
+        "046B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296"
+        "4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5",
+        "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551")]))
+
 # EC P-256 (prime field): keys, ECDSA (sign is random: checked offline), ECDH
 P256 = [bytes.fromhex(x) for x in (
     "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF",
@@ -224,6 +253,8 @@ for alg, name, h in [(17, "ECDSA_SHA", hashes.SHA1()), (33, "ECDSA_SHA_256", has
     ver(f"{name} P256 verify good", alg, eckey(11, ECPT[0]), MSG, good)
     ver(f"{name} P256 verify bad", alg, eckey(11, ECPT[0]), MSG[:47] + b"x", good)
 for alg, name in [(1, "EC_SVDP_DH"), (2, "EC_SVDP_DHC"), (3, "EC_SVDP_DH_PLAIN"), (4, "EC_SVDP_DHC_PLAIN")]:
+    add(f"{name} P256", 0x37, 0, 0, bytes([alg]) + eckey(12, ECS[0]) + ECPT[1])
+for alg, name in [(5, "EC_PACE_GM"), (6, "EC_SVDP_DH_PLAIN_XY")]:
     add(f"{name} P256", 0x37, 0, 0, bytes([alg]) + eckey(12, ECS[0]) + ECPT[1])
 add("EC_SVDP_DH_PLAIN P256 compressed point", 0x37, 0, 0, bytes([3]) + eckey(12, ECS[0])
     + ecs[1].public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.CompressedPoint))

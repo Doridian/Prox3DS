@@ -346,7 +346,7 @@ int jn_security_Signature_verify(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Signature_setInitialDigest(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Signature_signPreComputedHash(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Signature_getInstance_BZ(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_security_Signature_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_security_Signature_init_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Signature_getInstance_BBBZ(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_KeyPair_equals(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_KeyPair_genKeyPair(JcVm *vm, u16 *a) __attribute__((weak));
@@ -415,18 +415,18 @@ int jn_security_AESKey_isInitialized(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_AESKey_setKey(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_AESKey_getKey(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Checksum_equals(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_security_Checksum_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_security_Checksum_init_aBSS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Checksum_getAlgorithm(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Checksum_doFinal(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Checksum_update(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_Checksum_getInstance(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_security_Checksum_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_security_Checksum_init_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_KeyAgreement_equals(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_security_KeyAgreement_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_security_KeyAgreement_init_PrivateKey(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_KeyAgreement_getAlgorithm(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_KeyAgreement_generateSecret(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_KeyAgreement_getInstance(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_security_KeyAgreement_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_security_KeyAgreement_init_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_HMACKey_clearKey(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_HMACKey_getSize(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_security_HMACKey_getType(JcVm *vm, u16 *a) __attribute__((weak));
@@ -502,7 +502,7 @@ int jn_crypto_Cipher_init_KeyB(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_crypto_Cipher_init_KeyBaBSS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_crypto_Cipher_update(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_crypto_Cipher_getInstance_BZ(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_crypto_Cipher_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_crypto_Cipher_init_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_crypto_Cipher_getInstance_BBZ(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_external_MemoryAccess_writeData(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_external_MemoryAccess_readData(JcVm *vm, u16 *a) __attribute__((weak));
@@ -521,7 +521,7 @@ int jn_math_BCDUtil_convertToBCD(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BCDUtil_isBCDFormat(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_equals(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_setMaximum(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_math_BigNumber_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_math_BigNumber_init_aBSSB(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_add(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_subtract(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_multiply(JcVm *vm, u16 *a) __attribute__((weak));
@@ -530,7 +530,7 @@ int jn_math_BigNumber_compareTo_aBSSB(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_toBytes(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_getByteLength(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_reset(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_math_BigNumber_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_math_BigNumber_init_S(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_BigNumber_getMaxBytesSupported(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_ParityBit_equals(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_math_ParityBit_init(JcVm *vm, u16 *a) __attribute__((weak));
@@ -568,8 +568,8 @@ int jn_tlv_BERTLV_toBytes(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTLV_getTag_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTLV_getLength_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTLV_size(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_tlv_BERTLV_init(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_tlv_BERTLV_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_tlv_BERTLV_init_aBSS(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_tlv_BERTLV_init_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTLV_getInstance(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTLV_verifyFormat(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTLV_getTag_aBSaBS(JcVm *vm, u16 *a) __attribute__((weak));
@@ -581,8 +581,8 @@ int jn_tlv_BERTag_tagNumber_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTag_isConstructed_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTag_tagClass_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTag_equals_BERTag(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_tlv_BERTag_init(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_tlv_BERTag_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_tlv_BERTag_init_aBS(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_tlv_BERTag_init_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTag_getInstance(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTag_toBytes_SZSaBS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_BERTag_size_aBS(JcVm *vm, u16 *a) __attribute__((weak));
@@ -602,7 +602,7 @@ int jn_tlv_ConstructedBERTLV_append_BERTLV(JcVm *vm, u16 *a) __attribute__((weak
 int jn_tlv_ConstructedBERTLV_delete(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_ConstructedBERTLV_find_BERTag(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_ConstructedBERTLV_findNext_BERTagBERTLVS(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_tlv_ConstructedBERTLV_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_tlv_ConstructedBERTLV_init_S(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_ConstructedBERTLV_append_aBSaBS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_ConstructedBERTLV_find_aBSaBS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_ConstructedBERTLV_findNext_aBSSaBS(JcVm *vm, u16 *a) __attribute__((weak));
@@ -615,7 +615,7 @@ int jn_tlv_ConstructedBERTag_tagClass(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_ConstructedBERTag_equals_BERTag(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_ConstructedBERTag_init_aBS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_ConstructedBERTag_init_BS(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_tlv_ConstructedBERTag_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_tlv_ConstructedBERTag_init_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTLV_equals(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTLV_toBytes_aBS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTLV_getTag(JcVm *vm, u16 *a) __attribute__((weak));
@@ -626,7 +626,7 @@ int jn_tlv_PrimitiveBERTLV_init_PrimitiveBERTagaBSS(JcVm *vm, u16 *a) __attribut
 int jn_tlv_PrimitiveBERTLV_appendValue_aBSS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTLV_replaceValue(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTLV_getValue(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_tlv_PrimitiveBERTLV_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_tlv_PrimitiveBERTLV_init_S(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTLV_getValueOffset(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTLV_toBytes_aBSaBSSaBS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTLV_appendValue_aBSaBSS(JcVm *vm, u16 *a) __attribute__((weak));
@@ -639,7 +639,7 @@ int jn_tlv_PrimitiveBERTag_tagClass(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTag_equals_BERTag(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTag_init_aBS(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_PrimitiveBERTag_init_BS(JcVm *vm, u16 *a) __attribute__((weak));
-int jn_tlv_PrimitiveBERTag_init(JcVm *vm, u16 *a) __attribute__((weak));
+int jn_tlv_PrimitiveBERTag_init_V(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_TLVException_equals(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_TLVException_getReason(JcVm *vm, u16 *a) __attribute__((weak));
 int jn_tlv_TLVException_setReason(JcVm *vm, u16 *a) __attribute__((weak));
@@ -1284,7 +1284,7 @@ static const JcNativeMethod v_javacard_security_Signature[] = {
 
 static const JcNativeMethod s_javacard_security_Signature[] = {
 	{ 0, 2, jn_security_Signature_getInstance_BZ, "Signature.getInstance(BZ)Ljavacard/security/Signature;" },
-	{ 1, 1, jn_security_Signature_init, "Signature.<init>()V" },
+	{ 1, 1, jn_security_Signature_init_V, "Signature.<init>()V" },
 	{ 2, 4, jn_security_Signature_getInstance_BBBZ, "Signature.getInstance(BBBZ)Ljavacard/security/Signature;" },
 };
 
@@ -1374,7 +1374,7 @@ static const JcNativeMethod v_javacard_security_AESKey[] = {
 
 static const JcNativeMethod v_javacard_security_Checksum[] = {
 	{ 0, 2, jn_security_Checksum_equals, "Checksum.equals(Ljava/lang/Object;)Z" },
-	{ 1, 4, jn_security_Checksum_init, "Checksum.init([BSS)V" },
+	{ 1, 4, jn_security_Checksum_init_aBSS, "Checksum.init([BSS)V" },
 	{ 2, 1, jn_security_Checksum_getAlgorithm, "Checksum.getAlgorithm()B" },
 	{ 3, 6, jn_security_Checksum_doFinal, "Checksum.doFinal([BSS[BS)S" },
 	{ 4, 4, jn_security_Checksum_update, "Checksum.update([BSS)V" },
@@ -1382,19 +1382,19 @@ static const JcNativeMethod v_javacard_security_Checksum[] = {
 
 static const JcNativeMethod s_javacard_security_Checksum[] = {
 	{ 0, 2, jn_security_Checksum_getInstance, "Checksum.getInstance(BZ)Ljavacard/security/Checksum;" },
-	{ 1, 1, jn_security_Checksum_init, "Checksum.<init>()V" },
+	{ 1, 1, jn_security_Checksum_init_V, "Checksum.<init>()V" },
 };
 
 static const JcNativeMethod v_javacard_security_KeyAgreement[] = {
 	{ 0, 2, jn_security_KeyAgreement_equals, "KeyAgreement.equals(Ljava/lang/Object;)Z" },
-	{ 1, 2, jn_security_KeyAgreement_init, "KeyAgreement.init(Ljavacard/security/PrivateKey;)V" },
+	{ 1, 2, jn_security_KeyAgreement_init_PrivateKey, "KeyAgreement.init(Ljavacard/security/PrivateKey;)V" },
 	{ 2, 1, jn_security_KeyAgreement_getAlgorithm, "KeyAgreement.getAlgorithm()B" },
 	{ 3, 6, jn_security_KeyAgreement_generateSecret, "KeyAgreement.generateSecret([BSS[BS)S" },
 };
 
 static const JcNativeMethod s_javacard_security_KeyAgreement[] = {
 	{ 0, 2, jn_security_KeyAgreement_getInstance, "KeyAgreement.getInstance(BZ)Ljavacard/security/KeyAgreement;" },
-	{ 1, 1, jn_security_KeyAgreement_init, "KeyAgreement.<init>()V" },
+	{ 1, 1, jn_security_KeyAgreement_init_V, "KeyAgreement.<init>()V" },
 };
 
 static const JcNativeMethod v_javacard_security_HMACKey[] = {
@@ -1515,7 +1515,7 @@ static const JcNativeMethod v_javacardx_crypto_Cipher[] = {
 
 static const JcNativeMethod s_javacardx_crypto_Cipher[] = {
 	{ 0, 2, jn_crypto_Cipher_getInstance_BZ, "Cipher.getInstance(BZ)Ljavacardx/crypto/Cipher;" },
-	{ 1, 1, jn_crypto_Cipher_init, "Cipher.<init>()V" },
+	{ 1, 1, jn_crypto_Cipher_init_V, "Cipher.<init>()V" },
 	{ 2, 3, jn_crypto_Cipher_getInstance_BBZ, "Cipher.getInstance(BBZ)Ljavacardx/crypto/Cipher;" },
 };
 
@@ -1558,7 +1558,7 @@ static const JcNativeMethod s_javacardx_framework_math_BCDUtil[] = {
 static const JcNativeMethod v_javacardx_framework_math_BigNumber[] = {
 	{ 0, 2, jn_math_BigNumber_equals, "BigNumber.equals(Ljava/lang/Object;)Z" },
 	{ 1, 5, jn_math_BigNumber_setMaximum, "BigNumber.setMaximum([BSSB)V" },
-	{ 2, 5, jn_math_BigNumber_init, "BigNumber.init([BSSB)V" },
+	{ 2, 5, jn_math_BigNumber_init_aBSSB, "BigNumber.init([BSSB)V" },
 	{ 3, 5, jn_math_BigNumber_add, "BigNumber.add([BSSB)V" },
 	{ 4, 5, jn_math_BigNumber_subtract, "BigNumber.subtract([BSSB)V" },
 	{ 5, 5, jn_math_BigNumber_multiply, "BigNumber.multiply([BSSB)V" },
@@ -1570,7 +1570,7 @@ static const JcNativeMethod v_javacardx_framework_math_BigNumber[] = {
 };
 
 static const JcNativeMethod s_javacardx_framework_math_BigNumber[] = {
-	{ 0, 2, jn_math_BigNumber_init, "BigNumber.<init>(S)V" },
+	{ 0, 2, jn_math_BigNumber_init_S, "BigNumber.<init>(S)V" },
 	{ 1, 0, jn_math_BigNumber_getMaxBytesSupported, "BigNumber.getMaxBytesSupported()S" },
 };
 
@@ -1629,11 +1629,11 @@ static const JcNativeMethod v_javacardx_framework_tlv_BERTLV[] = {
 	{ 2, 1, jn_tlv_BERTLV_getTag_V, "BERTLV.getTag()Ljavacardx/framework/tlv/BERTag;" },
 	{ 3, 1, jn_tlv_BERTLV_getLength_V, "BERTLV.getLength()S" },
 	{ 4, 1, jn_tlv_BERTLV_size, "BERTLV.size()S" },
-	{ 5, 4, jn_tlv_BERTLV_init, "BERTLV.init([BSS)S" },
+	{ 5, 4, jn_tlv_BERTLV_init_aBSS, "BERTLV.init([BSS)S" },
 };
 
 static const JcNativeMethod s_javacardx_framework_tlv_BERTLV[] = {
-	{ 0, 1, jn_tlv_BERTLV_init, "BERTLV.<init>()V" },
+	{ 0, 1, jn_tlv_BERTLV_init_V, "BERTLV.<init>()V" },
 	{ 1, 3, jn_tlv_BERTLV_getInstance, "BERTLV.getInstance([BSS)Ljavacardx/framework/tlv/BERTLV;" },
 	{ 2, 3, jn_tlv_BERTLV_verifyFormat, "BERTLV.verifyFormat([BSS)Z" },
 	{ 3, 4, jn_tlv_BERTLV_getTag_aBSaBS, "BERTLV.getTag([BS[BS)S" },
@@ -1648,11 +1648,11 @@ static const JcNativeMethod v_javacardx_framework_tlv_BERTag[] = {
 	{ 4, 1, jn_tlv_BERTag_isConstructed_V, "BERTag.isConstructed()Z" },
 	{ 5, 1, jn_tlv_BERTag_tagClass_V, "BERTag.tagClass()B" },
 	{ 6, 2, jn_tlv_BERTag_equals_BERTag, "BERTag.equals(Ljavacardx/framework/tlv/BERTag;)Z" },
-	{ 7, 3, jn_tlv_BERTag_init, "BERTag.init([BS)V" },
+	{ 7, 3, jn_tlv_BERTag_init_aBS, "BERTag.init([BS)V" },
 };
 
 static const JcNativeMethod s_javacardx_framework_tlv_BERTag[] = {
-	{ 0, 1, jn_tlv_BERTag_init, "BERTag.<init>()V" },
+	{ 0, 1, jn_tlv_BERTag_init_V, "BERTag.<init>()V" },
 	{ 1, 2, jn_tlv_BERTag_getInstance, "BERTag.getInstance([BS)Ljavacardx/framework/tlv/BERTag;" },
 	{ 2, 5, jn_tlv_BERTag_toBytes_SZSaBS, "BERTag.toBytes(SZS[BS)S" },
 	{ 3, 2, jn_tlv_BERTag_size_aBS, "BERTag.size([BS)B" },
@@ -1678,7 +1678,7 @@ static const JcNativeMethod v_javacardx_framework_tlv_ConstructedBERTLV[] = {
 };
 
 static const JcNativeMethod s_javacardx_framework_tlv_ConstructedBERTLV[] = {
-	{ 0, 2, jn_tlv_ConstructedBERTLV_init, "ConstructedBERTLV.<init>(S)V" },
+	{ 0, 2, jn_tlv_ConstructedBERTLV_init_S, "ConstructedBERTLV.<init>(S)V" },
 	{ 1, 4, jn_tlv_ConstructedBERTLV_append_aBSaBS, "ConstructedBERTLV.append([BS[BS)S" },
 	{ 2, 4, jn_tlv_ConstructedBERTLV_find_aBSaBS, "ConstructedBERTLV.find([BS[BS)S" },
 	{ 3, 5, jn_tlv_ConstructedBERTLV_findNext_aBSSaBS, "ConstructedBERTLV.findNext([BSS[BS)S" },
@@ -1697,7 +1697,7 @@ static const JcNativeMethod v_javacardx_framework_tlv_ConstructedBERTag[] = {
 };
 
 static const JcNativeMethod s_javacardx_framework_tlv_ConstructedBERTag[] = {
-	{ 0, 1, jn_tlv_ConstructedBERTag_init, "ConstructedBERTag.<init>()V" },
+	{ 0, 1, jn_tlv_ConstructedBERTag_init_V, "ConstructedBERTag.<init>()V" },
 };
 
 static const JcNativeMethod v_javacardx_framework_tlv_PrimitiveBERTLV[] = {
@@ -1714,7 +1714,7 @@ static const JcNativeMethod v_javacardx_framework_tlv_PrimitiveBERTLV[] = {
 };
 
 static const JcNativeMethod s_javacardx_framework_tlv_PrimitiveBERTLV[] = {
-	{ 0, 2, jn_tlv_PrimitiveBERTLV_init, "PrimitiveBERTLV.<init>(S)V" },
+	{ 0, 2, jn_tlv_PrimitiveBERTLV_init_S, "PrimitiveBERTLV.<init>(S)V" },
 	{ 1, 2, jn_tlv_PrimitiveBERTLV_getValueOffset, "PrimitiveBERTLV.getValueOffset([BS)S" },
 	{ 2, 7, jn_tlv_PrimitiveBERTLV_toBytes_aBSaBSSaBS, "PrimitiveBERTLV.toBytes([BS[BSS[BS)S" },
 	{ 3, 5, jn_tlv_PrimitiveBERTLV_appendValue_aBSaBSS, "PrimitiveBERTLV.appendValue([BS[BSS)S" },
@@ -1733,7 +1733,7 @@ static const JcNativeMethod v_javacardx_framework_tlv_PrimitiveBERTag[] = {
 };
 
 static const JcNativeMethod s_javacardx_framework_tlv_PrimitiveBERTag[] = {
-	{ 0, 1, jn_tlv_PrimitiveBERTag_init, "PrimitiveBERTag.<init>()V" },
+	{ 0, 1, jn_tlv_PrimitiveBERTag_init_V, "PrimitiveBERTag.<init>()V" },
 };
 
 static const JcNativeMethod v_javacardx_framework_tlv_TLVException[] = {

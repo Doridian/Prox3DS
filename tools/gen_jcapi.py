@@ -64,9 +64,9 @@ decls, tables = [], []
 for i, (p, c) in enumerate(classes):
     short = p.name.rsplit("/", 1)[-1]
     simple = c.name.rsplit("/", 1)[-1]
-    names = {}
+    names = {}  # by C name: <init> and init(...) (KeyAgreement) count as overloads
     for (n, d) in c.methods:
-        names.setdefault(n, []).append(d)
+        names.setdefault("init" if n == "<init>" else n, []).append(d)
     for kind in ("v", "s"):
         rows = []
         for (n, d), (tok, flags) in sorted(c.methods.items(), key=lambda kv: kv[1][0]):
@@ -75,7 +75,7 @@ for i, (p, c) in enumerate(classes):
                 continue
             mname = "init" if n == "<init>" else n
             fn = "jn_%s_%s_%s" % (short, simple, mname)
-            if len(names[n]) > 1:
+            if len(names[mname]) > 1:
                 fn += "_" + (mangle(d) or "V")
             natives.append(fn)
             decls.append("int %s(JcVm *vm, u16 *a) __attribute__((weak));" % fn)
