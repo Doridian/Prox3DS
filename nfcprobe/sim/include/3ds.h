@@ -56,6 +56,7 @@ void hidTouchRead(touchPosition *pos);
 void hidSetRepeatParameters(u32 delay, u32 interval);
 
 Result archive_getmtime(const char *path, u64 *mtime);
+Result PS_GenerateRandomBytes(void *out, size_t len);
 
 typedef enum { GFX_TOP, GFX_BOTTOM } gfxScreen_t;
 typedef enum { GFX_LEFT, GFX_RIGHT } gfx3dSide_t;

@@ -106,6 +106,8 @@ void emuStartMfuNdef(const MfuDump *d, const char *name); // a Type 4 tag with t
 void emuStartMfu(const MfuDump *d, const char *name);     // the dump's card itself (chip-answered)
 void emuStartMfc(const MfDump *d, const char *name);      // the same for Classic Mini / 1K / 2K / 4K
 void emuStartDf(const DfInfo *d, const char *name);       // a saved DESFire info file, answered by the host
+void emuStartJc(void);                                    // the Java Card VM's applets (jccard.c)
+void jcOpen(void); // the Java Card: its applets, installing CAP files (jcui.c)
 
 // HID iClass / PicoPass (iclassui.c)
 void iclassOpenMenu(void);

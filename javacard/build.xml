@@ -4,6 +4,7 @@
      git clone https://github.com/martinpaljak/oracle_javacard_sdks sdks
      curl -LO https://github.com/martinpaljak/ant-javacard/releases/latest/download/ant-javacard.jar
      JAVA_HOME=/usr/lib/jvm/java-17-openjdk ant
+     ant vmtest: dspm-vmtest.cap, the VM conformance applet (vmtest/, ints on) for nfcprobe's Java Card VM
      ant oath: Yubico's ykneo-oath (GPLv3, YubiKey OATH protocol: nfcprobe's OATH tool works with it) from
      git clone https://github.com/Yubico/ykneo-oath (here, not in git) -> ykneo-oath.cap -->
 <project name="dspm-test" default="cap">
@@ -15,6 +16,13 @@
     <javacard jckit="${jc.home}">
       <cap targetsdk="${jc.target}" aid="F0334453504D" output="dspm-test.cap" sources="src" version="1.0">
         <applet class="dspm.TestApplet" aid="F0334453504D01"/>
+      </cap>
+    </javacard>
+  </target>
+  <target name="vmtest">
+    <javacard jckit="${jc.home}">
+      <cap targetsdk="${jc.target}" aid="F0334453504D10" output="dspm-vmtest.cap" sources="vmtest" version="1.0" ints="true">
+        <applet class="dspm.vmtest.VmTest" aid="F0334453504D02"/>
       </cap>
     </javacard>
   </target>

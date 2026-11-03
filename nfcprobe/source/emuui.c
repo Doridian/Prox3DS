@@ -1,6 +1,7 @@
 // Card emulation screens (emu.c): an NFC Forum Type 4 tag carrying an NDEF message, a card's UID for
 // UID-only readers, an APDU log that shows what a reader sends, Ultralight / NTAG and Classic dumps
-// (answered on the chip) and DESFire info files (answered here, dfemu.c).
+// (answered on the chip), DESFire info files (answered here, dfemu.c) and Java Card applets (the VM,
+// jccard.c).
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,11 +12,13 @@
 #include "dfemu.h"
 #include "emu.h"
 #include "entry.h"
+#include "gp.h"
+#include "jccard.h"
 #include "ndef.h"
 #include "probe.h"
 #include "ui.h"
 
-static enum { MODE_NDEF, MODE_UID, MODE_LOG, MODE_MFU, MODE_MFC, MODE_DF } mode;
+static enum { MODE_NDEF, MODE_UID, MODE_LOG, MODE_MFU, MODE_MFC, MODE_DF, MODE_JC } mode;
 static EmuId runId; // MODE_UID, MODE_DF: what to be
 static MfuDump runDump; // MODE_MFU: the card, with what readers wrote afterwards
 static MfDump runMfc;   // MODE_MFC: the same
@@ -50,6 +53,12 @@ static void runEmu(void)
 	}
 	if (mode == MODE_DF) {
 		emuOk = emuRun(&runId, dfEmuApdu);
+		return;
+	}
+	if (mode == MODE_JC) {
+		jcCard.apdus = 0;
+		emuOk = emuRun(NULL, jcCardApdu);
+		if (jcCard.dirty) jcCardSave();
 		return;
 	}
 	if (mode == MODE_LOG) nrules = emuLogLoad();
@@ -128,7 +137,7 @@ static float emuView(float x, float y, float w)
 		(runDump.info.type ? runDump.info.type->name : "Ultralight") : mode == MODE_MFC ?
 		(emu.chipPages == 20 ? "MIFARE Classic Mini" : emu.chipPages == 128 ? "MIFARE Classic 2K" :
 		 emu.chipPages == 256 ? "MIFARE Classic 4K" : "MIFARE Classic 1K") : mode == MODE_DF ? dfVersionName(dfEmuInfo()) :
-		"UID only");
+		mode == MODE_JC ? "Java Card" : "UID only");
 	uiText(x, y, S_SMALL, dim, "%s", uiFit(s, w, S_SMALL));
 	y += SMALL_H;
 	uiText(x, y, S_SMALL, dim, "UID %s, ATQA %02X%02X, SAK %02X", u, emu.id.atqa[1], emu.id.atqa[0], emu.id.sak);
@@ -189,6 +198,15 @@ static float emuView(float x, float y, float w)
 		else if (keys) uiText(x, y, S_SMALL, dim, "D40 / EV1 / EV2 authentication with its %d known key%s", keys,
 			keys == 1 ? "" : "s");
 		else uiText(x, y, S_SMALL, dim, "No keys in the file: what reads and writes without one");
+	} else if (mode == MODE_JC) {
+		int sel = jcCard.selected;
+		char aid[40] = "none";
+		if (sel >= 0)
+			for (int i = 0; i < jcCard.applets[sel].aidLen; i++) sprintf(aid + 2 * i, "%02X", jcCard.applets[sel].aid[i]);
+		uiText(x, y, S_SMALL, txt, "%d applet%s, selected: %s", jcCard.napplets, jcCard.napplets == 1 ? "" : "s", aid);
+		y += SMALL_H;
+		if (jcCard.vm.why[0]) uiText(x, y, S_SMALL, uiCol[COL_WARN], "VM: %s", uiFit(jcCard.vm.why, w - 30, S_SMALL));
+		else uiText(x, y, S_SMALL, dim, "%lu bytecodes run, state saved on " JC_STATE, (unsigned long)jcCard.vm.steps);
 	} else if (mode == MODE_NDEF) {
 		u32 len;
 		const u8 *msg = emuNdefGet(&len);
@@ -222,7 +240,15 @@ static void start(void)
 {
 	jobNextHint("Tap a phone on the bottom screen.");
 	jobStartView(mode == MODE_NDEF ? "Emulating a tag" : mode == MODE_LOG ? "APDU log" : mode == MODE_MFU ||
-		mode == MODE_MFC || mode == MODE_DF ? "Emulating a card" : "Emulating a UID", runEmu, doneEmu, true, emuView);
+		mode == MODE_MFC || mode == MODE_DF || mode == MODE_JC ? "Emulating a card" : "Emulating a UID", runEmu, doneEmu,
+		true, emuView);
+}
+
+void emuStartJc(void)
+{
+	mode = MODE_JC;
+	jcCard.vm.why[0] = 0;
+	start();
 }
 
 void emuStartDf(const DfInfo *d, const char *name)
@@ -466,6 +492,8 @@ static const MenuEntry emuEntries[] = {
 	{ "Copy a card's UID", "Scan a card, then answer with its UID, ATQA and SAK (editable first). For readers that "
 	                       "only check the UID.", startScan },
 	{ "Card UID", "Type a UID, ATQA and SAK (the last card scanned to start with).", startTyped },
+	{ "Java Card applets", "Run Java Card applets (CAP files from " GP_CAPS ") on the 3DS: it answers as a smart card "
+	                       "with them, e.g. Yubico's OATH applet for an authenticator app.", jcOpen },
 	{ "APDU log", "Act as an empty smart card and see what a reader sends. Answers come from " EMU_RULES
 	              " (\"<command prefix> <response>\" in hex per line), else 6A82 / 6D00.", startLog },
 };

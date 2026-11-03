@@ -233,3 +233,9 @@ void C2D_DrawText(const C2D_Text *t, u32 flags, float x, float y, float depth, f
 }
 
 const char *simKbdText;
+
+Result PS_GenerateRandomBytes(void *out, size_t len)
+{
+	for (size_t i = 0; i < len; i++) ((u8 *)out)[i] = rand();
+	return 0;
+}

@@ -637,6 +637,8 @@ static void scnKbText(void) { entryText("Write a URL", "https://..., tel:..., ma
 static void scnKbHex(void) { entryText("APDU", "CLA INS P1 P2 [Lc data] [Le], in hex.", "00A4040007A0000000041010", 522, ENTRY_HEX, kbDone); }
 static void scnKbPw(void) { entryText("OATH password", "This applet has a password.", "hunter2", 127, ENTRY_HIDE, kbDone); }
 static void scnEmuMenu(void) { simEmuMenu(); }
+static void scnJc(void) { simJc(false); }
+static void scnJcEmpty(void) { simJc(true); }
 static void scnEmuIdle(void) { simEmuRun(false); }
 static void scnEmuWritten(void) { simEmuRun(true); }
 static void scnEmuUid(void) { simEmuMode(0); }
@@ -873,6 +875,8 @@ static const SimStep script[] = {
 	CALL(reset), CALL(scnEmuMfu), SHOT("emu_mfu"), CALL(simBusyEnd), CALL(reset), CALL(scnEmuMfuDone), SHOT("emu_mfu_save"), B,
 	CALL(reset), CALL(simEmuMfc), SHOT("emu_mfc"), CALL(simBusyEnd),
 	CALL(reset), CALL(simEmuDf), SHOT("emu_df"), CALL(simBusyEnd),
+	CALL(reset), CALL(scnJcEmpty), SHOT("jc_empty"), CALL(reset), CALL(scnJc), SHOT("jc_list"), KEYS(KEY_X),
+	SHOT("jc_actions"), B, CALL(simEmuJc), SHOT("jc_emu"), CALL(simBusyEnd),
 	// tear-off
 	CALL(reset), CALL(scnTear), SHOT("tear_scan"), D, D, D, D, D, D, D, D, D, D, SHOT("tear_scan_end"),
 	CALL(reset), CALL(scnTearCnt), SHOT("tear_counter"), CALL(simBusyEnd),

@@ -1779,3 +1779,60 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   PICC settings, free memory) twice; `read` AES + plain + `getuid` back to back; Ultralight `hf mfu info;
   rdbl; rdbl; hf 14a reader; hf mfu dump`; Classic `hf mf chk --1k; hf 14a reader; rdbl; rdbl`; echo APDUs
   x3 in one chain.
+
+## Java Card VM, step 1: Python JCVM + APDU relay (issue #19; tools/jcvm/, netsrv.c OP_RELAY) -- 2026-11-02
+- CAPRunner (the PyPI link in #19) is Python 2 era, has no PyPI files, and needs pythoncard + reference
+  files generated from the SDK: not used. Own VM instead, laid out the way the C port will be:
+  exp.py (export files: class / method / field tokens), cap.py (CAP components), vm.py (classes, objects,
+  arrays, interpreter), api.py (natives by class + name + descriptor), card.py (registry, SELECT, process,
+  transients, transactions), jcrelay.py (runner).
+- Export files: jc304_kit/api_export_files (format 1.2). Supers are listed java/lang/Object first.
+  <init> shares the static token space (Applet <init> = static 0, install = static 1).
+- CAP 2.1 from the converter (no signature pool in Class; that is 2.2+). Method component: handler_count
+  first, method offsets (static refs, Applet install) count from that byte. Internal static field refs:
+  offset into the image, references first (2 bytes each), then the primitives.
+- Cells: 16-bit, an int = two cells high first, so dup_x / swap_x / pop2 work on words. Instance fields
+  keyed (declaring class, token): no layout needed for the prototype. Native API methods via export
+  tokens (virtual / static; <init> with this). Exceptions: a Python JavaThrow, handlers searched per frame
+  at the instruction (or invoke) pc.
+- APDU semantics: the buffer (261 bytes) holds the header at arrival, the body after setIncomingAndReceive;
+  data sent before an ISOException goes out with its SW (ykneo-oath's 61xx chaining relies on that);
+  uncaught non-ISO exceptions -> 6F00. A transaction left open is aborted.
+- Checked offline: TestApplet (all commands) and ykneo-oath: PUT + CALCULATE give the RFC 6238 SHA-1
+  vectors (94287082, 07081804, 69279037; HMAC in the applet's Java over MessageDigest), LIST, reset +
+  reselect. A CALCULATE is ~400 bytecodes, a 256-byte answer ~2600.
+- Relay (OP_RELAY 0x2E): emuRun on a worker thread with an EmuApdu that hands each APDU to the net
+  thread, which owns the socket: events out (reply result 1, empty = new session), answers back as
+  requests `01 + data + SW`, `02` stops (final reply: fields, sessions, APDUs). The ROM sends WTX while
+  the PC works. LightEvent_WaitTimeout returns NON-ZERO on timeout.
+- On air with pm3 under the 3DS (`jcrelay.py 192.0.2.6 dspm-test.cap ykneo-oath.cap`): TestApplet echo /
+  name / 256-byte answer, YKOATH SELECT + PUT + CALCULATE (94287082) + LIST, all exact. Once the first
+  session's event didn't reach the PC (3 sessions counted, 2 events); not seen again in 3 more sessions.
+
+## Java Card VM, step 2: the VM in nfcprobe (jcvm.c, jcapi.c, jccard.c, jcui.c) -- 2026-11-03
+- Layout as the Python VM. Cells u16, references are handles into a 4096-entry object table (0 = null), so
+  the heap saves as it is. Classes: API classes first (jcApiClasses index = class index), CAP classes after.
+- Instance field token = cell index in the declaring class (ykneo-oath OathObj: 7 refs + 7 byte/short/
+  boolean fields, instance_size 14, tokens 0-13); offset = super chain's cells + token, resolved per CP entry
+  at load. API base classes have no cells: their state is a native blob after the cells, 8-aligned
+  (jcNatOff: LDRD / STRD on u64 fields fault on the ARM11).
+- tools/gen_jcapi.py -> jcapitab.c / .h from the jc304 export files: 15 packages, 95 classes, 660 methods,
+  each pointing at a WEAK jn_<pkg>_<Class>_<method>[_<params>]: implementing one in jcapi.c links it, the rest
+  are NULL (calling one = VM failure naming it). Export files list inherited methods per class (equals in all
+  of them): a NULL virtual native falls through to the super class's.
+- Uncaught ISOException -> its reason as SW, any other -> 6F00, VM failure (missing native, bad CAP) -> 6F00
+  + jcCard.vm.why (shown in the emulation view). Exceptions the VM throws: one system-owned instance per class.
+- Persistence: JC_STATE = sdmc:/nfcprobe/jc/card.bin: packages by CAP path (reloaded from the SD card on
+  restore), static images, every non-system object, applets. Classes saved as package << 8 | number (API:
+  C000 + index) so deleting a package doesn't shift the rest. Saved at the next session start and on stop
+  (if anything ran), after installs / deletes.
+- Host harness tools/exp/jcvm (build.sh -> jch: the VM with the sim's fake libctru, APDUs on stdin).
+  javacard/vmtest (ant vmtest, ints on): VmTest F0334453504D02 computes short / int arithmetic edges,
+  switches, try/catch/finally incl. VM-thrown exceptions, virtual / super / interface dispatch, instanceof /
+  checkcast on arrays, statics of every type, transactions, Util, OwnerPIN, AID, SHA-1 / SHA-256, dup_x /
+  swap_x. Python VM and C VM agree on all of it; ykneo-oath RFC 6238 vectors exact in C too (same bytecode
+  counts as Python). After save + restore the persistent statics / fields carry on as they should.
+- First run on the 3DS crashed it (off the network): jcCardInit copied the JcVm (~100 KB) through a local.
+  JcVm / JcCard are static only; -Wstack-usage=2048 is clean on the jc files now.
+- UI: Emulate > Java Card applets (jcui.c): the applets, A emulates (emuStartJc: random UID, SAK 20), X:
+  install a CAP from sdmc:/nfcprobe/cap, delete its package, wipe. Sim scenes jc_empty / jc_list / jc_emu.

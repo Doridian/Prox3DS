@@ -122,6 +122,22 @@ void simEmuDf(void)
 	simBusyView(emuView);
 }
 
+void simEmuJc(void)
+{
+	static const char *log[] = { "> 00A4040008A00000052721..  < .. 9000", "> 00A1000000  < .. 9000",
+		"> 00A4000002000000  < .. 9000", "> 00A2000113710772666336..  < .. 9000" };
+	memset(&emu, 0, sizeof(emu));
+	mode = MODE_JC;
+	if (jcCard.napplets) jcCard.selected = 0;
+	jcCard.vm.steps = 18432;
+	emu.id = (EmuId){ { 0x08, 0x5E, 0x11, 0xA7 }, 4, { 0x04, 0x00 }, 0x20 };
+	emu.field = emu.active = true, emu.fields = 2, emu.sessions = 2, emu.apdus = 9;
+	for (int i = 0; i < 4; i++) snprintf(emu.log[emu.nlog++ % EMU_LOG_N], 48, "%s", log[i]);
+	jobNextHint("Tap a phone on the bottom screen.");
+	simBusy("Emulating a card", true, false);
+	simBusyView(emuView);
+}
+
 void simEmuForm(void)
 {
 	card = (Card){ .atqa = { 0x44, 0x00 }, .uid = { 0x04, 0x6B, 0x21, 0x9A, 0x3C, 0x5D, 0x80 }, .uidLen = 7, .sak = 0 };
