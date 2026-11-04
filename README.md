@@ -59,7 +59,7 @@ confirmation first.**
 ### MIFARE Classic (Mini / 1K / 2K / 4K)
 - Card info: UID, ATQA/SAK, magic card type (Gen1a, Gen2 / CUID, Gen4 GTU, USCUID) and the GTU / USCUID config.
 - Read card with key recovery:
-  - the key dictionary (built-in defaults, your own `keys.txt`, or pm3's ~2500-key list downloaded over Wi-Fi)
+  - the key dictionary (built-in defaults, your own `mfc/keys.txt`, or pm3's ~2500-key list downloaded over Wi-Fi)
   - magic-card backdoors
   - **nested** and **static nested** attacks, and the **FM11RF08S** static encrypted nonce (backdoor) attack
   - **darkside** for cards with no known key
@@ -124,9 +124,9 @@ Everything lives under `sdmc:/prox3ds/`:
 
 | Path | Contents |
 | --- | --- |
-| `keys.txt` | Your MIFARE Classic keys, one hex key per line (read card adds found keys) |
-| `dumps/` | MIFARE Classic dumps: `<UID>.bin` + `<UID>.keys.txt` (never overwritten) |
-| `mfu/` | Ultralight / NTAG dumps (pm3 `hf mfu` format) |
+| `mfc/keys.txt` | Your MIFARE Classic keys, one hex key per line (read card adds found keys) |
+| `mfc/dumps/` | MIFARE Classic dumps: `<UID>.bin` + `<UID>.keys.txt` (never overwritten) |
+| `mfu/` | Ultralight / NTAG dumps (pm3 `hf mfu` format); `mfu/keys.txt`: your passwords / UL-C keys |
 | `iclass/` | iClass dumps, dictionaries, `iclass_decryptionkey.bin` |
 | `smartcard/aids.txt` | Extra applets to look for: `AID name` per line |
 | `gp/keys.txt` | Extra GlobalPlatform keys |

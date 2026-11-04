@@ -31,9 +31,9 @@ is a `CardFamily` (`source/app.h`: match on ATQA/SAK, probe, card screen, menu) 
 `source/editor.c`):
 - Scan card (assumes Classic): type, UID, ATQA/SAK, magic generation (Gen1a, Gen4 GTU, USCUID)
   and the GTU / USCUID config. Y edits the GTU config (UID length, card type, shadow mode; guarded, see `mfc.h`).
-- Read card: dictionary (defaults + `sdmc:/prox3ds/keys.txt`, one hex key per line), magic
+- Read card: dictionary (defaults + `sdmc:/prox3ds/mfc/keys.txt`, one hex key per line), magic
   backdoors, FM11RF08S static-nonce and nested key recovery. Saved as
-  `sdmc:/prox3ds/dumps/<UID>.bin` + `.keys.txt` (never overwritten: `<UID>-2.bin` and so on) and
+  `sdmc:/prox3ds/mfc/dumps/<UID>.bin` + `.keys.txt` (never overwritten: `<UID>-2.bin` and so on) and
   opened in the editor.
 - Saved dumps: open in the editor, delete; X has the dump's card actions (card info, write onto a magic card,
   emulate the card or its UID, add its keys to the dictionary), the same as in the editor. Foreign `.bin` dumps work too.

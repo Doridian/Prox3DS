@@ -6,7 +6,7 @@
 // The Amiibo figure list: AmiiboAPI's database (N3evin/AmiiboAPI, database/amiibo.json) on the SD card,
 // fetched by amiiboDbDownload (amiibo.c). Names for the 8-byte model IDs (character, variant, figure
 // type, model number, series, 02), and the list new figures are made from.
-#define AMIIBO_DB     MF_DIR "/amiibo.json"
+#define AMIIBO_DB     APP_DIR "/amiibo.json"
 // Through jsDelivr: GitHub (raw.githubusercontent.com) only does AES-GCM, which the 3DS SSL module lacks
 // (D8A0A03C); jsDelivr still takes AES-CBC.
 #define AMIIBO_DB_URL "https://cdn.jsdelivr.net/gh/N3evin/AmiiboAPI@master/database/amiibo.json"

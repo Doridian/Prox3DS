@@ -79,7 +79,7 @@ static void startKeyScan(void)
 static void save(void)
 {
 	char path[128];
-	if (dfSaveInfo(&di, path, sizeof(path))) toast("Saved %s", path + strlen(MF_DIR "/"));
+	if (dfSaveInfo(&di, path, sizeof(path))) toast("Saved %s", path + strlen(APP_DIR "/"));
 	else msgBox("Save", "Could not write to the SD card.");
 }
 

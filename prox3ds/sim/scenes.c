@@ -233,6 +233,7 @@ static void writeFile(const char *path, const void *data, size_t n, time_t mtime
 static void sdSetup(void)
 {
 	mkdir("sdmc:", 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(MF_DIR, 0777);
 	mkdir(MF_DUMPS, 0777);
 	mkdir(MFU_DIR, 0777);
@@ -263,7 +264,7 @@ static void sdSetup(void)
 		snprintf(p, sizeof(p), MF_DUMPS "/%08X.bin", 0x10000000 * (i + 1) + i);
 		writeFile(p, mf1k.data, 1024, t0 - 86400 - i);
 	}
-	k = fopen(MF_DIR "/amiibo.json", "w"); // a few of AmiiboAPI's figures, long names and escapes
+	k = fopen(APP_DIR "/amiibo.json", "w"); // a few of AmiiboAPI's figures, long names and escapes
 	fprintf(k, "{\"amiibos\": {\n"
 		"\"0x06420000035f1102\": {\"name\": \"Pikmin\", \"release\": {\"eu\": \"2017-07-28\", \"jp\": null}},\n"
 		"\"0x0000000000000002\": {\"name\": \"Mario\", \"release\": {}},\n"

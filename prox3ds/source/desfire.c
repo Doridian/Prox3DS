@@ -573,7 +573,7 @@ bool dfRememberKey(const DfKey *k)
 	u8 len = dfKeyLen(k->type);
 	for (int i = 0; i < ndict; i++)
 		if (dict[i].len == len && !memcmp(dict[i].key, k->key, len)) return true;
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(DF_DIR, 0777);
 	FILE *f = fopen(DF_KEYS, "a");
 	if (!f) return false;
@@ -1206,7 +1206,7 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 		for (int i = 0; i < 7; i++) sprintf(uid + 2 * i, "%02X", d->ver[14 + i]);
 	else
 		for (int i = 0; i < card.uidLen; i++) sprintf(uid + 2 * i, "%02X", card.uid[i]);
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(DF_DIR, 0777);
 	struct stat st;
 	snprintf(path, pathMax, DF_DIR "/%s.txt", uid);

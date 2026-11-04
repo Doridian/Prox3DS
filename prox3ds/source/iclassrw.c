@@ -247,7 +247,7 @@ static int findKey(IcCard *card, bool kc, const u8 *key, int kind)
 
 static void remember(const IcCard *c)
 {
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(ICLASS_DIR, 0777);
 	char line[64], csn[17];
 	for (int i = 0; i < 8; i++) sprintf(csn + 2 * i, "%02X", c->csn[i]);
@@ -330,7 +330,7 @@ int icReadCard(IcCard *c, const u8 *key, int kind)
 
 bool icSaveDump(const IcCard *c, char *path, u32 max)
 {
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(ICLASS_DIR, 0777);
 	char csn[17];
 	for (int i = 0; i < 8; i++) sprintf(csn + 2 * i, "%02X", c->csn[i]);

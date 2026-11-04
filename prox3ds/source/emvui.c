@@ -51,7 +51,7 @@ void emvOpenTool(void)
 static void save(void)
 {
 	char path[128];
-	if (emvSave(&ec, path, sizeof(path))) toast("Saved %s (full card number)", path + strlen(MF_DIR "/"));
+	if (emvSave(&ec, path, sizeof(path))) toast("Saved %s (full card number)", path + strlen(APP_DIR "/"));
 	else msgBox("Save", "Could not write to the SD card.");
 }
 

@@ -850,9 +850,9 @@ static Result handlePutFile(const u8 *in, u32 inLen)
 	char path[256];
 	memcpy(path, in + 5, in[4]);
 	path[in[4]] = 0;
-	if (strncmp(path, MF_DIR "/", strlen(MF_DIR "/")) || strstr(path, "..")) return -3;
+	if (strncmp(path, APP_DIR "/", strlen(APP_DIR "/")) || strstr(path, "..")) return -3;
 	// its directories first
-	for (char *p = path + strlen(MF_DIR "/"); (p = strchr(p, '/')); p++) {
+	for (char *p = path + strlen(APP_DIR "/"); (p = strchr(p, '/')); p++) {
 		*p = 0;
 		mkdir(path, 0777);
 		*p = '/';

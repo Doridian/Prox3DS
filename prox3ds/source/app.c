@@ -337,7 +337,7 @@ static int logMax(void)
 	return top;
 }
 
-#define LOG_DIR MF_DIR "/logs"
+#define LOG_DIR APP_DIR "/logs"
 #ifdef PROX3DS_RELEASE
 #define LOG_HELP "Everything the card operations logged, kept in memory only. " BTN_Y " saves it to sdmc:/prox3ds/logs."
 #else
@@ -350,7 +350,7 @@ static void logSave(void)
 	char path[64];
 	time_t now = time(NULL);
 	struct tm *tm = gmtime(&now);
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(LOG_DIR, 0777);
 	snprintf(path, sizeof(path), LOG_DIR "/%04d%02d%02d-%02d%02d%02d.log", tm->tm_year + 1900, tm->tm_mon + 1,
 		tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);

@@ -394,7 +394,7 @@ static void save(void)
 {
 	char path[128], uid[32];
 	uidHex(&gcCard, uid, "");
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(GP_DIR, 0777);
 	snprintf(path, sizeof(path), GP_DIR "/%s.txt", uid);
 	FILE *f = fopen(path, "w");
@@ -417,7 +417,7 @@ static void save(void)
 		fprintf(f, "\n");
 	}
 	fclose(f);
-	toast("Saved %s", path + strlen(MF_DIR "/"));
+	toast("Saved %s", path + strlen(APP_DIR "/"));
 }
 
 static void gpMenu(void)

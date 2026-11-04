@@ -82,7 +82,7 @@ static void saveDf(void)
 	char path[128];
 	if (dfEmuSave(path, sizeof(path))) {
 		dfFilesChanged();
-		toast("Saved %s", path + strlen(MF_DIR "/"));
+		toast("Saved %s", path + strlen(APP_DIR "/"));
 	} else msgBox("Emulate", "Could not save the info file.");
 }
 

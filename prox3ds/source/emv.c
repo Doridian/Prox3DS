@@ -556,7 +556,7 @@ bool emvSave(const EmvCard *e, char *path, u32 max)
 			last4 = e->app[i].pan + strlen(e->app[i].pan) - 4;
 			break;
 		}
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(SC_DIR, 0777);
 	struct stat st;
 	for (int i = 1; i < 1000; i++) {

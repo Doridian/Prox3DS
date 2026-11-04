@@ -318,7 +318,7 @@ bool fidoSave(const FidoInfo *f, char *path, u32 max)
 {
 	char g[37] = "key", h[2 * FIDO_RAW + 1];
 	if (f->hasAaguid) fidoAaguidText(f->aaguid, g), g[8] = 0;
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(SC_DIR, 0777);
 	struct stat st;
 	for (int i = 1; i < 1000; i++) {

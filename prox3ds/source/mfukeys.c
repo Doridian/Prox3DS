@@ -296,7 +296,7 @@ int mfuKeyList(const u8 *uid, u32 uidLen, const MfuDump *d, u8 len, MfuKey *out,
 			if (parseHex(line, key, 16, &end) != len || (*end && !strchr(" \t#\r\n", *end))) continue;
 			while (*end == ' ' || *end == '\t' || *end == '#') end++;
 			char label[40];
-			snprintf(label, sizeof(label), "%s", *end && *end != '\r' && *end != '\n' ? end : "mfu_keys.txt");
+			snprintf(label, sizeof(label), "%s", *end && *end != '\r' && *end != '\n' ? end : "mfu/keys.txt");
 			label[strcspn(label, "\r\n")] = 0;
 			n = add(out, n, max, len, key, label);
 		}
@@ -377,7 +377,7 @@ bool mfuRememberKey(const u8 *uid, u32 uidLen, const u8 *key, u8 len)
 	for (int i = 0; i < len; i++) p += sprintf(p, "%02X", key[i]);
 	sprintf(p, "\n");
 	n++;
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(MFU_DIR, 0777);
 	if (!(f = fopen(MFU_KNOWN, "w"))) return false;
 	for (int i = 0; i < n; i++) fputs(lines[i], f);

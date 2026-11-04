@@ -429,6 +429,7 @@ static void actAddKeys(void)
 {
 	static u8 have[MF_MAX_KEYS][6];
 	int n = mfKeyList(have, MF_MAX_KEYS, NULL, 0), added = 0;
+	mkdir(APP_DIR, 0777);
 	mkdir(MF_DIR, 0777);
 	FILE *f = fopen(MF_KEYS, "a");
 	if (!f) {
@@ -593,6 +594,7 @@ static void keyEntered(const u8 *b, u32 len)
 				b[0], b[1], b[2], b[3], b[4], b[5]);
 			return;
 		}
+	mkdir(APP_DIR, 0777);
 	mkdir(MF_DIR, 0777);
 	FILE *f = fopen(MF_KEYS, "a");
 	if (!f) {

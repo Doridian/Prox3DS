@@ -123,7 +123,7 @@ static void saveCopy(void)
 	int i = 2;
 	do snprintf(np, sizeof(np), "%s-%d.bin", base, i++);
 	while (!stat(np, &st) && i < 1000);
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(MFU_DIR, 0777);
 	snprintf(path, sizeof(path), "%s", np);
 	save();

@@ -143,7 +143,7 @@ bool scSaveInfo(const ScInfo *s, const Card *c, char *path, u32 pathMax)
 {
 	char uid[32], h[300];
 	uidHex(c, uid, "");
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(SC_DIR, 0777);
 	struct stat st;
 	for (int i = 1; i < 1000; i++) {

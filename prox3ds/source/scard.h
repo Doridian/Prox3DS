@@ -12,7 +12,7 @@
 // A new applet tool: its screen in its own file (oathui.c is one), its open function in app.h, and an
 // entry in scApplets[].
 
-#define SC_DIR  MF_DIR "/smartcard"
+#define SC_DIR  APP_DIR "/smartcard"
 #define SC_AIDS SC_DIR "/aids.txt" // more applets to look for: "<AID hex> <name>" per line, '#' comments
 #define SC_MAX_FOUND 24
 

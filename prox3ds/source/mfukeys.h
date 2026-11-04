@@ -8,7 +8,7 @@
 // 8 or 32 digits, '#' comments, the text after the key is its label), the passwords pm3 `hf mfu
 // pwdgen` derives from the UID (common/generator.c) and the factory defaults.
 
-#define MFU_KEYS  MF_DIR "/mfu_keys.txt"
+#define MFU_KEYS  MFU_DIR "/keys.txt"
 #define MFU_KNOWN MFU_DIR "/known.txt" // "<UID hex> <key hex>" per line, written by mfuRememberKey
 #define MFU_PM3_KEYS MFU_DIR "/mfulc_default_keys.dic" // pm3's UL-C keys, downloaded (pm3dict.h)
 

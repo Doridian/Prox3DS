@@ -41,7 +41,7 @@ static void run(void)
 	char url[160], tmp[128], dir[128];
 	snprintf(url, sizeof(url), PM3_CLIENT_URL "dictionaries/%s", dl.name);
 	snprintf(tmp, sizeof(tmp), "%s.new", dl.path);
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	snprintf(dir, sizeof(dir), "%s", dl.path);
 	*strrchr(dir, '/') = 0;
 	mkdir(dir, 0777);

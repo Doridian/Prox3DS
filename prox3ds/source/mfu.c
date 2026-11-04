@@ -752,7 +752,7 @@ bool mfuSaveDump(const MfuDump *d, char *path, u32 pathMax)
 	} else {
 		for (int i = 0; i < card.uidLen; i++) sprintf(uid + 2 * i, "%02X", card.uid[i]);
 	}
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(MFU_DIR, 0777);
 	struct stat st;
 	snprintf(path, pathMax, MFU_DIR "/%s.bin", uid);

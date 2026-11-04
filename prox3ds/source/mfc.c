@@ -2223,6 +2223,7 @@ bool mfSaveDump(const MfDump *d, char *path, u32 pathMax)
 {
 	char uid[21] = "";
 	for (int i = 0; i < card.uidLen; i++) sprintf(uid + 2 * i, "%02X", card.uid[i]);
+	mkdir(APP_DIR, 0777);
 	mkdir(MF_DIR, 0777);
 	mkdir(MF_DUMPS, 0777);
 	// Never overwrite an older dump (it may hold edits): UID.bin, UID-2.bin, ...

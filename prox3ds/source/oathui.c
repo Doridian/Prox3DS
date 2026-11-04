@@ -20,7 +20,7 @@
 #include "probe.h"
 #include "ui.h"
 
-#define OATH_CFG MF_DIR "/oath.txt" // clock_offset=<seconds>: the console clock minus UTC
+#define OATH_CFG APP_DIR "/oath.txt" // clock_offset=<seconds>: the console clock minus UTC
 
 static OathInfo oi;
 static s64 clockOffset; // seconds: the console clock minus UTC (time zone, or a clock set wrong)
@@ -44,7 +44,7 @@ static void cfgLoad(void)
 
 static void cfgSave(void)
 {
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	FILE *f = fopen(OATH_CFG, "w");
 	if (!f) return;
 	fprintf(f, "clock_offset=%lld\n", clockOffset);

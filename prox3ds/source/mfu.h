@@ -31,7 +31,7 @@ typedef struct {
 } MfuInfo;
 
 #define MFU_MAX_PAGES 256
-#define MFU_DIR       MF_DIR "/mfu"
+#define MFU_DIR       APP_DIR "/mfu"
 // pm3's mfu_dump_t: version[8], tbo[2], tbo1, max page number, signature[32], counters + tearing
 // [3][4], then the pages. The same file, so pm3 can load ours (hf mfu restore / eload).
 #define MFU_HDR       56

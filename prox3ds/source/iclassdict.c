@@ -128,7 +128,7 @@ static int fetch(const char *name, const char *path, bool key)
 
 int icDictDownload(void)
 {
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(ICLASS_DIR, 0777);
 	// A forged list only makes the key search try other keys, a forged transport key decrypts credentials
 	// to garbage (http.h: no certificate checks).

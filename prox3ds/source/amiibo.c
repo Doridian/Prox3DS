@@ -283,7 +283,7 @@ int amiiboNew(const u8 id[8], Amiibo *a)
 
 int amiiboDbDownload(const char *path)
 {
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	// The worst a forged list does is name figures wrong (http.h: no certificate checks).
 	if (!httpGetFile(AMIIBO_DB_URL, path, 8 << 20, why, sizeof(why))) return 0;
 	struct stat st;

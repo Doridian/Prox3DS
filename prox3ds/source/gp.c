@@ -490,7 +490,7 @@ bool gpRememberKey(const GpKeys *k)
 	int n = gpKeyList(list, 64);
 	for (int i = 0; i < n; i++)
 		if (!memcmp(&list[i], k, sizeof(*k))) return true;
-	mkdir(MF_DIR, 0777);
+	mkdir(APP_DIR, 0777);
 	mkdir(GP_DIR, 0777);
 	FILE *f = fopen(GP_KEYS, "a");
 	if (!f) return false;

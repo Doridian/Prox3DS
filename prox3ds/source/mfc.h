@@ -163,7 +163,8 @@ extern const u8 mfDefaultKeys[][6];
 extern const int mfNumDefaultKeys;
 
 #define MF_MAX_KEYS 256
-#define MF_DIR      "sdmc:/prox3ds"
+#define APP_DIR     "sdmc:/prox3ds" // everything the app keeps on the SD card
+#define MF_DIR      APP_DIR "/mfc"
 #define MF_KEYS     MF_DIR "/keys.txt" // one hex key per line, '#' comments
 int mfSectorsFromSak(u8 sak);
 // extra keys, then MF_KEYS, then the defaults, without duplicates

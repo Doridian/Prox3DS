@@ -10,9 +10,9 @@
 // The card counts failed EXTERNAL AUTHENTICATEs and locks itself after a few, so a key is only ever used
 // after the card cryptogram from INITIALIZE UPDATE proves it right (gpCheck); a wrong key costs nothing.
 
-#define GP_DIR  MF_DIR "/gp"
+#define GP_DIR  APP_DIR "/gp"
 #define GP_KEYS GP_DIR "/keys.txt" // one key per line: 32 hex digits (ENC = MAC = DEK) or three; '#' comments
-#define GP_CAPS MF_DIR "/cap"      // CAP files to install
+#define GP_CAPS APP_DIR "/cap"      // CAP files to install
 #define GP_MAX_ENT 48
 
 typedef struct {
