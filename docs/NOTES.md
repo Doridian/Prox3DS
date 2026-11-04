@@ -1746,6 +1746,9 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   a full 0 only for TT = 00. The 01FFFF -> 000000 case above stays a one-off (unexplained).
   An interrupted try left flag 21; one plain INCR(0) put it back to BD.
   tlib Ev1.cnt took a NAK (b'NAK', 3 bytes) for the value 4B414E; fixed.
+- App counter reset (2246600): pm3's DECREMENT dropped; above 00FFFF it refuses at once, and a torn +1 that
+  goes through (counter > 00FFFF) ends the run. Card 2: counter 2 at 04FFFF refused; counter 1 5 -> 0 in 43
+  steps / 10 s (BD 2801).
 - Network requests that touch the chip now stop on B on the 3DS (netCardOp, app.c), like a job.
 - OTP tear (page 3, mfuTearWrite / tearscan now take page 3; the setup write is not read back since it
   ORs): card 04065902762496, OTP 0000000F, torn WRITE 000000F0 at 400-2800 us step 50: 0000000F up to
