@@ -75,7 +75,7 @@ jobs:
         run: |
           mv prox3ds-release.3dsx Prox3DS.3dsx
           mv prox3ds.3dsx Prox3DS-debug.3dsx
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
