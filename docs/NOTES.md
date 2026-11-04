@@ -2021,3 +2021,23 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   PC (old 0.38). On the 3DS with real cards (the user, same day): NTAG215 and DESFire EV3 both "verified"
   (secp128r1 and secp224r1). The 3DS did not pick up the pm3's UL EV1 sim at that placement. ecc.c is not
   reentrant: VM and readers never run together.
+
+## German eID card (nPA) / PACE (tools/exp/eid/pace.py) -- 2026-11-04
+- Card (user's old Personalausweis): ISO14443-A, UID 08 EF BF 2C (random), ATQA 0008, SAK 20, ATS 09 78 F7 D4
+  02 80 82 90 00 (FSC 256, FWI 13 = 2.5 s, CID supported). Type A: no 14443-B work needed.
+- Readable without any key: EF.CardAccess (SFI 1C, 196 bytes): TA v2; PACE-ECDH-GM-AES-CBC-CMAC-128 v2 with
+  parameter 13 (brainpoolP256r1); CA-ECDH-AES-CBC-CMAC-128 v2 key 0x41 (+ CA domain params, ecPublicKey,
+  param 13); CardInfoLocator http://bsi.bund.de/cif/npa.xml; PrivilegedTerminalInfo with CA key 0x45.
+  EF.DIR (2F00): eSign A000000167455349474E, ePass A0000002471001, eID E80704007F00070302. EF.ATR/INFO
+  (2F01): 43 01 F8, 47 03 F7 41 E0, 7F66 (extended length, 0x5F0 both ways). MF by SFI read: 6A82.
+- PIN status with no attempt used: MSE:Set AT (00 22 C1 A4, 80 PACE OID, 83 03) answers 9000 = 3 tries
+  (63C2 / 63C1 = suspended, CAN first / 63C0 blocked, 6283 = eID deactivated, per TR-03110 / AusweisApp).
+- PACE with the CAN (83 02) works over the pm3 with pace.py: KDF SHA-1(pwd || counter)[:16], nonce
+  AES-CBC zero IV, GM H = sk1 * PKc1, G' = s G + H, tokens CMAC over 7F49 {06 OID, 86 point}, then AES SM
+  (SSC 16 bytes, IV = E(KEnc, SSC), MAC over SSC || pad(hdr) || pad(DO87 DO97)). No CAR in the card's answer
+  (CAN without a CHAT: ICAO mode).
+- After PACE-CAN: EF.CardSecurity (SFI 1D / select 011D) 6982, eID application SELECT 6982, ePass SELECT
+  9000 but SOD / DG1 / DG2 6982, EF.COM / DG14 6A82. So the nPA gives no personal data (not even the MRZ
+  or the photo) without Terminal Authentication (a BSI-issued CV certificate chain) -- by design (only
+  authorities read the photo). Reachable without TA: the metadata above, CAN check, PIN status, and the
+  PIN management that AusweisApp does (PACE-PIN then RESET RETRY COUNTER 2C 02 03 new PIN; PUK unblock).
