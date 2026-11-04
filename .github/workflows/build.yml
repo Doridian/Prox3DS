@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     container: devkitpro/devkitarm:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install python3
         run: command -v python3 || (apt-get update && apt-get install -y --no-install-recommends python3)
       - name: Chip patches
@@ -33,7 +33,7 @@ jobs:
   uisim:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install gcc-multilib, Pillow, NanumGothic
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-multilib python3-pil fonts-nanum
       - name: Render scenes
