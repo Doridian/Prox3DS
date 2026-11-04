@@ -331,10 +331,13 @@ int mfuTorn(const u8 *c, u32 len, u32 us)
 	FAIL(0, "no card after the tear");
 }
 
+static int writeRaw(u8 page, const u8 data[4], bool noVerify);
+
 int mfuTearWrite(const MfuType *t, u8 page, const u8 old[4], const u8 data[4], u32 us, u8 got[4])
 {
-	if (page < 4 || page >= t->userEnd) FAIL(0, "page %d is not user memory", page);
-	int r = mfuWritePage(t, page, old);
+	// page 3 = OTP: a WRITE ORs into it, so the setup write is not read back (pm3 hf mfu otptear)
+	if (page < 3 || page >= t->userEnd) FAIL(0, "page %d is not OTP / user memory", page);
+	int r = page == 3 ? writeRaw(3, old, true) : mfuWritePage(t, page, old);
 	if (r <= 0) return r;
 	u8 c[6] = { 0xA2, page }, back[16];
 	memcpy(c + 2, data, 4);

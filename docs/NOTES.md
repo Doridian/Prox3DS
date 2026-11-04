@@ -1723,8 +1723,18 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
     tools/exp/tear/countertear.py.
   - App on the 3DS, same card, counter 2 = 1: calibrated BD 2755 (pm3 + 10 us), RESET 000001 -> 0 in
     35 steps / 7.6 s at BD 2788. Counters, flags (BD) and signature fine afterwards.
-  - Not tested: the DECREMENT phase (counters above 00FFFF), and on more than one card.
-- Not tried yet: tearing the OTP page / lock bytes (pm3 otptear's real target) and UL-C / UL-AES key
+  - Second fresh card 04065902762496: counter 1 (1 -> 0) in 40 steps / 8.7 s, BD 2760 -> 2799 (the
+    app logs each step now). Counter 0 from 1 did NOT reset: the RESET BD walk missed the window, a +1
+    committed (> 00FFFF), and DECREMENT took it to 04E600 by the 2000-step cap.
+  - DECREMENT (pm3's recipe: torn +0x100 at BD, torn 0 at BD-10, twice) from 04E600: 2000 steps / 7.8
+    min, counter -> 08CD00, never once lower (first 153 steps logged: 103 unchanged, 50 exactly +0x100,
+    BD 2760-2824, flag BD). Not checked with pm3 yet (its DECREMENT, `hf mfu countertear -c 0` on this
+    card, is the next comparison); untried: other BD - 00 offsets.
+- OTP tear (page 3, mfuTearWrite / tearscan now take page 3; the setup write is not read back since it
+  ORs): card 04065902762496, OTP 0000000F, torn WRITE 000000F0 at 400-2800 us step 50: 0000000F up to
+  2700, 0000005F at 2750, 000000FF at 2800. No erase phase at all (user pages: 00000000 from ~460 us):
+  an OTP write only programs, so a tear can't clear OTP bits on the MF0UL11. That card's OTP is 000000FF.
+- Not tried yet: tearing the lock bytes (page 2: shares BCC1 + internal, an erase-phase tear may brick) and UL-C / UL-AES key
   block tears (BREAKMEIFYOUCAN tables), which need those cards.
 - Fix (UL-C 04A0A0A0A0A002 scanned as UID 04A0A0A0A0A00280 + "lost the card"): selectAnticoll kept a
   pointer into the frame buffer for the anticollision answer; the SELECT reused the buffer, so the

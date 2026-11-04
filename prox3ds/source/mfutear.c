@@ -72,8 +72,8 @@ static void scanCore(void)
 	const MfuType *t = in.type;
 	snprintf(wType, sizeof(wType), "%s", t->name);
 	wPage = ws.page ? ws.page : t->userEnd - 1;
-	if (wPage < 4 || wPage >= t->userEnd) {
-		snprintf(jobWhy, sizeof(jobWhy), "Page %d is not user memory on the %s (4-%d).", wPage, t->name, t->userEnd - 1);
+	if (wPage < 3 || wPage >= t->userEnd) {
+		snprintf(jobWhy, sizeof(jobWhy), "Page %d is not OTP / user memory on the %s (3-%d).", wPage, t->name, t->userEnd - 1);
 		return;
 	}
 	wTotal = (ws.to - ws.from) / ws.step + 1;
@@ -204,7 +204,7 @@ static void pageV(char *o)
 static void pageSet(s64 v) { ws.page = v; }
 static void pageE(void)
 {
-	entryDec("Page", "A user memory page (4 and up; 0 = the card's last one). Its contents get overwritten.", 0, 255, ws.page, pageSet);
+	entryDec("Page", "A user memory page (4 and up; 0 = the card's last one), or 3 = OTP (bits only ever set). Its contents get overwritten.", 0, 255, ws.page, pageSet);
 }
 static void fromV(char *o) { sprintf(o, "%d us", ws.from); }
 static void fromSet(s64 v) { ws.from = v; }
@@ -409,6 +409,7 @@ static void counterCore(void)
 		TRY(normalize());
 		u32 f;
 		if (TRY(readCnt(&f, &t)) <= 0) continue;
+		logp("countertear %s %d: BD %d %06lX -> %06lX flag %02X\n", phase == DEC ? "dec" : "reset", cp.steps, bd, v, f, t);
 		if (phase == RESET && f > CNT_PREP) phase = DEC;
 		// pm3 mfu_cnt_tune_delay: no change -> later, a big jump -> earlier
 		if (f == v && bd < BD_MAX) bd++;
