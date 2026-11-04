@@ -16,6 +16,7 @@ char appPath[256];
 volatile bool restartRequested;
 char netAddr[32] = "192.0.2.132:8020";
 volatile u32 netKeys;
+volatile bool netCardOp;
 
 void logp(const char *fmt, ...)
 {
