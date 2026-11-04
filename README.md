@@ -126,10 +126,13 @@ Everything lives under `sdmc:/prox3ds/`:
 | --- | --- |
 | `mfc/` | MIFARE Classic dumps in `dumps/` (`<UID>.bin` + `<UID>.keys.txt`, never overwritten); `mfc/keys.txt`: your keys, one per line |
 | `mfu/` | Ultralight / NTAG dumps (pm3 `hf mfu` format); `mfu/keys.txt`: your passwords / UL-C keys |
+| `desfire/` | Saved DESFire info files (to emulate); `desfire/keys.txt`: your keys |
 | `iclass/` | iClass dumps, dictionaries, `iclass_decryptionkey.bin` |
-| `smartcard/aids.txt` | Extra applets to look for: `AID name` per line |
+| `smartcard/` | Saved EMV / FIDO card info; `smartcard/aids.txt`: extra applets to look for, `AID name` per line |
 | `gp/keys.txt` | Extra GlobalPlatform keys |
 | `cap/` | `.cap` files to install onto cards or run in the Java Card VM |
+| `jc/` | The Java Card VM's card state (installed applets) |
+| `amiibo.json` | The Amiibo figure list (AmiiboAPI), downloaded from the Amiibo menu |
 | `oath.txt` | Your UTC offset for OATH codes (the 3DS clock has no time zone) |
 | `emu/` | `apdu.txt` (APDU log answers) and `apdu.log` |
 | `logs/` | Logs saved from the Log screen |
