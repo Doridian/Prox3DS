@@ -1,6 +1,6 @@
 /* Patch SRAM image: entry pointer word first, code, then a params block the host patches
    at the very end. Load address = (entry & ~1) - 4, like the stock B5 patch (0x3B80C).
-   Code must start right after the entry word (see NOTES.md). */
+   Code must start right after the entry word (see docs/NOTES.md). */
 ENTRY(init)
 /* Where the AON code region ends and the zeroed variables start (an image can move it: --defsym). */
 AON_SPLIT = DEFINED(AON_SPLIT) ? AON_SPLIT : 0x68100;

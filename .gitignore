@@ -3,18 +3,18 @@
 *.cxi
 *.cia
 # Unpacked titles (code.bin, exheader, extracted SPD patches)
-/extracted/
+/docs/extracted/
 # Chip ROM/RAM dumps, card dumps and keys
-/dump/
+/docs/dump/
 *.dump
 *_keys.bin
 # objdump output of firmware
-/disasm/
+/docs/disasm/
 
 # --- Ghidra ---
 # Projects hold the firmware; keep only our scripts
-/ghidra/*
-!/ghidra/scripts/
+/docs/ghidra/*
+!/docs/ghidra/scripts/
 
 # --- Build artifacts ---
 # chip/: gcc + objcopy + objdump output, and mkpatch .ncd

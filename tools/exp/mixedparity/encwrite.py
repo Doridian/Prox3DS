@@ -1,4 +1,4 @@
-# Encrypted Mifare Classic WRITE via mixed-parity frames (NOTES.md). Writes block 2 with a test
+# Encrypted Mifare Classic WRITE via mixed-parity frames (docs/NOTES.md). Writes block 2 with a test
 # pattern under key A FF..FF, reads it back encrypted, then restores zeros via the Gen1a backdoor.
 # Usage: encwrite.py "j1,j2/j1,j2..." N  (HW-parity pairs to allow, number of writes)
 import sys

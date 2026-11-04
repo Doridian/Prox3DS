@@ -19,7 +19,7 @@ import mfc
 from crypto1 import Crypto1, auth_answer, prng_successor
 from rawa import crc_a
 
-NRAR_CODE = 0x78  # 72-bit {nr}{ar} in bit mode (NOTES.md); mfc.pack's 0x90 truncates it
+NRAR_CODE = 0x78  # 72-bit {nr}{ar} in bit mode (docs/NOTES.md); mfc.pack's 0x90 truncates it
 
 
 def distance(a, b):

@@ -28,7 +28,7 @@
 //                 TXRAW, then the n stores, each `delay` timer ticks after the last FIFO write
 //                 (ascending), interrupts off until TX busy (0x5C594 bit 0) clears. Used to
 //                 toggle parity (0x5C560) per byte inside one frame: mixed-parity frames carry
-//                 the 162-bit encrypted WRITE data frame (NOTES.md).
+//                 the 162-bit encrypted WRITE data frame (docs/NOTES.md).
 // Errors answer 4F 2C | 01.
 //
 // CAPTURE takes the framer's TX/RX interrupt group away from the ROM: the framer ISR (0x197E)
@@ -375,7 +375,7 @@ static u32 chkkeys(const u8 *arg, u32 n, u32 nrar, u8 *out)
 // absolute time the way pm3 schedules on GetCountSspClk.
 #define NOW() ((u32)(0u - TIMER))
 
-// OP_DARKSIDE: darkside runs (NOTES.md, issue #2). The card leaks a 4-bit encrypted NACK to a wrong
+// OP_DARKSIDE: darkside runs (docs/NOTES.md, issue #2). The card leaks a 4-bit encrypted NACK to a wrong
 // {nr}{ar} regardless of parity (always-leak). Its PRNG free-runs, so the tag nonce is a function of
 // when the AUTH arrives. AUTHs fire on an absolute grid `sync` ticks apart, a PRNG period (host-
 // calibrated) over nslot: slot i takes every nslot-th grid point, so each slot sees its own nonce once
@@ -487,7 +487,7 @@ static u32 darkside(const u8 *arg, u32 n, u32 nrar_tx, struct dslot *ds)
 }
 
 // (OP_SNAP, the framer snapshot used once for NFC-V exploration, was removed to make room for the
-// darkside timed-sync collector. NOTES.md keeps the framer dumps it produced; re-add from git if
+// darkside timed-sync collector. docs/NOTES.md keeps the framer dumps it produced; re-add from git if
 // another technology needs one.)
 
 __attribute__((noinline)) static int hook(u8 *msg)

@@ -4,7 +4,7 @@
 - `0004013020004002` New3DS `nfc` sysmodule (v21 / "0201builder"), decrypted CXI. NOTE: at runtime it runs as
   program ID `0004013000004002` (same for gpio 1B02 / i2c 1E02), so PM calls must use that ID
 - `0004013020001E02` New3DS `i2c` sysmodule (v3), decrypted CXI
-- Unpack: `python3 tools/ncch.py <cxi> extracted/<tid>` (exheader + decompressed .code)
+- Unpack: `python3 tools/ncch.py <cxi> docs/extracted/<tid>` (exheader + decompressed .code)
 
 ## nfc sysmodule
 - .code loads at 0x100000: text 0x100000 (0x34a64), ro 0x135000 (0x41e0), data 0x13a000 (0x149c), bss 0x2cc00
@@ -14,7 +14,7 @@
 - I2C framing: 1-byte HCIT prefix 0x10 + NCI packet (e.g. `10 20 00 01 01` = CORE_RESET_CMD)
 - ro has amiibo key material ("unfixed infos" / "locked secret") + AES tables at ~0x355b0..0x36080
 
-## Host <-> controller wiring (from nfc .code, Ghidra project ghidra/proj)
+## Host <-> controller wiring (from nfc .code, Ghidra project docs/ghidra/proj)
 - I2C: i2c::NFC device 15. Write = cmd 0x14 WriteDeviceRaw(dev, size, static buf id1) (FUN_00109e88),
   Read = cmd 0x15 ReadDeviceRaw(dev, size) -> static buf id0 (FUN_00106240). Both chunked to <=0x100.
 - Receive path is AOSP nfc_hal_nci_receive_msg style: read HCIT+3-byte header, then exactly payload len.
@@ -30,8 +30,8 @@
 - Chip name table at ro 0x36304: 20791B3, 20791B4, 43341B0, ... -> controller is BCM20791
 - Two Secure Patch Download (SPD) sets, pre-framed as `10 2F 2E <len> <type> ...`
   (NCI GID_PROP / OID 0x2E = NCI_MSG_SECURE_PATCH_DOWNLOAD):
-  - .code+0x36339 .. 0x37349 -> `extracted/patch_20791B4.ncd` (4112 B)
-  - .code+0x37360 .. 0x38805 -> `extracted/patch_20791B5.ncd` (5285 B)
+  - .code+0x36339 .. 0x37349 -> `docs/extracted/patch_20791B4.ncd` (4112 B)
+  - .code+0x37360 .. 0x38805 -> `docs/extracted/patch_20791B5.ncd` (5285 B)
 - Segment type = payload[0]: 00 header (chip ver string), 01 SRAM, 02 AON, 03 patch table, 04 secure patch table, 06 signature
 - **Signature segment (type 06, 48 bytes = ECDSA-P192 r||s sized) is ALL ZEROS in both sets**
   -> strong hint the controller does not enforce patch signatures. Unconfirmed until tested on HW.
@@ -71,7 +71,7 @@
   into the patch, some raw instruction replacements). B4: 13 hooks, B5: 22 hooks.
 - Implied chip map: ROM at 0x0 (hooks up to 0x1da38), RAM 0x03xxxx (patch at top ~0x3b800+), AON 0x068xxx,
   other refs to 0x05xxxx, 0x07000000, 0x07c00000, 0x0849xxxx (likely MMIO, unconfirmed)
-- Ghidra project ghidra/chip (Cortex-M Thumb), one program per segment, functions seeded at entry + hook targets.
+- Ghidra project docs/ghidra/chip (Cortex-M Thumb), one program per segment, functions seeded at entry + hook targets.
   Hook handlers are mid-function trampolines into ROM -> need a ROM dump to get much further.
 
 ## Open questions / next steps
@@ -111,8 +111,8 @@ Ops: 0 ping, 1 takeover, 2 power (0 off / 1 cycle), 3 i2c write, 4 read packet (
   Pipelining can tear a chunk -> dump reads twice and re-reads disagreements.
 - ROM: 128 KB at 0x0, mirrored at 0x20000 (up to 0x38000). RAM 0x38000..; initial SP 0x3A374, reset 0x61.
   "Copyright (c) Broadcom Corp. 2011 BCM20791B0 (r) NFC Firmware", built "Dec 22 2012".
-  dump/rom_20791B5.bin sha256 258ab0fc63a43a7c83da54fa66e464365a7af025c56d0b721217ad24e47f6424
-  (two full passes identical). dump/ram_38000_40000_dumper4.bin = RAM with dumper4 loaded.
+  docs/dump/rom_20791B5.bin sha256 258ab0fc63a43a7c83da54fa66e464365a7af025c56d0b721217ad24e47f6424
+  (two full passes identical). docs/dump/ram_38000_40000_dumper4.bin = RAM with dumper4 loaded.
 - BT HCI (HCIT 01) is parsed (Read_RAM 0xFC4D -> status 01 unknown cmd).
 
 ## ROM: NCI command path, debug monitor (chip/reader.c, tools/chipmon.py) -- 2026-10-29
@@ -159,7 +159,7 @@ Ops: 0 ping, 1 takeover, 2 power (0 off / 1 cycle), 3 i2c write, 4 read packet (
   interrupt makes the next TX hang the chip; write it at TX time instead. Rare hangs remain (TX right
   after a 4-bit answer); rawa.py reloads and resumes.
 - Card on the 3DS (user's): UID C1C1C1C1, ATQA 0004, SAK 88, Mifare Classic 1K, Gen1a magic
-  (40/7 -> 0A, 43 -> 0A). Full dump via backdoor: dump/card_C1C1C1C1.bin. Raw AUTH (60 00 + CRC)
+  (40/7 -> 0A, 43 -> 0A). Full dump via backdoor: docs/dump/card_C1C1C1C1.bin. Raw AUTH (60 00 + CRC)
   returns nt; nonces vary.
 - Parity off (TX and RX): 0x5C560 = 0x08 (reads back 0 normally; ROM writes other values there).
   Found by bit-flip sweep (one bit at a time over 0x5C540-5C5BC, 5C640-5C6CC, 5C780-5C7BC; only hit
@@ -270,7 +270,7 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
   AON code is only reachable via the stock SRAM hooks, which we don't load.
 - mkpatch now builds the header field by field (byte-identical to before) and an AON segment of
   14 bytes (entry ptr + push {lr}; bl 0x11888; pop {r1}; bx r1). Verified on HW: monitor answers,
-  0x68C80 = 0x32E0 afterwards, Gen1a backdoor dump of all 64 blocks matches dump/card_C1C1C1C1.bin.
+  0x68C80 = 0x32E0 afterwards, Gen1a backdoor dump of all 64 blocks matches docs/dump/card_C1C1C1C1.bin.
 - App: the stock-patch jobs (L+B/X/Y signature tests, L+R Read_RAM + stock cross-check) are gone,
   so Prox3DS embeds no Broadcom/Nintendo bytes and the user needs no sysmodule dump to build it.
 
@@ -451,7 +451,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 ## Magic: USCUID / Gen4 GDM (ZUID) -- 2026-10-31
 - Card UID 2A01E51E (ATQA 0004, SAK 08, Fudan based, keys FF). pm3 `hf mf info`: "Gen 1a" + "Gen 4 GDM /
   USCUID (ZUID Gen1 Magic Wakeup)". `hf mf gdmgetcfg --gen1a` -> 7AFF0000000000000000000000000008
-  (gdmcfg.txt), the factory ZUID config. ZUID only honors the first 8 config bytes and the SAK (pm3
+  (docs/gdmcfg.txt), the factory ZUID config. ZUID only honors the first 8 config bytes and the SAK (pm3
   doc/magic_cards_notes.md "MIFARE Classic USCUID"), so no 7-byte UID / static nonce modes on this one.
 - Protocol (pm3 trace): 40(7) / 43 wakeup (0A each), then E0 00 + CRC -> config[16] + CRC; write: E1 00
   + CRC -> 0A, config[16] + CRC -> 0A (3.3 ms later). Hidden blocks 38xx / A8xx. NEVER F0 F1 F6 F8 F9
@@ -1271,7 +1271,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   for both keys; the rest of key_retail.bin is the module's own table.
 - amiibo.c: reads the module's ExeFS .code from NAND (FSUSER_OpenFileDirectly, ARCHIVE_SAVEDATA_AND_CONTENT,
   title 0004013020004002, then 0004013000004002), BLZ-decompresses it (same bytes as tools/ncch.py), finds
-  both sets (CRCs 90B0ADB3 / 7355512E, same as extracted/), gets the pad from ps:ps, then amiitool (socram8888,
+  both sets (CRCs 90B0ADB3 / 7355512E, same as docs/extracted/), gets the pad from ps:ps, then amiitool (socram8888,
   MIT): unpack (decrypt + both HMACs), pack, and a fresh unregistered copy (settings + app data zeroed,
   UID / model info / salt kept). Checked offline against a transcription of amiitool's pack with made-up keys.
 - THIS console's set is set 1. Proof: a fresh set-1 copy (character 0642 0000 035F 1102, from the Flipper's
@@ -1291,7 +1291,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   of the cached UID got silence and so did CF C6. Fixed: card ops (not ISO-DEP / DESFire, whose session
   a SELECT ends) SELECT first and reactivate on silence (cardReady). Checked by changing the GTU's UID
   with a block 0 write, then `magic`.
-- Generated images live in the gitignored dump/amiibo/ (Flipper .nfc + pm3 .bin), the GTU backup in dump/gtu/.
+- Generated images live in the gitignored docs/dump/amiibo/ (Flipper .nfc + pm3 .bin), the GTU backup in docs/dump/gtu/.
   GTU restored to Classic 1K afterwards: config and all 64 blocks identical to the backup.
 - App UI (amiiboui.c): L on the Ultralight card screen of an NTAG215, or "Amiibo" on a saved 135-page
   dump: the figure decrypted (model info, nickname, owner Mii name at plain 0x4C+0x1A UTF-16LE, dates,
@@ -1317,7 +1317,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   end to end: New -> "8-Bit Mario Classic Color" (0000 0000 0238 0602) onto blank NTAG215 041ADFBA064F81,
   unlocked; read-back verifies (set 1) and System Settings accepts it as a new amiibo (asks for owner).
 - GTU as the blank (UL mode, NTAG215 image 04A1B2C3D4E5F6 via mfuclone; Classic 1K backup again in
-  dump/gtu/*_20261102.txt, same as gtu_classic1k_backup): the app's New (normal WRITEs) gave tag HMAC ok,
+  docs/dump/gtu/*_20261102.txt, same as gtu_classic1k_backup): the app's New (normal WRITEs) gave tag HMAC ok,
   data HMAC bad. A second image over it (normal WRITEs) failed both. Cause: GTU quirk, not the image. After
   normal WRITEs the backdoor (CF CE) shows every page as written, but normal READ keeps returning the FIRST
   normal-written value on 13 pages (06 0D 1B 22 29 3E 45 53 61 6F 76 7D 81), across reads and field resets.

@@ -307,7 +307,7 @@ int mfuWritePage(const MfuType *t, u8 page, const u8 data[4])
 
 // RF block register that switches the reader field: 6 = on (as the ROM leaves it), 0 = off. It acts at
 // once, even in the middle of a TX / RX transaction; 0x5C054 (TX driver) also cuts the field, but the
-// framer latches it per transaction, so a cut there waits for the card's answer (NOTES.md).
+// framer latches it per transaction, so a cut there waits for the card's answer (docs/NOTES.md).
 #define FIELD_REG 0x5C360
 #define FIELD_ON  6
 // Data-mode TX: the frame (+ HW CRC) is on air until this many timer ticks (1 us) after the last FIFO

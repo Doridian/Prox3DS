@@ -5,7 +5,7 @@
 // is read from NAND and its key table ("unfixed infos" / "locked secret": magic bytes, HMAC keys, a
 // counter) taken from it; the 32-byte XOR pad is AES-CTR under keyslot 0x39 (NFC) through ps:ps, as the
 // module does it (FUN 0x114660). The algorithm is amiitool's (socram8888, MIT): HMAC-SHA256 DRBG keys,
-// AES-128-CTR over 0x188 bytes, the tag and data HMACs to check. See NOTES.md "Amiibo".
+// AES-128-CTR over 0x188 bytes, the tag and data HMACs to check. See docs/NOTES.md "Amiibo".
 // amiitool (C) 2015-2017 Marcos Del Sol Vives and contributors, MIT license: see CREDITS.md for its notice.
 
 #define AMIIBO_TAG   540 // 135 pages

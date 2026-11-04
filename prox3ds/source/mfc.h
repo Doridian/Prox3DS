@@ -38,7 +38,7 @@ bool mfGen1aUnlock(void);
 // -1 = monitor/no answer. The reason is in mfWhy(). WRITES THE CARD.
 int mfGen1aWrite(u8 block, const u8 data[16]);
 
-// Gen4 GTU "magic": plaintext CF <pwd> commands after SELECT, no auth (NOTES.md). 1 = ok (write:
+// Gen4 GTU "magic": plaintext CF <pwd> commands after SELECT, no auth (docs/NOTES.md). 1 = ok (write:
 // read back and verified), 0 = no / bad answer (wrong password, not a GTU), -1 = monitor error; the
 // reason is in mfWhy(). The config read returns its length (30 or 32 bytes).
 extern const u8 mfGen4DefaultPwd[4];
@@ -92,10 +92,10 @@ int mfReadBlock(Crypto1 *c, u8 block, u8 out[16]);
 // nonces, crapto1). 1 = recovered (keyOut set), 0 = no answer / not recovered, -1 = monitor error.
 int mfNestedRecover(u8 knownBlock, const u8 knownKey[6], bool knownKeyB, u8 targetBlock,
 	bool targetKeyB, u8 keyOut[6]);
-// Darkside: a key with none known, on cards with the NACK bug (FM11RF32N batch; NOTES.md). 1 =
+// Darkside: a key with none known, on cards with the NACK bug (FM11RF32N batch; docs/NOTES.md). 1 =
 // recovered and checked on the card (keyOut set), 0 = not recovered (mfWhy), -1 = monitor error.
 int mfDarkside(u8 block, bool keyB, u8 keyOut[6]);
-// FM11RF08S-family static encrypted nonce (NOTES.md). The nested nonce is static; the backdoor
+// FM11RF08S-family static encrypted nonce (docs/NOTES.md). The nested nonce is static; the backdoor
 // AUTH (0x64/0x65 with a vendor key) reveals it in clear, a normal nested AUTH gives it encrypted
 // under the real key. A key fits a sector iff it decrypts ntEnc to nt -- checked offline.
 typedef struct {
@@ -108,7 +108,7 @@ int mfBackdoorKey(u8 keyOut[6]); // 1 = a backdoor key auths (keyOut set), 0 = n
 int mfStaticNonce(u8 block, bool keyB, const u8 bdKey[6], MfStatic *st); // 1 ok, 0 no answer, -1 mon
 bool mfStaticMatch(const MfStatic *st, const u8 key[6]);
 
-// Encrypted WRITE in an authenticated session (mixed-parity data frame, NOTES.md). 1 = ACKed,
+// Encrypted WRITE in an authenticated session (mixed-parity data frame, docs/NOTES.md). 1 = ACKed,
 // 0 = NAK / no answer, -1 = monitor error, 2 = this keystream has no usable parity pair (nothing
 // sent; re-auth and try again). WRITES THE CARD.
 int mfWriteBlock(Crypto1 *c, u8 block, const u8 data[16]);

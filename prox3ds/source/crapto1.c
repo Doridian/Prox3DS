@@ -577,7 +577,7 @@ uint64_t crapto1_nested_any(uint32_t uid, uint32_t nt1, uint32_t ks1, const uint
 // The card leaks a 4-bit encrypted NACK regardless of parity (par_info == 0). With nt held fixed and
 // only the top 3 bits of the last nr byte swept (nt_diff 0..7), the 8 NACK keystreams pin the cipher
 // state down; one run gives a large candidate list, the key is the one common to several runs. See
-// NOTES.md and tools/darkside.py (the validated reference).
+// docs/NOTES.md and tools/darkside.py (the validated reference).
 
 // crapto1 fast-forward tables: advance a 21-bit half-state by the cipher's run over nt_diff = c.
 static const uint32_t fastfwd[2][8] = {

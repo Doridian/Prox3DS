@@ -32,7 +32,7 @@ def main():
         nfc.takeover()
         nfc.power(True)
         nfc.drain()
-        if patch != "none":  # path to an .ncd (e.g. extracted/patch_20791B5.ncd)
+        if patch != "none":  # path to an .ncd (e.g. docs/extracted/patch_20791B5.ncd)
             nfc.spd_download(open(patch, "rb").read())
         for c in (nfcnet.CORE_RESET, nfcnet.CORE_INIT):
             for p in nfc.cmd(c):

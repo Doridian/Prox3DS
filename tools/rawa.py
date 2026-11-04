@@ -8,7 +8,7 @@ machine shut out. The ROM still does the first activation (field on, card select
     rawa.py HOST gen1a-write BLK HEX32     write 16 bytes to a block through the Gen1a backdoor
     rawa.py HOST nonce [N]                 collect N AUTH nonces (key A, block 0)
 
-Framer facts (NOTES.md): in mode r574 = 1 frames go out exactly as given (no CRC), except a
+Framer facts (docs/NOTES.md): in mode r574 = 1 frames go out exactly as given (no CRC), except a
 SELECT (93/95/97 70 ...) which the hardware CRCs itself; r568 = bytes << 4 | extra bits; a
 1-byte frame needs a padding byte in the FIFO. RX status 0x5C588 bit 1 = no/bad CRC.
 """
@@ -116,7 +116,7 @@ class RawA:
     def data_tx(self, payload):
         """Data-mode (r574 = 0) TX with a HW-appended CRC (length code 0); last answer or None.
         Data mode feeds the whole frame through the deeper FIFO, so it is not limited to the 7-byte
-        parity-off bit-mode FIFO -- that is how an 18-byte WRITE data frame goes out (NOTES.md)."""
+        parity-off bit-mode FIFO -- that is how an 18-byte WRITE data frame goes out (docs/NOTES.md)."""
         self.mon.txraw(bytes(payload), code=0, r574=0)
         self.nfc.drain(150)
         fr = self.mon.frames()

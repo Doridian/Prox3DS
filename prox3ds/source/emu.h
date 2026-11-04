@@ -4,7 +4,7 @@
 #include "mfc.h"
 #include "mfu.h"
 
-// Card emulation: the 3DS as an ISO14443-A card (NCI listen A through the ROM), see NOTES.md "Card mode".
+// Card emulation: the 3DS as an ISO14443-A card (NCI listen A through the ROM), see docs/NOTES.md "Card mode".
 // The ROM does anticollision, RATS / ATS and the ISO-DEP blocks; every APDU comes to us as NCI DATA and
 // the answer goes back the same way, well inside the reader's frame waiting time. Phones read it with a
 // tap; a strong reader (pm3) wants the 3DS lying on it. Frames of other protocols (Ultralight READ, ...)
@@ -40,7 +40,7 @@ extern EmuState emu; // the worker writes it, the UI only shows it
 // false = the chip failed.
 bool emuRun(const EmuId *id, EmuApdu fn);
 
-// An Ultralight / NTAG from a dump, answered by our chip image (chip/emu.c, the ROM can't: NOTES.md): its
+// An Ultralight / NTAG from a dump, answered by our chip image (chip/emu.c, the ROM can't: docs/NOTES.md): its
 // UID (ATQA 0044, SAK 00), READ, FAST_READ, GET_VERSION, READ_SIG, READ_CNT, PWD_AUTH (the dump's
 // password if known, else any; PACK from the dump), WRITE, COMPATIBILITY WRITE, Ultralight C 3DES AUTH (the
 // dump's key, mfuUlcDumpKey). No AUTH0 protection. Pages readers wrote end up in *d (emu.changed).

@@ -276,7 +276,7 @@ int amiiboNew(const u8 id[8], Amiibo *a)
 	}
 	if (R_FAILED(r)) FAIL("ps:ps random bytes: %08lX", r);
 	memcpy(a->charId, id, 8);
-	a->set = goodSet >= 0 ? goodSet : nsets - 1; // retail consoles: set 1 (NOTES.md)
+	a->set = goodSet >= 0 ? goodSet : nsets - 1; // retail consoles: set 1 (docs/NOTES.md)
 	a->ok = true;
 	return 1;
 }

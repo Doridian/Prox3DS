@@ -2,7 +2,7 @@
 #include <stdint.h>
 
 // Crypto1 key recovery (crapto1 port), running on the ARM11. See tools/crapto1.py for the reference
-// and NOTES.md for the nested attack. ks = enc_nt ^ nt_T (32 target-cipher keystream bits).
+// and docs/NOTES.md for the nested attack. ks = enc_nt ^ nt_T (32 target-cipher keystream bits).
 // Derived from crapto1 (C) 2008-2014 bla <blapost@gmail.com> and the Proxmark3 contributors, GPL; see CREDITS.md.
 
 // The long recoveries (all but crapto1_nt_decrypt / crapto1_ks32) spread over every core (par.h), one
@@ -20,7 +20,7 @@ uint64_t crapto1_nested(uint32_t uid, uint32_t nt1, uint32_t ks1, uint32_t nt2, 
 // The same with a choice of second nonces (nt2[j], ks2[j]): the first candidate consistent with any.
 uint64_t crapto1_nested_any(uint32_t uid, uint32_t nt1, uint32_t ks1, const uint32_t *nt2, const uint32_t *ks2, int n2);
 
-// FM11RF08S static encrypted nonce (NOTES.md): candidates from the clear static nonce nt, its
+// FM11RF08S static encrypted nonce (docs/NOTES.md): candidates from the clear static nonce nt, its
 // encryption ntEnc under the unknown key, and the 4 raw encrypted parity bits (bit 0 = last byte,
 // the only one that filters). Returns the count written to out (capped at max).
 int crapto1_static(uint32_t uid, uint32_t nt, uint32_t ntEnc, int parEnc, uint64_t *out, int max);
@@ -32,7 +32,7 @@ uint32_t crapto1_nt_decrypt(uint64_t key, uint32_t uid, uint32_t ntEnc);
 // a candidate against another nonce, or verifying a recovered key.
 uint32_t crapto1_ks32(uint64_t key, uint32_t in);
 
-// Darkside / common-prefix recovery, always-leak (par == 0) path (NOTES.md, tools/darkside.py): for a
+// Darkside / common-prefix recovery, always-leak (par == 0) path (docs/NOTES.md, tools/darkside.py): for a
 // fixed tag nonce nt and the fixed on-wire reader nonce nrWire (last 3 bits cleared), ks3x[c] is the
 // 4-bit NACK keystream observed with nt_diff = c (top 3 bits of nrWire's last byte = c). Returns a
 // malloc'd, ascending, de-duplicated array of candidate 48-bit keys (caller frees) with the count in

@@ -1,5 +1,5 @@
 // Java Card virtual machine: CAP loading, objects, the interpreter. See jcvm.h; the Python prototype
-// (tools/jcvm/vm.py) is the reference, NOTES.md "Java Card VM" has the CAP / JCVM details.
+// (tools/jcvm/vm.py) is the reference, docs/NOTES.md "Java Card VM" has the CAP / JCVM details.
 
 #include <stdio.h>
 #include <stdlib.h>

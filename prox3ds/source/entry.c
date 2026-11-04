@@ -208,7 +208,7 @@ void entryDec(const char *title, const char *what, s64 min, s64 max, s64 init, v
 }
 
 // --- text: an on-screen keyboard (the system one can hang for good when closed during its opening
-// animation, NOTES.md) ---
+// animation, docs/NOTES.md) ---
 
 #define TEXT_MAX 600
 #define TEXT_COLS 52 // characters per line on the top screen

@@ -1,4 +1,4 @@
-// Raw ISO14443A and Mifare Classic over the chip monitor, see mfc.h and NOTES.md.
+// Raw ISO14443A and Mifare Classic over the chip monitor, see mfc.h and docs/NOTES.md.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +14,7 @@
 #define MS(x)       ((s64)(x) * 1000000LL)
 #define PARITY_REG  0x5C560
 #define PARITY_OFF  0x08
-#define NRAR_TX     0x178 // r574 = 1, length code 0x78 for the 72-bit {nr}{ar} (NOTES.md)
+#define NRAR_TX     0x178 // r574 = 1, length code 0x78 for the 72-bit {nr}{ar} (docs/NOTES.md)
 
 Card card;
 volatile bool mfCancel;
@@ -590,7 +590,7 @@ int mfReadBlock(Crypto1 *c, u8 block, u8 out[16])
 	return 1;
 }
 
-#define NESTED_DIST 160 // on-chip OP_NESTED gives this fixed PRNG distance nt0 -> nt_T (NOTES.md)
+#define NESTED_DIST 160 // on-chip OP_NESTED gives this fixed PRNG distance nt0 -> nt_T (docs/NOTES.md)
 
 // One nested nonce: select, then auth1 (known key, raw AUTH command ac) + the nested AUTH (raw command
 // nc0) on-chip at fixed timing. Reads nt0 (known auth nonce), the encrypted nested nonce and its 4 raw
@@ -884,7 +884,7 @@ int mfNestedRecover(u8 kb, const u8 key[6], bool knownB, u8 tb, bool tgtB, u8 ke
 	return nestedOnce(kb, key, knownB, tb, tgtB, keyOut);
 }
 
-// Darkside (NACK bug, NOTES.md "Darkside / NACK-bug"): a keyless attack for cards that answer a wrong
+// Darkside (NACK bug, docs/NOTES.md "Darkside / NACK-bug"): a keyless attack for cards that answer a wrong
 // {nr}{ar} with an encrypted 4-bit NACK whatever its parity (FM11RF32N batch). For one tag nonce and a
 // fixed reader nonce, the 8 NACKs over nt_diff (top 3 bits of nr's last byte) narrow the key to ~100k
 // candidates (crapto1_darkside); runs with different nonces intersect to the key. The card's PRNG
@@ -1172,7 +1172,7 @@ int mfDarkside(u8 block, bool keyB, u8 keyOut[6])
 // whole FIFO bytes only, so it goes out as 20 FIFO bytes: 18 raw (parity off, our parity bits
 // packed in) + 2 data bytes j1, j2 sent with HW parity (9 bits each), toggling 0x5C560 between
 // bytes. The HW parity bit is the odd parity of every bit since the last inserted one, so a pair
-// works only if that matches the encrypted parity bit (p = 1/4 per pair). NOTES.md.
+// works only if that matches the encrypted parity bit (p = 1/4 per pair). docs/NOTES.md.
 #define WR_BYTES 18
 static const u8 wrPairs[][2] = { { 0, 1 }, { 0, 9 }, { 0, 17 }, { 8, 9 }, { 8, 17 }, { 16, 17 } };
 
@@ -1600,7 +1600,7 @@ static int cellCands(u32 uid, const MfStatic *s, int sec, int kb, const u64 **ou
 static u8 pm3Keys[MF_PM3_MAX][6]; // MF_PM3_KEYS without the running dictionary's keys (mfDumpCard)
 static int npm3;
 
-// FM11RF08S family (NOTES.md): with a backdoor key, collect every sector's static nonce and solve
+// FM11RF08S family (docs/NOTES.md): with a backdoor key, collect every sector's static nonce and solve
 // keys offline -- dictionary keys and reuse are checked against the nonces with no RF traffic, and
 // only matches cost an auth. A candidate of one cell that fits another cell is a reused key. Keys used
 // by a single cell stay open (tens of thousands of candidates: too many to try over RF). Returns -1

@@ -1,7 +1,7 @@
 #include "../source/mfutear.c"
 #include "scenes.h"
 
-// The EV1 test card, page 10 AAAAAAAA -> 55555555 (NOTES.md), from 300 us in 10s
+// The EV1 test card, page 10 AAAAAAAA -> 55555555 (docs/NOTES.md), from 300 us in 10s
 void simTearScan(void)
 {
 	static const struct { u16 us; u32 v; } pts[] = {

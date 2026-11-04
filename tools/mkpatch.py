@@ -4,7 +4,7 @@
 Everything is generated here, nothing is copied from the stock patch: the header is
 built field by field (values as in the stock B5 patch), the AON segment is a thunk to
 the ROM init the stock AON entry calls (plus our AON code at 0x68018, if any), the hook table is ours (default: no hooks), the
-SRAM segment is ours, the signature is 48 zero bytes (not checked, see NOTES.md).
+SRAM segment is ours, the signature is 48 zero bytes (not checked, see docs/NOTES.md).
 
     mkpatch.py SRAM.bin OUT.ncd [--aon AON.bin] [--chipver STR16] [--hook ROMADDR:HALFWORDS ...]
 """

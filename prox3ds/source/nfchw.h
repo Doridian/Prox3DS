@@ -2,7 +2,7 @@
 #include <3ds.h>
 
 // Raw access to the New3DS NFC controller (BCM20791) as used by the nfc sysmodule
-// (0004013020004002), see NOTES.md for where these values come from.
+// (0004013020004002), see docs/NOTES.md for where these values come from.
 
 #define NFC_I2C_DEVID   15
 

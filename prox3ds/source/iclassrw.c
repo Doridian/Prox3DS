@@ -1,4 +1,4 @@
-// HID iClass reader over the chip monitor, see iclass.h and NOTES.md "NFC-V / iClass".
+// HID iClass reader over the chip monitor, see iclass.h and docs/NOTES.md "NFC-V / iClass".
 
 #include <stdio.h>
 #include <stdlib.h>

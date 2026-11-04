@@ -84,7 +84,7 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   Ultralight C: its 3DES AUTH with the dump's key (or the factory key). What readers wrote can be saved as a
   new dump afterwards. No AUTH0 protection.
 - MIFARE Classic Mini / 1K / 2K / 4K: a saved dump the same way, Crypto1 on the chip (AUTH, nested AUTH, READ,
-  WRITE, HALT). The encrypted answers go out with their encrypted parity, as raw 9-bit frames (NOTES.md:
+  WRITE, HALT). The encrypted answers go out with their encrypted parity, as raw 9-bit frames (docs/NOTES.md:
   listen-mode parity). Classic and Ultralight each have their own chip image (chip/emu.c built twice); a 2K /
   4K's blocks past 63 live in chip RAM the ROM leaves alone while listening.
 - DESFire: a saved info file (DESFire > Saved cards; `Save info` on the card screen writes them), answered by
@@ -101,7 +101,7 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   `sdmc:/prox3ds/emu/apdu.log`.
 - A phone reads it with a quick tap on the bottom screen. A Proxmark only gets it with the 3DS lying on it,
   bottom screen down. A new APDU card type is an `EmuApdu` handler passed to `emuRun`; one that needs
-  answers within the frame delay goes into `chip/emu.c` (the ROM's listen-A RX hook, see NOTES.md).
+  answers within the frame delay goes into `chip/emu.c` (the ROM's listen-A RX hook, see docs/NOTES.md).
 
 - Chip info: reset / init / patch version.
 

@@ -20,7 +20,7 @@ all: $(TARGETS:=.bin) ../prox3ds/data/reader_ncd.bin ../prox3ds/data/emu_mfu_ncd
 # reader: its variables end at 0x68410 too; the AON code (listen re-arm) takes the rest.
 reader.elf: CFLAGS += -Wl,--defsym=AON_SPLIT=0x68104
 
-# emu: more AON code (hook, reply), its variables still end below 0x68410 (NOTES.md: not free above).
+# emu: more AON code (hook, reply), its variables still end below 0x68410 (docs/NOTES.md: not free above).
 emu_mfu.elf emu_mfc.elf: CFLAGS += -Wl,--defsym=AON_SPLIT=0x68180
 emu_mfu.elf: CFLAGS += -DEMU_MFU
 emu_mfc.elf: CFLAGS += -DEMU_MFC

@@ -5,7 +5,7 @@
 
 // HID iClass / PicoPass: the card side's math (iclass.c, no hardware) and the reader (iclassrw.c) over
 // the chip monitor. The BCM sends ISO15693 1-of-4 frames from a stalled V poll (I93_DATARATE 2, framer
-// 0x5C558 = 5) and receives the card's answers with the V analog setup; see NOTES.md "NFC-V / iClass".
+// 0x5C558 = 5) and receives the card's answers with the V analog setup; see docs/NOTES.md "NFC-V / iClass".
 // The cipher, key diversification and elite key derivation follow pm3 (armsrc/optimized_cipher.c,
 // optimized_ikeys.c, optimized_elite.c).
 

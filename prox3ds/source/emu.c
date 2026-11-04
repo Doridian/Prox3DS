@@ -1,4 +1,4 @@
-// Card emulation over the ROM's NCI listen mode, see emu.h and NOTES.md "Card mode".
+// Card emulation over the ROM's NCI listen mode, see emu.h and docs/NOTES.md "Card mode".
 
 #include <stdio.h>
 #include <string.h>
