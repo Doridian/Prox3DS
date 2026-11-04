@@ -1,6 +1,6 @@
 # usage: tdis.py START END -> Thumb disassembly of the ROM, literal loads resolved
 import struct, sys, capstone
-rom = open(__file__.rsplit('/', 3)[0] + '/docs/dump/rom_20791B5.bin', 'rb').read()
+rom = open(__file__.rsplit('/', 3)[0] + '/dump/rom_20791B5.bin', 'rb').read()
 md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
 md.skipdata = True
 s, e = int(sys.argv[1], 16), int(sys.argv[2], 16)

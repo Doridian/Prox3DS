@@ -111,8 +111,8 @@ Ops: 0 ping, 1 takeover, 2 power (0 off / 1 cycle), 3 i2c write, 4 read packet (
   Pipelining can tear a chunk -> dump reads twice and re-reads disagreements.
 - ROM: 128 KB at 0x0, mirrored at 0x20000 (up to 0x38000). RAM 0x38000..; initial SP 0x3A374, reset 0x61.
   "Copyright (c) Broadcom Corp. 2011 BCM20791B0 (r) NFC Firmware", built "Dec 22 2012".
-  docs/dump/rom_20791B5.bin sha256 258ab0fc63a43a7c83da54fa66e464365a7af025c56d0b721217ad24e47f6424
-  (two full passes identical). docs/dump/ram_38000_40000_dumper4.bin = RAM with dumper4 loaded.
+  dump/rom_20791B5.bin sha256 258ab0fc63a43a7c83da54fa66e464365a7af025c56d0b721217ad24e47f6424
+  (two full passes identical). dump/ram_38000_40000_dumper4.bin = RAM with dumper4 loaded.
 - BT HCI (HCIT 01) is parsed (Read_RAM 0xFC4D -> status 01 unknown cmd).
 
 ## ROM: NCI command path, debug monitor (chip/reader.c, tools/chipmon.py) -- 2026-10-29
@@ -159,7 +159,7 @@ Ops: 0 ping, 1 takeover, 2 power (0 off / 1 cycle), 3 i2c write, 4 read packet (
   interrupt makes the next TX hang the chip; write it at TX time instead. Rare hangs remain (TX right
   after a 4-bit answer); rawa.py reloads and resumes.
 - Card on the 3DS (user's): UID C1C1C1C1, ATQA 0004, SAK 88, Mifare Classic 1K, Gen1a magic
-  (40/7 -> 0A, 43 -> 0A). Full dump via backdoor: docs/dump/card_C1C1C1C1.bin. Raw AUTH (60 00 + CRC)
+  (40/7 -> 0A, 43 -> 0A). Full dump via backdoor: dump/card_C1C1C1C1.bin. Raw AUTH (60 00 + CRC)
   returns nt; nonces vary.
 - Parity off (TX and RX): 0x5C560 = 0x08 (reads back 0 normally; ROM writes other values there).
   Found by bit-flip sweep (one bit at a time over 0x5C540-5C5BC, 5C640-5C6CC, 5C780-5C7BC; only hit
@@ -270,7 +270,7 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
   AON code is only reachable via the stock SRAM hooks, which we don't load.
 - mkpatch now builds the header field by field (byte-identical to before) and an AON segment of
   14 bytes (entry ptr + push {lr}; bl 0x11888; pop {r1}; bx r1). Verified on HW: monitor answers,
-  0x68C80 = 0x32E0 afterwards, Gen1a backdoor dump of all 64 blocks matches docs/dump/card_C1C1C1C1.bin.
+  0x68C80 = 0x32E0 afterwards, Gen1a backdoor dump of all 64 blocks matches dump/card_C1C1C1C1.bin.
 - App: the stock-patch jobs (L+B/X/Y signature tests, L+R Read_RAM + stock cross-check) are gone,
   so Prox3DS embeds no Broadcom/Nintendo bytes and the user needs no sysmodule dump to build it.
 
@@ -1291,7 +1291,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   of the cached UID got silence and so did CF C6. Fixed: card ops (not ISO-DEP / DESFire, whose session
   a SELECT ends) SELECT first and reactivate on silence (cardReady). Checked by changing the GTU's UID
   with a block 0 write, then `magic`.
-- Generated images live in the gitignored docs/dump/amiibo/ (Flipper .nfc + pm3 .bin), the GTU backup in docs/dump/gtu/.
+- Generated images live in the gitignored dump/amiibo/ (Flipper .nfc + pm3 .bin), the GTU backup in dump/gtu/.
   GTU restored to Classic 1K afterwards: config and all 64 blocks identical to the backup.
 - App UI (amiiboui.c): L on the Ultralight card screen of an NTAG215, or "Amiibo" on a saved 135-page
   dump: the figure decrypted (model info, nickname, owner Mii name at plain 0x4C+0x1A UTF-16LE, dates,
@@ -1317,7 +1317,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   end to end: New -> "8-Bit Mario Classic Color" (0000 0000 0238 0602) onto blank NTAG215 041ADFBA064F81,
   unlocked; read-back verifies (set 1) and System Settings accepts it as a new amiibo (asks for owner).
 - GTU as the blank (UL mode, NTAG215 image 04A1B2C3D4E5F6 via mfuclone; Classic 1K backup again in
-  docs/dump/gtu/*_20261102.txt, same as gtu_classic1k_backup): the app's New (normal WRITEs) gave tag HMAC ok,
+  dump/gtu/*_20261102.txt, same as gtu_classic1k_backup): the app's New (normal WRITEs) gave tag HMAC ok,
   data HMAC bad. A second image over it (normal WRITEs) failed both. Cause: GTU quirk, not the image. After
   normal WRITEs the backdoor (CF CE) shows every page as written, but normal READ keeps returning the FIRST
   normal-written value on 13 pages (06 0D 1B 22 29 3E 45 53 61 6F 76 7D 81), across reads and field resets.

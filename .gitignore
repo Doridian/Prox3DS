@@ -5,7 +5,7 @@
 # Unpacked titles (code.bin, exheader, extracted SPD patches)
 /docs/extracted/
 # Chip ROM/RAM dumps, card dumps and keys
-/docs/dump/
+/dump/
 *.dump
 *_keys.bin
 # objdump output of firmware
