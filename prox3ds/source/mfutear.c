@@ -248,7 +248,6 @@ static void writeScan(void)
 // --- EV1 counter reset (pm3 hf mfu countertear) ---
 
 // pm3's constants (cmdhfmfu.c MFU_CNT_*); delays after the frame end, as pm3's tear-off hook
-#define CNT_MAX       0xFFFFFF
 #define CNT_PREP      0x00FFFF
 #define CNT_STUCK     6
 #define BD_MIN        2650
@@ -326,8 +325,12 @@ static void counterCore(void)
 		snprintf(jobWhy, sizeof(jobWhy), "Counter %d is 0 already.", ctr);
 		return;
 	}
-	if (v == CNT_MAX) {
-		snprintf(jobWhy, sizeof(jobWhy), "Counter %d is at its maximum (FFFFFF): it can't move.", ctr);
+	// The torn carry (00FFFF + 1) clears the low two bytes but keeps the top one (TTFFFF -> TT0000), so only
+	// a top byte of 00 gets back to 0; pm3's DECREMENT phase above that only undoes the latest carry into
+	// the top byte, going round in circles (NOTES "Carry loop").
+	if (v > CNT_PREP) {
+		snprintf(jobWhy, sizeof(jobWhy), "Counter %d is %06lX, above 00FFFF: a tear can't take it below %02lX0000, so no reset.",
+			ctr, v, v >> 16);
 		return;
 	}
 	int bd = cs.bd;
@@ -356,11 +359,10 @@ static void counterCore(void)
 		}
 		logp("countertear: BD delay %d us\n", bd);
 	}
-	// pm3 mfu_cnt_attack_loop: DECREMENT (above 0x00FFFF), PREPARE (up to 0x00FFFF), RESET (towards 0)
-	enum { DEC, PREP, RESET } phase = DEC;
-	static const char *names[] = { "Decrementing", "Preparing (to 00FFFF)", "Resetting" };
-	// pm3: the 00 delay stays at the calibrated BD - 10 while BD gets tuned (its DECREMENT only ever
-	// lowered a counter with BD ~60 us past it)
+	// pm3 mfu_cnt_attack_loop without its DECREMENT: PREPARE (up to 0x00FFFF), RESET (towards 0)
+	enum { PREP, RESET } phase = PREP;
+	static const char *names[] = { "Preparing (to 00FFFF)", "Resetting" };
+	// pm3: the 00 delay stays at the calibrated BD - 10 while BD gets tuned
 	int d00 = bd - OFF_00;
 	cp.bd = bd, cp.d00 = d00;
 	int lost = 0;
@@ -384,11 +386,10 @@ static void counterCore(void)
 			TRY(normalize());
 			continue;
 		}
-		if (phase == DEC && v <= CNT_PREP) {
-			TRY(mfuIncr(ctr, 0));
-			TRY(mfuIncr(ctr, 0));
-			phase = PREP;
-			continue;
+		if (v > CNT_PREP) {
+			snprintf(jobWhy, sizeof(jobWhy), "A torn +1 went through: counter %d is %06lX now, above 00FFFF, so no reset any more.",
+				ctr, v);
+			return;
 		}
 		if (phase == PREP) {
 			if (v < CNT_PREP) {
@@ -396,27 +397,18 @@ static void counterCore(void)
 				TRY(mfuIncr(ctr, 0));
 				continue;
 			}
-			phase = v == CNT_PREP ? RESET : DEC;
+			phase = RESET;
 			continue;
 		}
 		cp.steps++;
-		if (phase == DEC) {
-			TRY(tincr(0x100, bd));
-			TRY(tincr(0, d00));
-			TRY(tincr(0, bd));
-			TRY(tincr(0, d00));
-		} else {
-			TRY(tincr(1, bd));
-			TRY(tincr(0, d00));
-		}
+		TRY(tincr(1, bd));
+		TRY(tincr(0, d00));
 		TRY(normalize());
 		u32 f;
 		if (TRY(readCnt(&f, &t)) <= 0) continue;
-		logp("countertear %s %d: BD %d/%d %06lX -> %06lX flag %02X\n", phase == DEC ? "dec" : "reset", cp.steps, bd, d00, v, f, t);
-		if (phase == RESET && f > CNT_PREP) phase = DEC;
-		// pm3 mfu_cnt_tune_delay: no change -> later, a big jump -> earlier
+		logp("countertear %d: BD %d/%d %06lX -> %06lX flag %02X\n", cp.steps, bd, d00, v, f, t);
+		// pm3 mfu_cnt_tune_delay: no change -> later
 		if (f == v && bd < BD_MAX) bd++;
-		else if (f > v + 10 && bd > BD_MIN) bd--;
 		cp.bd = bd;
 	}
 	if (!mfCancel) snprintf(jobWhy, sizeof(jobWhy), "No reset after %d steps (counter %06lX).", cp.steps, (u32)cp.val);
@@ -475,9 +467,9 @@ static void csRun(void)
 static void counterReset(void)
 {
 	formOpen("Tear-off: EV1 counter reset", "Run (MAY KILL THE COUNTER)",
-		"EXPERIMENTAL. Tears INCR_CNT until the counter goes back to 0 (pm3 hf mfu countertear). Below 00FFFF "
-		"it first counts up to 00FFFF, the way the attack needs; B stops it. Works on an MF0UL11 (counter 1 -> 0 "
-		"in 35 steps); an older build of it left a counter dead for good (NAK 6 to everything).", csFields, csCount, csRun);
+		"EXPERIMENTAL. Tears INCR_CNT until the counter goes back to 0 (pm3 hf mfu countertear). It first counts "
+		"up to 00FFFF, the way the attack needs; B stops it. Counters above 00FFFF can't be reset. Works on an "
+		"MF0UL11 (~40 steps); a torn +1 that goes through ends it (counter above 00FFFF for good).", csFields, csCount, csRun);
 }
 
 void mfuTearMenu(void)
