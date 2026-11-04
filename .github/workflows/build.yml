@@ -22,7 +22,7 @@ jobs:
         run: make -C prox3ds -j"$(nproc)"
       - name: Prox3DS (release)
         run: make -C prox3ds -j"$(nproc)" release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Prox3DS
           path: |
@@ -44,7 +44,7 @@ jobs:
         # "tight" is within the stand-in font's error; anything else is a real layout bug
         run: |
           if grep -E ': (offscreen|clipped|overflow|overlap):' prox3ds/sim/out/report.txt; then exit 1; fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: uisim
@@ -62,7 +62,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Prox3DS
       - name: Name the files
