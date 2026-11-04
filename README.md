@@ -124,8 +124,7 @@ Everything lives under `sdmc:/prox3ds/`:
 
 | Path | Contents |
 | --- | --- |
-| `mfc/keys.txt` | Your MIFARE Classic keys, one hex key per line (read card adds found keys) |
-| `mfc/dumps/` | MIFARE Classic dumps: `<UID>.bin` + `<UID>.keys.txt` (never overwritten) |
+| `mfc/` | MIFARE Classic dumps in `dumps/` (`<UID>.bin` + `<UID>.keys.txt`, never overwritten); `mfc/keys.txt`: your keys, one per line |
 | `mfu/` | Ultralight / NTAG dumps (pm3 `hf mfu` format); `mfu/keys.txt`: your passwords / UL-C keys |
 | `iclass/` | iClass dumps, dictionaries, `iclass_decryptionkey.bin` |
 | `smartcard/aids.txt` | Extra applets to look for: `AID name` per line |
