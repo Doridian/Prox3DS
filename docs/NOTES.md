@@ -1739,6 +1739,13 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   counter 1 at 00FFFF -> 000000 at BD 2803 (43 steps). Counter 2 at 01FFFF -> read 020000 at BD 2761,
   but the next plain INCR(+FFFF) gave 00FFFF: the torn carry left the counter really at 000000 (reads
   showed 020000 until the next write). So the top byte CAN go down; how often is open.
+- Carry loop (11 tries on counter 2: counter -> TTFFFF, torn +1 at BD 2755.. / torn 0 at 2750 until it
+  moves, then a plain +1 to see what is stored): 9x "held" TTFFFF -> TT0000 (BD 2785-2798, 31-44 steps,
+  the RESET window), 2x the +1 completed (TT+1 0000; at BD 2785 and once early at 2764), never 000000.
+  So the torn carry clears the two low bytes and keeps the top byte: the reset is "TTxxxx -> TT0000",
+  a full 0 only for TT = 00. The 01FFFF -> 000000 case above stays a one-off (unexplained).
+  An interrupted try left flag 21; one plain INCR(0) put it back to BD.
+  tlib Ev1.cnt took a NAK (b'NAK', 3 bytes) for the value 4B414E; fixed.
 - Network requests that touch the chip now stop on B on the 3DS (netCardOp, app.c), like a job.
 - OTP tear (page 3, mfuTearWrite / tearscan now take page 3; the setup write is not read back since it
   ORs): card 04065902762496, OTP 0000000F, torn WRITE 000000F0 at 400-2800 us step 50: 0000000F up to

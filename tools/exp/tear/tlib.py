@@ -44,7 +44,7 @@ class Ev1:
 
     def cnt(self, i):
         r = self.ok([0x39, i])
-        return int.from_bytes(r, 'little') if r and len(r) == 3 else None
+        return int.from_bytes(r, 'little') if r and len(r) == 3 and r not in (b'ACK', b'NAK') else None
 
     def tear_flag(self, i):
         r = self.ok([0x3E, i])
