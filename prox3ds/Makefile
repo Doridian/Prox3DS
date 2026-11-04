@@ -54,10 +54,11 @@ CFLAGS	+=	$(INCLUDE) -D__3DS__
 
 # make: the debug build (network server, sdmc:/prox3ds.log). make release: prox3ds-release.3dsx
 # without the server, the log in RAM only (Log: save).
-APP_TITLE	:=	Prox3DS
+APP_TITLE	:=	Prox3DS (Debug)
 APP_DESCRIPTION	:=	Proxmark-style NFC tool: read, crack, clone, emulate
 APP_AUTHOR	:=	Doridian
 ifneq ($(RELEASE),)
+APP_TITLE	:=	Prox3DS
 CFLAGS	+=	-DPROX3DS_RELEASE
 NOT_BUILT	:=	netsrv.c
 endif
