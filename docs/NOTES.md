@@ -1712,8 +1712,18 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
     CHECK_TEARING_EVENT and INCR_CNT with NAK 6 (not in the datasheet), across power cycles. pm3's repair
     (INCR 0 x2, torn INCR +1 at 2950 us) doesn't help. Counters 1 and 2 (0, BD), memory and UID are
     fine. So counter 0 of the test EV1 04A0A0A0A0A001 is dead for good.
-  - The tool stays in the app marked EXPERIMENTAL with that warning. Open: why the steps never lower
-    the counter (timing reference vs pm3's tear hook? the 00 delay?), what NAK 6 means.
+  - The tool stays in the app marked EXPERIMENTAL with that warning. Open: what NAK 6 means.
+- Counter reset FIXED (2026-11-03, fresh UL EV1 04DE426A242595, MF0UL11, same version as the old card):
+  - pm3 first, as the oracle: `hf mfu incr -c 2 -v 1`, `hf mfu countertear -c 2` -> calibrated BD 2745
+    (flag 00 to 2715, other values 2720-2740), PREPARE to 00FFFF, RESET 0 after 38 attempts at BD 2782
+    (tuned +1 per attempt that left FFFF00 unchanged). Card fine after it.
+  - The bug: our normalize() did INCR(0) until the flag read BD. pm3 mfu_cnt_normalize_tear stops at
+    any clean flag, 00 or BD (check_tearing only fails on other values / no answer). The extra full
+    INCR on a 00 flag rewrites the slot the next torn step works on. Fixed in mfutear.c and
+    tools/exp/tear/countertear.py.
+  - App on the 3DS, same card, counter 2 = 1: calibrated BD 2755 (pm3 + 10 us), RESET 000001 -> 0 in
+    35 steps / 7.6 s at BD 2788. Counters, flags (BD) and signature fine afterwards.
+  - Not tested: the DECREMENT phase (counters above 00FFFF), and on more than one card.
 - Not tried yet: tearing the OTP page / lock bytes (pm3 otptear's real target) and UL-C / UL-AES key
   block tears (BREAKMEIFYOUCAN tables), which need those cards.
 - Fix (UL-C 04A0A0A0A0A002 scanned as UID 04A0A0A0A0A00280 + "lost the card"): selectAnticoll kept a

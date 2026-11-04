@@ -284,7 +284,8 @@ static int readCnt(u32 *v, u8 *t)
 	return r;
 }
 
-// pm3 mfu_cnt_normalize_tear: increment by 0 until the tearing flag is BD again
+// pm3 mfu_cnt_normalize_tear: increment by 0 until the tearing flag reads as a clean 00 or BD. A 00
+// flag stays as it is: an INCR there rewrites the counter slot the next torn step works on.
 static int normalize(void)
 {
 	for (int i = 0; i < 10; i++) {
@@ -292,7 +293,7 @@ static int normalize(void)
 		u8 t;
 		int r = readCnt(&v, &t);
 		if (r < 0) return -1;
-		if (r && t == 0xBD) return 1;
+		if (r && (t == 0xBD || t == 0x00)) return 1;
 		if (mfuIncr(ctr, 0) < 0) return -1;
 	}
 	return 0;
@@ -471,8 +472,8 @@ static void counterReset(void)
 {
 	formOpen("Tear-off: EV1 counter reset", "Run (MAY KILL THE COUNTER)",
 		"EXPERIMENTAL. Tears INCR_CNT until the counter goes back to 0 (pm3 hf mfu countertear). Below 00FFFF "
-		"it first counts up to 00FFFF, the way the attack needs; B stops it. Never succeeded here, and on the "
-		"test EV1 it left the counter dead for good (every command on it: NAK 6).", csFields, csCount, csRun);
+		"it first counts up to 00FFFF, the way the attack needs; B stops it. Works on an MF0UL11 (counter 1 -> 0 "
+		"in 35 steps); an older build of it left a counter dead for good (NAK 6 to everything).", csFields, csCount, csRun);
 }
 
 void mfuTearMenu(void)

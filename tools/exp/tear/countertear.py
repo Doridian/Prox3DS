@@ -17,7 +17,7 @@ def tincr(v, us):
 
 def norm():
     for _ in range(10):
-        if e.tear_flag(c) == 0xBD:
+        if e.tear_flag(c) in (0x00, 0xBD):
             return
         e.incr(c, 0)
 
