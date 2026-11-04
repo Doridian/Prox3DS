@@ -7,6 +7,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push to the same branch / PR cancels the older run. Tags are their own ref, so a release run
+# is never cancelled by a later push to main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # The chip patches (devkitARM gcc + tools/mkpatch.py) and both Prox3DS builds.
   Prox3DS:
