@@ -2051,3 +2051,17 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - isodep.c waited 80 ms per block (and gave up after 4 R(NAK)s, ~0.4-0.9 s): the ID card takes ~0.5 s for a
   PACE step and sends no WTX (it may: FWI 13 = 2.5 s). Now the poll count follows the ATS's FWT (TB1),
   at least the old 80 ms; WTX multiplies it.
+
+## eMRTD: the user's (expired, punched) German passport (tools/exp/eid/pace.py, sod.py) -- 2026-11-04
+- Same chip family as the ID card: ATQA 0008, SAK 20, the same ATS (FWI 13). EF.CardAccess (22 bytes): only
+  PACE-ECDH-GM-AES-CBC-CMAC-128, brainpoolP256r1. BAC works too (GET CHALLENGE answers; pm3 dump --bac).
+- PACE with the MRZ (83 01, password SHA-1(docno+cd || birth+cd || expiry+cd), then KDF counter 3): ok.
+  Readable then (ePass, SM): COM 24, SOD 1571, DG1 93 (the MRZ), DG2 15000 (FAC record, JPEG 2000: jp2
+  box at offset 88), DG14 745 (chip authentication keys); DG3 6982 (fingerprints: EAC); DG7/11/12/15 6A82.
+  EF.CardSecurity 6A82. pace.py reads it all in ~9 s over the pm3.
+- pm3 `hf emrtd dump --bac` gives byte-identical COM / DG1 / DG2 / DG14 / SOD (this pm3 build also has --can
+  / --pace).
+- Passive authentication (sod.py): LDS hashes SHA-256, DG1 / DG2 / DG14 match; signed attrs message digest
+  ok; DS cert "Document Signer Passport" (Bundesdruckerei, issuer csca-germany), valid 2014-02-03 to
+  2024-08-03, ECDSA-SHA256 with brainpoolP256r1 given as *explicit* parameters (python cryptography refuses
+  those: sod.py verifies by hand). Signature ok. The CSCA link is not checked (needs csca-germany's cert).

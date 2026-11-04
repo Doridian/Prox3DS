@@ -4,7 +4,7 @@
 PACE-ECDH-GM-AES-CBC-CMAC-128 on brainpoolP256r1 (what the nPA's EF.CardAccess offers), then AES secure
 messaging: EF.CardSecurity, the ePass application's files. Card data goes to OUTDIR, not the repo.
 
-usage: pace.py PORT CAN OUTDIR
+usage: pace.py PORT CAN|DOCNO,BIRTH,EXPIRY OUTDIR
 """
 import os, re, sys, hashlib
 import pexpect
@@ -166,10 +166,23 @@ class Sm:
         return data, 0x9000
 
 
-def pace(card, can):
-    # MSE:Set AT, CAN = password 02
-    _, sw = card.apdu(bytes.fromhex('0022C1A4') + bytes([15]) + tlv(0x80, PACE_OID) + tlv(0x83, b'\x02'))
-    print(f'MSE:Set AT (CAN): {sw:04X}')
+def mrz_key(mrz):
+    """MRZ password: document number + check, birth date + check, expiry + check (the check digits
+    computed here); 'C01X00T7Y,640812,251031' -> SHA-1 of the MRZ information."""
+    def cd(s):
+        v = lambda c: int(c) if c.isdigit() else 0 if c == '<' else ord(c) - 55
+        return str(sum(v(c) * (7, 3, 1)[i % 3] for i, c in enumerate(s)) % 10)
+    doc, dob, exp = mrz.split(',')
+    doc = doc.ljust(9, '<')
+    info = doc + cd(doc) + dob + cd(dob) + exp + cd(exp)
+    return hashlib.sha1(info.encode()).digest()
+
+
+def pace(card, pwd):
+    """pwd: 6 digits = CAN, else 'DOCNO,YYMMDD,YYMMDD' = MRZ."""
+    ref, secret = (2, pwd.encode()) if pwd.isdigit() and len(pwd) == 6 else (1, mrz_key(pwd))
+    _, sw = card.apdu(bytes.fromhex('0022C1A4') + bytes([15]) + tlv(0x80, PACE_OID) + tlv(0x83, bytes([ref])))
+    print(f'MSE:Set AT ({"CAN" if ref == 2 else "MRZ"}): {sw:04X}')
     if sw != 0x9000: raise RuntimeError('MSE failed')
 
     def ga(inner, last=False):
@@ -179,7 +192,7 @@ def pace(card, can):
         return dict(tlv_parse(dict(tlv_parse(r))[0x7C]))
 
     z = ga(b'')[0x80]
-    s = int.from_bytes(aes_cbc_dec(kdf(can.encode(), 3), b'\x00' * 16, z), 'big')
+    s = int.from_bytes(aes_cbc_dec(kdf(secret, 3), b'\x00' * 16, z), 'big')
     print('nonce decrypted')
 
     sk1 = rnd_scalar()
@@ -218,7 +231,8 @@ def main():
         _, sw = sm.apdu(0x00, 0xA4, 0x04, 0x0C, bytes.fromhex('A0000002471001'))
         print(f'SELECT ePass: {sw:04X}')
         if sw == 0x9000:
-            for name, sfi in (('COM', 0x1E), ('SOD', 0x1D), ('DG1', 1), ('DG2', 2), ('DG14', 14)):
+            for name, sfi in (('COM', 0x1E), ('SOD', 0x1D), ('DG1', 1), ('DG2', 2), ('DG3', 3), ('DG7', 7),
+                              ('DG11', 11), ('DG12', 12), ('DG14', 14), ('DG15', 15)):
                 save(name, *sm.read_sfi(sfi))
     finally:
         card.close()
