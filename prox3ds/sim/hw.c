@@ -36,6 +36,7 @@ void chipTakeover(void) {}
 void chipRelease(void) {}
 Result chipPowerUp(void) { return -1; }
 bool chipEnsure(void) { return false; }
+void chipIdle(void) {}
 void chipProbe(void) { logp("no chip in the simulator\n"); }
 bool spdDownload(const u8 *ncd, u32 size, bool verbose) { return false; }
 void netStart(void) {}

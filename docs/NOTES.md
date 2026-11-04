@@ -2078,3 +2078,15 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - nfcnet `eid` args: CAN (check), rCAN (read with the CAN), DOC,YYMMDD,YYMMDD (read with the MRZ), b + that (BAC).
 - Not done: the photo on screen (JPEG 2000: would need a decoder, e.g. OpenJPEG), the CSCA link, chip
   authentication (DG14) / active authentication (DG15).
+
+## The NFC chip's RF field blinds the touchscreen; chip off between jobs (main.c chipIdle) -- 2026-11-04
+- After any card job (an NTAG scan as much as the passport) the touchscreen went dead until an app restart:
+  hid reported no touch at all (debug log of KEY_TOUCH edges: none after the card was read), the buttons
+  still worked. The app left the chip powered with the card selected, RF field on. `nfcnet release`
+  (chip off, no restart) brought touch back at once. While polling for a card (field pulsing) touch works.
+- Not checked: whether it is the field itself (noise / a filter in hid's touch path) or the chip's power
+  (the nfc sysmodule is terminated, so no gating from there). Experiment: chip on, RF deactivated.
+- Fix: chipIdle (REG_PU low, card.active = false) after every job (app.c jobThread) and after a network
+  client that left a card active; also the battery. iso14aStart powers up and loads the monitor anyway.
+  Jobs that keep a card session for the next one call jobKeepChip (the APDU console; R or B there ->
+  chipOff). Touch verified fine after scans.

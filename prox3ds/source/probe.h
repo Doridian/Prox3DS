@@ -28,6 +28,9 @@ void chipTakeover(void);
 void chipRelease(void);
 Result chipPowerUp(void);
 bool chipEnsure(void);   // takeover unless we own the chip already
+// The chip powered off between card jobs (still ours): with its RF field on the touchscreen reports no
+// touch at all (2026-11-04). The next iso14aStart powers it up and loads the monitor as always.
+void chipIdle(void);
 void chipProbe(void);   // reset / init / patch version from a fresh takeover, chip given back
 bool spdDownload(const u8 *ncd, u32 size, bool verbose);
 

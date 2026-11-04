@@ -33,6 +33,7 @@ typedef pthread_mutex_t LightLock;
 static inline void LightLock_Init(LightLock *l) { pthread_mutex_init(l, NULL); }
 static inline void LightLock_Lock(LightLock *l) { pthread_mutex_lock(l); }
 static inline void LightLock_Unlock(LightLock *l) { pthread_mutex_unlock(l); }
+static inline int LightLock_TryLock(LightLock *l) { return pthread_mutex_trylock(l); }
 
 typedef struct SimThread *Thread;
 typedef void (*ThreadFunc)(void *);

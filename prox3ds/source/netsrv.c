@@ -1066,6 +1066,11 @@ static void netMain(void *arg)
 		logp("net: client %s\n", inet_ntoa(client.sin_addr));
 		serveClient(fd);
 		close(fd);
+		if (card.active) { // a card op left the field on: off, or the touchscreen stays dead
+			LightLock_Lock(&hwLock);
+			chipIdle();
+			LightLock_Unlock(&hwLock);
+		}
 		logp("net: client gone\n");
 	}
 }

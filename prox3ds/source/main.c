@@ -342,6 +342,13 @@ bool chipEnsure(void)
 	return true;
 }
 
+void chipIdle(void)
+{
+	if (!irqEvent) return;
+	gpioNfcSetData(0, NFC_GPIO_REG_PU);
+	card.active = false;
+}
+
 // Back to the system's state: pins released (a dangling IRQ binding takes gpio down with it once
 // our event is gone) and the nfc module running again (the HOME menu and other processes talk to
 // it, and hang while it is missing).

@@ -192,10 +192,27 @@ u32 jobCount(void)
 	return jobs;
 }
 
+static bool keepChip;
+
+void jobKeepChip(void)
+{
+	keepChip = true;
+}
+
+void chipOff(void)
+{
+	if (jobBusy || LightLock_TryLock(&hwLock)) return; // a job or a network request has it: it ends that way
+	chipIdle();
+	LightLock_Unlock(&hwLock);
+}
+
 static void jobThread(void *arg)
 {
 	LightLock_Lock(&hwLock);
 	jobRun();
+	// chip off (battery; and while its RF field is on the touchscreen reports nothing), unless the job
+	// keeps a card session for the next one
+	if (!keepChip) chipIdle();
 	LightLock_Unlock(&hwLock);
 	jobFinished = true;
 }
@@ -223,6 +240,7 @@ void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool
 	jobDone = done;
 	jobCancellable = cancellable;
 	mfCancel = false;
+	keepChip = false;
 	jobFinished = false;
 	jobBusy = true;
 	jobs++;

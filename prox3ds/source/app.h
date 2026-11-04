@@ -49,6 +49,10 @@ void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool
 void jobNextHint(const char *hint);
 void fmtDuration(char *out, u32 ms); // "m:ss"
 bool cardWait(void); // in a job: take the chip, poll until a card is activated (or cancelled)
+// The chip is powered off after every job (battery; its RF field also blinds the touchscreen). In a job:
+// keep it on after this one, for a card session that spans jobs (the APDU console); chipOff ends it.
+void jobKeepChip(void);
+void chipOff(void); // UI thread: the chip off now, unless a job or a network request has it
 
 // A menu screen: entries on the left, the selected one's help on the right, status lines below.
 typedef struct {

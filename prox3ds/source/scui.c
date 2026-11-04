@@ -215,7 +215,8 @@ static ConEntry *conAdd(void)
 static void runCon(void)
 {
 	static u8 ans[SC_MAX_ANS];
-	if (conJob != jobCount() - 1) conUp = false; // someone else had the card
+	// someone else had the card, or the chip was switched off after our last command (chipIdle)
+	if (conJob != jobCount() - 1 || !card.active) conUp = false;
 	if (!conUp) {
 		if (!cardWait()) return;
 		u8 ats[32];
@@ -245,6 +246,7 @@ static void runCon(void)
 	e->ansLen = n;
 	memcpy(e->ans, ans, n < CON_ANS ? n : CON_ANS);
 	iso14aParity(true);
+	jobKeepChip(); // the session lives on to the next command (touch is off meanwhile: R ends it)
 }
 
 static void doneCon(void)
@@ -375,9 +377,14 @@ static void conInput(u32 kDown, u32 kRepeat)
 	if (kDown & KEY_L) conN = 0, conTop = -1;
 	if (kDown & KEY_R) {
 		conUp = false;
-		toast("The next command activates the card again");
+		chipOff();
+		toast("Card session ended (chip off, touch back); the next command activates the card again");
 	}
-	if (kDown & KEY_B) appBack();
+	if (kDown & KEY_B) {
+		conUp = false;
+		chipOff();
+		appBack();
+	}
 }
 
 void apduConsole(void)
