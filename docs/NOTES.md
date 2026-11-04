@@ -976,6 +976,29 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   the real UID.
 - Spare left formatted: no applications, PICC master key DES 00*8, random ID on.
 
+## EV1 password + AUTHLIM verified on a real card (#17 side work) -- 2026-11-03
+- Done on fresh MF0UL11 04EC896A242591 (one of the ten), set up by raw WRITEs through the monitor
+  (scratchpad mfucfg.py: 0x1B PWD_AUTH, 0xA2 WRITE to config pages 16-19; the app's mfuWritePage blocks
+  config pages, so raw is the only path -- a possible app feature later). All reversible; the clear path
+  (AUTH0 FF, cfg1 00050000, PWD FFFFFFFF, PACK 0000) restored it to factory and was re-verified.
+- Protection: PWD page 18 = 11223344, PACK page 19 = AABB, cfg1 (17) byte0 = PROT(bit7) | AUTHLIM(bits0-2),
+  cfg0 (16) byte3 = AUTH0. With AUTH0=04, PROT=1: plain READ NAKs from page 4 up, PWD_AUTH(11223344)
+  returns PACK AABB and unlocks every page. The app "Read with password" shows "(authenticated)" and the
+  config; a wrong one shows "(refused)". VERIFIED end to end.
+- PWD/PACK are NOT readable even after auth: raw READ of page 18/19 stays 00000000; PACK comes back only
+  in the PWD_AUTH response. The app fills PWD/PACK into the dump from the key you typed (mfuedit.c comment
+  was right); no code change.
+- A wrong PWD_AUTH on this chip returns NOTHING (no 4-bit NAK), and the card then ignores further commands
+  until it is reactivated -- so each failed attempt needs its own WUPA+SELECT.
+- AUTHLIM semantics (measured): AUTHLIM=N tolerates N failed auths (a correct auth at the limit still
+  succeeds and resets the counter to 0); the (N+1)th FAILED auth latches the lock for good. With AUTHLIM=2:
+  2 wrongs then correct -> still OK; 3 wrongs -> correct now NAKs. A reselect does NOT reset the counter
+  (it is in EEPROM); only a correct auth does. Card 04EC896A242591 is now LOCKED (correct pwd refused);
+  UID, signature and pages 0-3 still read. Never brute PWD_AUTH on a card you care about.
+- Tear-off of the AUTHLIM counter (the #17 goal) is hard to aim: the failed-auth EEPROM commit is
+  invisible (no response to time against), and proving it needs failures to accumulate, which locks the
+  card if the tear misses. An informed blind attempt is tear ~410 us (the user-page WRITE erase window).
+
 ## Ultralight passwords, Ultralight C on the GTU (issues #6, #7) -- 2026-11-01
 - Ultralight EV1 04A0A0A0A0A001 on the 3DS: signature verified (NXP Ultralight EV1 key) on the card screen.
   Its password is still unknown; nothing was sent to it.
