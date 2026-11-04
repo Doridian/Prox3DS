@@ -584,7 +584,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   FFFFFFFF auths (PACK 0000). Classic clone of the GTU's own 1K backup switched it back (config ==
   original), blocks 64-255 restored from the backup: all 256 blocks + config == before.
 
-## NFC-V / iClass feasibility (issue #9) -- 2026-10-31
+## NFC-V / iClass feasibility -- 2026-10-31
 - Card: HID iClass 2k, CSN 01020304F7FF12E0, config 12FFFFFFE97FFF3C, fuses: application mode, coding
   "ISO 14443-2 B / 15693", secured page (pm3 `hf iclass info` through the 3DS/card/pm3 stack). The
   user has a full pm3 dump with Kd / Kc (~/Downloads/icls/, not in the repo).
@@ -734,7 +734,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   - Not done yet: writes (UPDATE 87 + MAC), other books / pages of 16k/32k cards, iClass in the generic
     scan, SE / SR (non-legacy) credentials.
 
-## DESFire without keys (issue #8) -- 2026-10-31
+## DESFire without keys -- 2026-10-31
 - Test card: UID 04B1B1B1B1B1B1, ATQA 0344, SAK 20, ATS 0675778102 80 (FSCI 5 = 64, FWI 8, CID ok).
   GetVersion 04010212001A05 / 04010102011A05 = DESFire EV2, 8192 bytes, 3584 free, batch B0B0B0B0B0,
   week 37/2021. PICC key settings 0B, 1 AES key (version 00). 7 apps (LEAF F51CDE/DB/D8/DC, F532F1,
@@ -801,7 +801,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - Gen1a card C1C1C1C1 (SAK 88, keys FF): no ATS, block 0 WRITE NAK 4 with key A and B -> "Gen1a"
   only on the card screen (no false Gen2); `magic` 0.6 s; block 0 intact.
 
-## Keyed DESFire: EV1 secure messaging, key dictionary (issue #8) -- 2026-11-01
+## Keyed DESFire: EV1 secure messaging, key dictionary -- 2026-11-01
 - Blank EV3 (one of 10): UID 040C686A9F2390, ATS 067577810280, GetVersion 04010133001805 / 04010103001805
   (EV3, 4096 bytes), batch 2143763030, week 45/2025, 5120 bytes free. PICC key settings 0F, 1 DES key
   version 00 = all-zero DES (EV1 ISO auth 1A with 00*8 works).
@@ -976,7 +976,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   the real UID.
 - Spare left formatted: no applications, PICC master key DES 00*8, random ID on.
 
-## Ultralight passwords (issue #7), Ultralight C on the GTU (issues #4, #5) -- 2026-11-01
+## Ultralight passwords, Ultralight C on the GTU (issues #6, #7) -- 2026-11-01
 - Ultralight EV1 04A0A0A0A0A001 on the 3DS: signature verified (NXP Ultralight EV1 key) on the card screen.
   Its password is still unknown; nothing was sent to it.
 - mfukeys.c: pm3 `hf mfu pwdgen` (common/generator.c) A-G, with its own SHA-1 / MD5 / CRC-16; all 7 of
@@ -1019,7 +1019,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Fix from that: key pages that read as zeros were saved as a valid all-zero key (and a clone would have
   got that key). Without an auth they are now unread; a clone treats an all-zero key (pm3 dumps) as
   unknown -> factory key, and its verify skips the key pages (the auth checks them).
-- Darkside (#2): the user tested every magic card we have for the NACK bug on the pm3: none has it.
+- Darkside: the user tested every magic card we have for the NACK bug on the pm3: none has it.
 
 ## FM11RF08S: single-use keys (2x1nt seeds) + on-chip key checks (pm3 fchk) -- 2026-11-01
 - New card: FM11RF08S UID 5A5A0002 (Saflok-style data). Before: 31/32 keys, sector 1 A "used only here".
@@ -1129,7 +1129,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   nothing retries once with fresh captures (mfNestedRecover -> nestedOnce x2, only when the window ran).
   Since: 11/11 recovered, dump 69 s.
 
-## Darkside / NACK-bug on the FM11RF32N batch (issue #2) -- 2026-11-01
+## Darkside / NACK-bug on the FM11RF32N batch -- 2026-11-01
 - This RF32N batch has the NACK bug: `hf mf darkside` on the pm3 (sister card E928096F, same batch/
   hardware as the 3DS card 7991086F) recovers FFFFFFFFFFFF in ~4 s. pm3 prints "Parity is all zero.
   Most likely this card sends NACK on every authentication." -> the always-leak (par_list == 0) path.
@@ -1562,7 +1562,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   it. Access: write / read-write key (Debit also read, Credit and Clear read-write only); LimitedCredit and
   key / settings / application changes stay refused (9D). On stop the app offers a new info file (dfSaveInfo:
   -N.txt). dfLoadInfo now takes the "key dictionary" header back, or that save dropped the keys.
-- Reader side D40 (issue #10, no MF3ICD40 here): desfire.c dfAuth(how = DF_AUTH_D40, picked by dfAuthHow for
+- Reader side D40 (issue #9, no MF3ICD40 here): desfire.c dfAuth(how = DF_AUTH_D40, picked by dfAuthHow for
   hardware major 0): 0A, D40 secure messaging for reads / writes (MAC4, CRC16), ChangeKey with CRC16s (pm3
   DesfireChangeKey). Checked only against the emulation: tools/exp/dfemu/dfh2.c runs desfire.c's key scan and
   dfOp writes in every comm mode against dfemu.c (isoDepTx wrapped), the card taken as MF3ICD40 / EV1 / EV3:
@@ -1676,7 +1676,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   with the default keys, 18 entries); Fudan Classic 4ACF2F0C (scan x3, two dumps identical, 64 blocks, UI
   scan). All its keys are FF now, sector 5 included (the A0B1C2D3E4F5 / B1C2D3E4F5A6 test keys are gone).
 
-## Tear-off (issue #18; Prox3DS mfu.c mfuTorn, mfutear.c; tools/exp/tear/) -- 2026-11-02
+## Tear-off (issue #17; Prox3DS mfu.c mfuTorn, mfutear.c; tools/exp/tear/) -- 2026-11-02
 - Reader field switch: 0x5C360 (RF block, 6 while a card is active, 0 = field off). It acts at once, even
   in the middle of a TX -> RX transaction: 10 us at 0 resets a card. Found by zeroing every nonzero
   register of 0x5C000-0x5C7FF for 5 ms with a card active (tools/exp/tear/zero.py): only 0x5C054 (4),
@@ -1780,8 +1780,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   rdbl; rdbl; hf 14a reader; hf mfu dump`; Classic `hf mf chk --1k; hf 14a reader; rdbl; rdbl`; echo APDUs
   x3 in one chain.
 
-## Java Card VM, step 1: Python JCVM + APDU relay (issue #19; tools/jcvm/, netsrv.c OP_RELAY) -- 2026-11-02
-- CAPRunner (the PyPI link in #19) is Python 2 era, has no PyPI files, and needs pythoncard + reference
+## Java Card VM, step 1: Python JCVM + APDU relay (tools/jcvm/, netsrv.c OP_RELAY) -- 2026-11-02
+- CAPRunner (the PyPI link in the original Java Card VM issue) is Python 2 era, has no PyPI files, and needs pythoncard + reference
   files generated from the SDK: not used. Own VM instead, laid out the way the C port will be:
   exp.py (export files: class / method / field tokens), cap.py (CAP components), vm.py (classes, objects,
   arrays, interpreter), api.py (natives by class + name + descriptor), card.py (registry, SELECT, process,

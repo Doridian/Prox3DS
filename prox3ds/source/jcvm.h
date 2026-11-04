@@ -2,7 +2,7 @@
 #include <3ds.h>
 #include <stdint.h>
 
-// Java Card virtual machine (issue #19; the Python prototype in tools/jcvm/ is the reference): CAP files
+// Java Card virtual machine (the Python prototype in tools/jcvm/ is the reference): CAP files
 // loaded into packages and classes (library packages too, linked by their Export component), the API in C
 // (jcapi.c) linked by the export file tokens
 // (jcapitab.c, tools/gen_jcapi.py), a heap of objects behind 16-bit handles, the bytecode interpreter.

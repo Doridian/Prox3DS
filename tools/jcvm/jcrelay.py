@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Java Card applets on the 3DS: the 3DS listens as an ISO-DEP card (nfcnet OP_RELAY), this PC runs the
-CAP files in the Python JCVM and answers each APDU. Prototype of Prox3DS's Java Card emulation (#19).
+CAP files in the Python JCVM and answers each APDU. Prototype of Prox3DS's Java Card emulation.
 
 usage: jcrelay.py HOST CAP [CAP...] [-u UID] [-v]   relay until Ctrl-C (UID: 4 / 7 / 10 bytes hex;
                                                     default a random one per run, ATQA 0004 SAK 20)

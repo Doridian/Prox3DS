@@ -1,7 +1,7 @@
 #pragma once
 #include "jcvm.h"
 
-// A Java Card around the VM (issue #19): installed applets, SELECT, an APDU through process() into a
+// A Java Card around the VM: installed applets, SELECT, an APDU through process() into a
 // response, transient memory on reset / deselect, the heap saved to the SD card. The emulation hands it
 // APDUs (jcCardApdu is an EmuApdu); the Python prototype is tools/jcvm/card.py.
 

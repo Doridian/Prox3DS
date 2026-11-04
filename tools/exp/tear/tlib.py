@@ -1,4 +1,4 @@
-# Shared bits for the tear-off experiments (#18): an activated Ultralight EV1 through the monitor,
+# Shared bits for the tear-off experiments (#17): an activated Ultralight EV1 through the monitor,
 # reselect after a power cut, data-mode commands, and the timed field cut (0x5C360: 6 on, 0 off; it
 # acts at once, even mid-transaction, unlike 0x5C054 which the framer latches per TX).
 import sys, time

@@ -1,4 +1,4 @@
-# Tear-off (#18): UL / NTAG page WRITE with the field dropped D timer ticks (1 us) after the last
+# Tear-off (#17): UL / NTAG page WRITE with the field dropped D timer ticks (1 us) after the last
 # FIFO write (reader.c TXSCHED storing 0x5C360 = 0, field off), then field on (= 6), reselect,
 # read the page back. USER PAGE ONLY (default 10 of the UL EV1 test card's free 4..15).
 #   tear.py HOST D0 D1 STEP [PAGE]

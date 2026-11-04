@@ -1,4 +1,4 @@
-# Tear-off groundwork (#18): which register switches the reader field off? Activate a card
+# Tear-off groundwork (#17): which register switches the reader field off? Activate a card
 # (UL EV1 test card), READ page 0, poke a candidate, restore the field (0x5C55C = 0x81 as the
 # ROM does), and see whether the card lost its state (READ silent, WUPA answers = power-cycled).
 import sys, time

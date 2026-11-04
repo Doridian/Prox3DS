@@ -3,7 +3,7 @@ package dspm.lib;
 import javacard.framework.CardRuntimeException;
 
 /**
- * A library package (no applet) for Prox3DS's Java Card VM (issue #19): dspm.libuse calls into it across
+ * A library package (no applet) for Prox3DS's Java Card VM: dspm.libuse calls into it across
  * packages, so every kind of reference to another CAP package gets used. AID F0334453504D30.
  */
 public class Counter {

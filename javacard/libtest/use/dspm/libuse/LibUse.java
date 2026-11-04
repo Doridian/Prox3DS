@@ -13,7 +13,7 @@ import dspm.lib.LibException;
 import dspm.lib.Visitor;
 
 /**
- * Uses the library package dspm.lib (javacard/libtest/lib) for Prox3DS's Java Card VM (issue #19): every
+ * Uses the library package dspm.lib (javacard/libtest/lib) for Prox3DS's Java Card VM: every
  * test writes what it computed, so the VM and a real card (J3H145) can be compared byte for byte.
  * AID F0334453504D04, package F0334453504D40.
  *

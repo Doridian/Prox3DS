@@ -375,7 +375,7 @@ static u32 chkkeys(const u8 *arg, u32 n, u32 nrar, u8 *out)
 // absolute time the way pm3 schedules on GetCountSspClk.
 #define NOW() ((u32)(0u - TIMER))
 
-// OP_DARKSIDE: darkside runs (docs/NOTES.md, issue #2). The card leaks a 4-bit encrypted NACK to a wrong
+// OP_DARKSIDE: darkside runs (docs/NOTES.md). The card leaks a 4-bit encrypted NACK to a wrong
 // {nr}{ar} regardless of parity (always-leak). Its PRNG free-runs, so the tag nonce is a function of
 // when the AUTH arrives. AUTHs fire on an absolute grid `sync` ticks apart, a PRNG period (host-
 // calibrated) over nslot: slot i takes every nslot-th grid point, so each slot sees its own nonce once

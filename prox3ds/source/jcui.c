@@ -1,4 +1,4 @@
-// Java Card applets on the 3DS (issue #19): the card the VM is (jccard.c) with its applets, installing
+// Java Card applets on the 3DS: the card the VM is (jccard.c) with its applets, installing
 // CAP files from the SD card, and emulating it (emuui.c emuStartJc).
 
 #include <dirent.h>
