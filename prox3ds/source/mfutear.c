@@ -264,7 +264,7 @@ static struct {
 
 static volatile struct {
 	const char *phase;
-	int bd, steps, start, val;
+	int bd, d00, steps, start, val;
 	u8 tear;
 	u64 t0;
 } cp;
@@ -359,7 +359,10 @@ static void counterCore(void)
 	// pm3 mfu_cnt_attack_loop: DECREMENT (above 0x00FFFF), PREPARE (up to 0x00FFFF), RESET (towards 0)
 	enum { DEC, PREP, RESET } phase = DEC;
 	static const char *names[] = { "Decrementing", "Preparing (to 00FFFF)", "Resetting" };
-	cp.bd = bd;
+	// pm3: the 00 delay stays at the calibrated BD - 10 while BD gets tuned (its DECREMENT only ever
+	// lowered a counter with BD ~60 us past it)
+	int d00 = bd - OFF_00;
+	cp.bd = bd, cp.d00 = d00;
 	int lost = 0;
 	while (!mfCancel && cp.steps < CNT_MAX_STEPS) {
 		cp.phase = names[phase];
@@ -399,17 +402,17 @@ static void counterCore(void)
 		cp.steps++;
 		if (phase == DEC) {
 			TRY(tincr(0x100, bd));
-			TRY(tincr(0, bd - OFF_00));
+			TRY(tincr(0, d00));
 			TRY(tincr(0, bd));
-			TRY(tincr(0, bd - OFF_00));
+			TRY(tincr(0, d00));
 		} else {
 			TRY(tincr(1, bd));
-			TRY(tincr(0, bd - OFF_00));
+			TRY(tincr(0, d00));
 		}
 		TRY(normalize());
 		u32 f;
 		if (TRY(readCnt(&f, &t)) <= 0) continue;
-		logp("countertear %s %d: BD %d %06lX -> %06lX flag %02X\n", phase == DEC ? "dec" : "reset", cp.steps, bd, v, f, t);
+		logp("countertear %s %d: BD %d/%d %06lX -> %06lX flag %02X\n", phase == DEC ? "dec" : "reset", cp.steps, bd, d00, v, f, t);
 		if (phase == RESET && f > CNT_PREP) phase = DEC;
 		// pm3 mfu_cnt_tune_delay: no change -> later, a big jump -> earlier
 		if (f == v && bd < BD_MAX) bd++;
@@ -433,7 +436,7 @@ static float counterView(float x, float y, float w)
 	y += SMALL_H;
 	uiText(x, y, S_SMALL, txt, "Counter %d: %06X (from %06X)   flag %02X", ctr, cp.val, cp.start, cp.tear);
 	y += SMALL_H;
-	uiText(x, y, S_SMALL, dim, "BD delay %d us, 00 delay %d us, %d steps", cp.bd, cp.bd - OFF_00, cp.steps);
+	uiText(x, y, S_SMALL, dim, "BD delay %d us, 00 delay %d us, %d steps", cp.bd, cp.d00, cp.steps);
 	return 3 * SMALL_H;
 }
 

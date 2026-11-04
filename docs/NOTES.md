@@ -1730,6 +1730,16 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
     min, counter -> 08CD00, never once lower (first 153 steps logged: 103 unchanged, 50 exactly +0x100,
     BD 2760-2824, flag BD). Not checked with pm3 yet (its DECREMENT, `hf mfu countertear -c 0` on this
     card, is the next comparison); untried: other BD - 00 offsets.
+- DECREMENT, second bug: pm3 keeps the 00 delay at the calibrated BD - 10 for the whole run and tunes BD
+  only; the app moved it with BD (always 10 apart). pm3 on card 04065902762496 counter 0 (08CD00, 403
+  attempts / 8 min, BD 2754-2816, 00 2750): one decrement 090400 -> 080500 (at BD 2811), net 08CD00 ->
+  089A00. App with the fixed 00 delay: 089B00 -> 086C00 in 1440 steps (stopped by an app restart), its
+  decrements likewise at the 08 -> 09 carry: the top byte is held at 08 while the lower bytes wander.
+- Carry test (scratchpad script: counter = X, then torn +1 at BD 2760.. / torn 0 at 2750 until it moves):
+  counter 1 at 00FFFF -> 000000 at BD 2803 (43 steps). Counter 2 at 01FFFF -> read 020000 at BD 2761,
+  but the next plain INCR(+FFFF) gave 00FFFF: the torn carry left the counter really at 000000 (reads
+  showed 020000 until the next write). So the top byte CAN go down; how often is open.
+- Network requests that touch the chip now stop on B on the 3DS (netCardOp, app.c), like a job.
 - OTP tear (page 3, mfuTearWrite / tearscan now take page 3; the setup write is not read back since it
   ORs): card 04065902762496, OTP 0000000F, torn WRITE 000000F0 at 400-2800 us step 50: 0000000F up to
   2700, 0000005F at 2750, 000000FF at 2800. No erase phase at all (user pages: 00000000 from ~460 us):

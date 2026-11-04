@@ -922,6 +922,8 @@ static Result handle(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 	return -4; // unknown op
 }
 
+volatile bool netCardOp; // a network request is using the chip
+
 static void serveClient(int fd)
 {
 	static u8 in[0x8000], out[OUT_MAX];
@@ -944,7 +946,9 @@ static void serveClient(int fd)
 			LightLock_Unlock(&hwLock);
 		} else {
 			LightLock_Lock(&hwLock);
+			mfCancel = false, netCardOp = true; // B on the 3DS stops it (app.c), as for a job
 			res = handle(hdr[0], in, len, out, &outLen);
+			netCardOp = false, mfCancel = false;
 			LightLock_Unlock(&hwLock);
 		}
 		if (!sendReply(fd, hdr[0], res, out, outLen)) return;

@@ -846,6 +846,9 @@ void appRun(void)
 		}
 		if (jobBusy) {
 			if ((kDown & KEY_B) && jobCancellable) mfCancel = true;
+		} else if (netCardOp && (kDown & KEY_B)) {
+			mfCancel = true;
+			toast("Stopping the network request");
 		} else if (dlg.kind) {
 			dialogInput(kDown, kRepeat);
 		} else if ((kDown & KEY_SELECT) && stack[depth - 1] != &logScreen) {

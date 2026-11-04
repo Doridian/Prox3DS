@@ -42,11 +42,13 @@ extern volatile bool restartRequested;
 extern char netAddr[32]; // "ip:port" while the server listens, else empty
 // Debug: buttons a network client pressed, taken by the UI loop.
 extern volatile u32 netKeys;
+extern volatile bool netCardOp; // a network request is using the chip (B stops it)
 void netStart(void);
 void netStop(void);
 #else // the release build has no network server (netsrv.c isn't built)
 #define netAddr ""
 #define netKeys 0
+#define netCardOp false
 static inline void netStart(void) {}
 static inline void netStop(void) {}
 #endif
