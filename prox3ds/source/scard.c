@@ -33,7 +33,7 @@ const ScApplet scApplets[] = {
 	{ "Passport (eMRTD)", "A0000002471001", "ICAO electronic passport / ID card (needs the MRZ to read).", NULL },
 	{ "Calypso transit", "315449432E494341", "Calypso public transport card.", NULL },
 	{ "Keycard", "A0000008040001", "Status Keycard (crypto wallet).", NULL },
-	{ "nfcprobe test applet", "F0334453504D01", "javacard/ in the nfcprobe repository: echo, N bytes, slow "
+	{ "Prox3DS test applet", "F0334453504D01", "javacard/ in the Prox3DS repository: echo, N bytes, slow "
 		"commands (WTX), its name.", NULL },
 };
 const int scNumApplets = sizeof(scApplets) / sizeof(scApplets[0]);

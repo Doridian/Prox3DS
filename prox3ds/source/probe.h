@@ -38,7 +38,7 @@ extern LightLock hwLock;
 // Self-update (netsrv OP_UPDATE*): the running .3dsx, and the request to exit and relaunch it.
 extern char appPath[256];
 extern volatile bool restartRequested;
-#ifndef NFCPROBE_RELEASE
+#ifndef PROX3DS_RELEASE
 extern char netAddr[32]; // "ip:port" while the server listens, else empty
 // Debug: buttons a network client pressed, taken by the UI loop.
 extern volatile u32 netKeys;

@@ -52,11 +52,11 @@ CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 
 CFLAGS	+=	$(INCLUDE) -D__3DS__
 
-# make: the debug build (network server, sdmc:/nfcprobe.log). make release: nfcprobe-release.3dsx
+# make: the debug build (network server, sdmc:/prox3ds.log). make release: prox3ds-release.3dsx
 # without the server, the log in RAM only (Log: save).
-APP_TITLE	:=	nfcprobe
+APP_TITLE	:=	Prox3DS
 ifneq ($(RELEASE),)
-CFLAGS	+=	-DNFCPROBE_RELEASE
+CFLAGS	+=	-DPROX3DS_RELEASE
 NOT_BUILT	:=	netsrv.c
 endif
 

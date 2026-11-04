@@ -18,7 +18,7 @@ int httpGetFile(const char *url, const char *path, u32 max, char *why, u32 whyLe
 		return snprintf(why, whyLen, "httpc open: %08lX", r), 0;
 	}
 	httpcSetSSLOpt(&c, SSLCOPT_DisableVerify);
-	httpcAddRequestHeaderField(&c, "User-Agent", "nfcprobe");
+	httpcAddRequestHeaderField(&c, "User-Agent", "Prox3DS");
 	if (R_FAILED(r = httpcBeginRequest(&c)) || R_FAILED(r = httpcGetResponseStatusCode(&c, &status))) {
 		snprintf(why, whyLen, "request: %08lX", r);
 		goto out;

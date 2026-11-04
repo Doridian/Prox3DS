@@ -9,7 +9,7 @@
 // The cipher, key diversification and elite key derivation follow pm3 (armsrc/optimized_cipher.c,
 // optimized_ikeys.c, optimized_elite.c).
 
-#define ICLASS_DIR       "sdmc:/nfcprobe/iclass"
+#define ICLASS_DIR       "sdmc:/prox3ds/iclass"
 #define ICLASS_KEYS      ICLASS_DIR "/keys.txt"   // "<16 hex> [s|e|d] [label]": standard / elite master key, diversified
 #define ICLASS_KNOWN     ICLASS_DIR "/known.txt"  // "<CSN> <Kd div> <Kc div>" (0 = unknown), written after a dump
 #define ICLASS_TRANSPORT ICLASS_DIR "/iclass_decryptionkey.bin" // pm3's 16-byte credential (block 7-9) key

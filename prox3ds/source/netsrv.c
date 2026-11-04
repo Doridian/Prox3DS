@@ -32,7 +32,7 @@
 #define MS(x)          ((s64)(x) * 1000000LL)
 
 enum {
-	OP_PING     = 0x00, // -> "nfcprobe"
+	OP_PING     = 0x00, // -> "Prox3DS"
 	OP_TAKEOVER = 0x01, // kill the nfc module, open gpio/i2c, bind the IRQ (no-op if already ours)
 	OP_POWER    = 0x02, // u8: 0 = REG_PU low, 1 = power cycle (low, 20 ms, WAKE low, high, 100 ms)
 	OP_WRITE    = 0x03, // bytes -> I2C write
@@ -44,7 +44,7 @@ enum {
 	// it in and has the app exit (chip handed back as usual) and relaunch itself (main.c).
 	OP_UPDATE      = 0x08, // offset u32 (0 = start over), data
 	OP_UPDATE_DONE = 0x09, // size u32
-	OP_PUT_FILE    = 0x0A, // offset u32 (0 = new file), path length u8, path (under sdmc:/nfcprobe/, no
+	OP_PUT_FILE    = 0x0A, // offset u32 (0 = new file), path length u8, path (under sdmc:/prox3ds/, no
 	                       // ".."), data: a file onto the SD card (CAP files to install, key lists)
 	// High-level card ops (mfc.c); they take over the chip themselves. Result 0 = ok,
 	// 1 = no card / auth refused, -1 = chip monitor error.
@@ -869,8 +869,8 @@ static Result handle(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 {
 	*outLen = 0;
 	if (op == OP_PING) {
-		memcpy(out, "nfcprobe", 8);
-		*outLen = 8;
+		memcpy(out, "Prox3DS", 7);
+		*outLen = 7;
 		return 0;
 	}
 	if (op == OP_UPDATE || op == OP_UPDATE_DONE) return handleUpdate(op, in, inLen);

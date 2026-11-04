@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DESFire emulation (nfcprobe dfemu.c) against a reader written from pm3's desfirecore.c / desfiresecurechan.c:
+"""DESFire emulation (Prox3DS dfemu.c) against a reader written from pm3's desfirecore.c / desfiresecurechan.c:
 D40 (0A) and EV2 (71 / 77) logins and their secure messaging, on test.txt. Run build.sh first.
 
 The reader is derived from Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later (desfirecore.c: libfreefare (C) 2010 Romain Tartiere); see CREDITS.md."""

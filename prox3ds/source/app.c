@@ -338,10 +338,10 @@ static int logMax(void)
 }
 
 #define LOG_DIR MF_DIR "/logs"
-#ifdef NFCPROBE_RELEASE
-#define LOG_HELP "Everything the card operations logged, kept in memory only. " BTN_Y " saves it to sdmc:/nfcprobe/logs."
+#ifdef PROX3DS_RELEASE
+#define LOG_HELP "Everything the card operations logged, kept in memory only. " BTN_Y " saves it to sdmc:/prox3ds/logs."
 #else
-#define LOG_HELP "Everything the card operations logged (also in sdmc:/nfcprobe.log). " BTN_Y " saves a copy to sdmc:/nfcprobe/logs."
+#define LOG_HELP "Everything the card operations logged (also in sdmc:/prox3ds.log). " BTN_Y " saves a copy to sdmc:/prox3ds/logs."
 #endif
 
 // The RAM log to LOG_DIR/<console time>.log
@@ -423,7 +423,7 @@ void menuInput(Menu *m, u32 kDown, u32 kRepeat)
 
 void menuDraw(Menu *m)
 {
-#ifdef NFCPROBE_RELEASE
+#ifdef PROX3DS_RELEASE
 	uiHeader(m->title, NULL);
 #else
 	uiHeader(m->title, *netAddr ? netAddr : "no network");
@@ -657,7 +657,7 @@ static void menuExit(void)
 
 static MenuEntry rootEntries[7 + NFAMILIES + 1];
 static void rootExtra(float x, float y, float w);
-static Menu rootMenu = { "nfcprobe", rootEntries, 0, rootExtra };
+static Menu rootMenu = { "Prox3DS", rootEntries, 0, rootExtra };
 
 static void rootExtra(float x, float y, float w)
 {
@@ -822,7 +822,7 @@ void appRun(void)
 	while (aptMainLoop() && !quit && !restartRequested) {
 		frame++;
 		hidScanInput();
-#ifdef NFCPROBE_RELEASE
+#ifdef PROX3DS_RELEASE
 		u32 net = touchKeys;
 #else
 		u32 net = __atomic_exchange_n(&netKeys, 0, __ATOMIC_SEQ_CST) | touchKeys;

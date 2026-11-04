@@ -163,7 +163,7 @@ extern const u8 mfDefaultKeys[][6];
 extern const int mfNumDefaultKeys;
 
 #define MF_MAX_KEYS 256
-#define MF_DIR      "sdmc:/nfcprobe"
+#define MF_DIR      "sdmc:/prox3ds"
 #define MF_KEYS     MF_DIR "/keys.txt" // one hex key per line, '#' comments
 int mfSectorsFromSak(u8 sak);
 // extra keys, then MF_KEYS, then the defaults, without duplicates

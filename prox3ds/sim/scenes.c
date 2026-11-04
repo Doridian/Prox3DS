@@ -367,7 +367,7 @@ static void ndefFixture(MfuDump *d, bool empty)
 	u8 msg[300], tlv[320];
 	u32 n = 0;
 	if (!empty) {
-		n += ndefUri("https://github.com/Doridian/3dspm", msg + n, sizeof(msg) - n);
+		n += ndefUri("https://github.com/Doridian/Prox3DS", msg + n, sizeof(msg) - n);
 		u32 a = n;
 		n += ndefText("en", "Hello from the 3DS", msg + n, sizeof(msg) - n);
 		u32 b = n;

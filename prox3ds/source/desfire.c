@@ -616,7 +616,7 @@ int dfOp(const DfInfo *d, u32 aid, u8 k, const DfKey *key, const u8 *c, u32 len,
 	if (st) FAIL(0, "%s", dfStatusName(st));
 	if (!(flags & DF_COMMIT)) return 1;
 	if (flags & DF_READER_ID) { // answers the previous reader ID, encrypted with a TM session key
-		u8 rid[17] = { 0xC8, 'n', 'f', 'c', 'p', 'r', 'o', 'b', 'e' };
+		u8 rid[17] = { 0xC8, 'P', 'r', 'o', 'x', '3', 'D', 'S' };
 		if ((r = dfCmd(rid, 17, 0, DF_MACED, out, sizeof(out), &st)) == -2) FAIL(-1, "monitor");
 		if (r < 0) return 0;
 		if (st) FAIL(0, "CommitReaderID: %s", dfStatusName(st));
@@ -1110,7 +1110,7 @@ bool dfLoadInfo(DfInfo *d, const char *path)
 	while (fgets(line, sizeof(line), fp)) {
 		const char *l = line;
 		int k;
-		if (sscanf(l, "# nfcprobe DESFire info (key dictionary: %u keys", &x) == 1) { // so a save keeps the keys
+		if (sscanf(l, "# Prox3DS DESFire info (key dictionary: %u keys", &x) == 1) { // so a save keeps the keys
 			d->keyed = true, d->dictKeys = x;
 			d->ev2 = strstr(l, "EV2") != NULL, d->d40 = strstr(l, "D40") != NULL;
 		} else if (!strncmp(l, "UID ", 4)) {
@@ -1214,9 +1214,9 @@ bool dfSaveInfo(const DfInfo *d, char *path, u32 pathMax)
 	FILE *fp = fopen(path, "w");
 	if (!fp) return false;
 	const u8 *v = d->ver;
-	if (d->keyed) fprintf(fp, "# nfcprobe DESFire info (key dictionary: %d keys, %s secure messaging)\nUID %s\n",
+	if (d->keyed) fprintf(fp, "# Prox3DS DESFire info (key dictionary: %d keys, %s secure messaging)\nUID %s\n",
 		d->dictKeys, d->d40 ? "D40" : d->ev2 ? "EV2" : "EV1", uid);
-	else fprintf(fp, "# nfcprobe DESFire info (no keys)\nUID %s\n", uid);
+	else fprintf(fp, "# Prox3DS DESFire info (no keys)\nUID %s\n", uid);
 	if (d->randomUid) fprintf(fp, "random ID on%s\n", d->hasRealUid ? " (real UID by GetCardUID)" : ": real UID unknown (needs the PICC master key)");
 	hexLine(fp, "ATS ", d->ats, d->atsLen);
 	fprintf(fp, "%s\n", dfVersionName(d));

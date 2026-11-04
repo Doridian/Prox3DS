@@ -63,7 +63,7 @@ u32 emuNdefApdu(const u8 *cmd, u32 len, u8 *resp, u32 max);
 // APDU log: an ISO-DEP card that answers from EMU_RULES ("<command prefix hex> <response hex>" per line,
 // '#' comments, the first matching prefix wins; else 6A82 for a SELECT, 6D00 for anything else) and
 // appends every APDU to EMU_APDU_LOG.
-#define EMU_DIR      "sdmc:/nfcprobe/emu"
+#define EMU_DIR      "sdmc:/prox3ds/emu"
 #define EMU_RULES    EMU_DIR "/apdu.txt"
 #define EMU_APDU_LOG EMU_DIR "/apdu.log"
 int emuLogLoad(void); // the rules; their number

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Darkside on hardware via the chip collector (reader.c OP_DARKSIDE) + the recovery in darkside.py.
-The prototype of the app's mfDarkside (nfcprobe mfc.c; `nfcnet.py HOST darkside BLOCK` runs that):
+The prototype of the app's mfDarkside (Prox3DS mfc.c; `nfcnet.py HOST darkside BLOCK` runs that):
 the on-chip loop steers onto a repeating tag nonce and collects the 8 NACK keystreams.
 
     darkside_hw.py HOST [block] [keyB]
@@ -16,7 +16,7 @@ from mfc import pack
 from rawa import with_crc
 import darkside
 
-SLOTS = 3                           # runs per call (nfcprobe mfc.c DS_SLOTS)
+SLOTS = 3                           # runs per call (Prox3DS mfc.c DS_SLOTS)
 NR_WIRE = 0xAABBCC00 & 0xFFFFFF1F   # fixed on-wire reader nonce (last 3 bits = nt_diff)
 AR_WIRE = 0x11223344                # fixed on-wire reader response
 

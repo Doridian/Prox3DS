@@ -1,6 +1,6 @@
-# uisim: the nfcprobe UI on the PC
+# uisim: the Prox3DS UI on the PC
 
-Renders every nfcprobe screen without a 3DS and checks the text layout. The real UI code
+Renders every Prox3DS screen without a 3DS and checks the text layout. The real UI code
 (`source/app.c`, the family screens, `ui.c`, and the card logic in `mfc.c`/`mfu.c`/`desfire.c`)
 builds for the host against fake libctru / citro2d headers (`include/`). There's no NFC chip, so
 the scenes in `scenes.c` put mock cards, dumps and job results straight into the screens' state

@@ -39,10 +39,10 @@
   Host compares via GET_PATCH_VERSION (2F 2D) and only downloads on mismatch.
   => a bad patch persists across reboots; risk of bricking the NFC controller (soldered).
 
-## Taking over from homebrew (nfcprobe/)
+## Taking over from homebrew (prox3ds/)
 - PMAPP_TerminateTitle(0004013000004002) returns 0 but nfc keeps running; svcTerminateProcess on its PID works
 - Killing nfc leaves its event bound to the IRQ pin in gpio -> gpio crashes (D8E007F7 @ 0x1009a8) when it fires.
-  nfcprobe masks the IRQ, unbinds, and binds its own event first.
+  Prox3DS masks the IRQ, unbinds, and binds its own event first.
 - With REG_PU held low (pins swapped in first attempt) every I2C xfer fails F9602FEF (NACK)
 
 ## Live controller (first successful probe)
@@ -77,8 +77,8 @@
 ## Open questions / next steps
 - Disassemble patch type-01 segments (Thumb, chip addrs 0x03xxxx RAM / 0x05xxxx) -> chip memory map
 - Find gpio:NFC usage (reset/power line) and the patch version compare logic in nfc .code
-- Safe first HW test: nfcprobe/ (stop nfc module, power-cycle, CORE_RESET/INIT + GET_PATCH_VERSION only)
-- Get a ROM dump. Attempt 1 (nfcprobe job R): BT HCI VSC Read_RAM 0xFC4D over HCIT 0x01
+- Safe first HW test: prox3ds/ (stop nfc module, power-cycle, CORE_RESET/INIT + GET_PATCH_VERSION only)
+- Get a ROM dump. Attempt 1 (Prox3DS job R): BT HCI VSC Read_RAM 0xFC4D over HCIT 0x01
   (01 4D FC 05 addr32 len8 -> 04 0E .. 4D FC status data), no patch needed; dumps 0..0x40000 and AON
   to sdmc:/nfc_rom.bin / nfc_aon.bin, then validates by reading the stock patch back at 0x3B80C.
   RESULT: chip answers BT HCI over HCIT 0x01 (04 0E 04 01 4D FC 01) but Read_RAM = status 01
@@ -87,7 +87,7 @@
   chipver string + version are reflected by GET_PATCH_VERSION).
 - (answered: patch is RAM-only) Are there NCI_MSG_EEPROM_RW / memory read/write vendor cmds?
 
-## Network control (nfcprobe/source/netsrv.c, tools/nfcnet.py)
+## Network control (prox3ds/source/netsrv.c, tools/nfcnet.py)
 TCP 8020, request op u8 + len u16 + payload, reply op u8 + result u32 + len u16 + payload.
 Ops: 0 ping, 1 takeover, 2 power (0 off / 1 cycle), 3 i2c write, 4 read packet (u16 ms),
 5 write+read, 6 gpio (value, mask), 7 release. Button jobs release a network-held chip first.
@@ -196,9 +196,9 @@ Ops: 0 ping, 1 takeover, 2 power (0 off / 1 cycle), 3 i2c write, 4 read packet (
   monitor on every such timeout was what made dumps slow and flaky.
 - The IRQ pin (gpio 0x10000) is a reliable "packet pending" signal: 0 idle, 1 once the reply is
   queued, 0 after it is read. nciRecv used to read blind (immediately, then every 20 ms); a read
-  racing with the chip queueing a packet loses that packet. nfcprobe now reads only while IRQ = 1.
+  racing with the chip queueing a packet loses that packet. Prox3DS now reads only while IRQ = 1.
 - Mifare wrong-key auth (card silent after {nr}{ar}) does not hang the chip by itself.
-- Result with IRQ-gated reads (nfcprobe, net ops 0x10-0x14): no stalls at all. Full 1K dump with
+- Result with IRQ-gated reads (Prox3DS, net ops 0x10-0x14): no stalls at all. Full 1K dump with
   the 3 known keys in 3.8 s (was minutes); ~280 wrong-key auths (defaults only) in 16.7 s, ~60 ms
   each. Data blocks match the Gen1a backdoor dump; trailers differ only in key B (not readable).
 - Exit path (START): release pins/IRQ, then PMAPP_LaunchTitle(nfc 0004013000004002) -> 0, HOME
@@ -272,7 +272,7 @@ while polling TX busy 0x5C594 bit 0; busy time = on-air bits * 9.44 ticks + ~2.4
   14 bytes (entry ptr + push {lr}; bl 0x11888; pop {r1}; bx r1). Verified on HW: monitor answers,
   0x68C80 = 0x32E0 afterwards, Gen1a backdoor dump of all 64 blocks matches dump/card_C1C1C1C1.bin.
 - App: the stock-patch jobs (L+B/X/Y signature tests, L+R Read_RAM + stock cross-check) are gone,
-  so nfcprobe embeds no Broadcom/Nintendo bytes and the user needs no sysmodule dump to build it.
+  so Prox3DS embeds no Broadcom/Nintendo bytes and the user needs no sysmodule dump to build it.
 
 ## Nested auth: mechanism CONFIRMED, recovery pending -- 2026-10-30
 - Nested auth works: after a known-key auth (cs_A running, parity off), send `60/61 target`+CRC
@@ -439,9 +439,9 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   itself with readSectorRetry. With the pm3 still stacked: 3 dumps, 32/32 keys each, 4.9 / 3.0 / 3.0 s.
 
 ## Self-update over the network (debugging) -- 2026-10-31
-- `nfcnet.py HOST update [FILE]` (default nfcprobe/nfcprobe.3dsx): OP_UPDATE (offset u32, data; 28 KB
+- `nfcnet.py HOST update [FILE]` (default prox3ds/prox3ds.3dsx): OP_UPDATE (offset u32, data; 28 KB
   chunks; request buffer now 32 KB) writes <app>.new, OP_UPDATE_DONE (size u32) checks the size,
-  swaps it over the app (argv[0], default sdmc:/3ds/nfcprobe.3dsx) and asks the main loop to exit.
+  swaps it over the app (argv[0], default sdmc:/3ds/prox3ds.3dsx) and asks the main loop to exit.
   The normal exit path hands the chip back, then relaunchSelf(): Rosalina hb:ldr SetTarget (cmd 2,
   SD-relative path, static buffer 0) + SetArgv (cmd 3, argc u32 + strings, static buffer 1), like
   the Homebrew Menu does, and aptSetChainloaderToSelf() -> soft reset into the new build.
@@ -717,7 +717,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
     pages), AA1 6-18, AA2 19-255 (pm3 `hf iclass info` agrees; earlier "2k" above was wrong). Credential
     blocks 7-9 2K3DES with pm3's transport key (client/resources/iclass_decryptionkey.bin): block 7 =
     000000069A5154A4 -> HID Corporate 1000 35-bit FC 1234 CN 567890.
-  - App (nfcprobe/source/iclass.c math, iclassrw.c reader, iclassui.c UI, iclasskeys.c from
+  - App (prox3ds/source/iclass.c math, iclassrw.c reader, iclassui.c UI, iclasskeys.c from
     tools/gen_iclasskeys.py, net op 0x2B OP_ICLASS / nfcnet.py iclass()): root menu "iClass / PicoPass":
     read with key search (remembered keys for the CSN in iclass/known.txt, iclass/keys.txt, pm3 defaults
     standard + elite, the 729 elite keys elite), read with a typed key, card screen with config, keys,
@@ -758,7 +758,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
 - Not done: signature verification (secp224r1, needs ECC on the ARM11), AID names (pm3's
   aid_desfire.json), anything behind a key, TX chaining (commands fit one frame).
 - App: DESFire family (dfui.c) for any SAK with bit 5 and not bit 3; a non-DESFire ISO14443-4 card shows
-  its ATS. Card screen, application screen (D-pad left/right between apps, A shows a read file), Y saves sdmc:/nfcprobe/desfire/<UID>.txt.
+  its ATS. Card screen, application screen (D-pad left/right between apps, A shows a read file), Y saves sdmc:/prox3ds/desfire/<UID>.txt.
 - Non-DESFire path checked with a JavaCard (NXP J3H145, JCOP3): UID 046D45528C5080, ATQA 0048, SAK 20,
   ATS 0578777102 (FSC 256, FWI 7, CID ok, no historical bytes). Native GetVersion 60 -> 67 00 (ISO7816
   wrong length): screen shows the ATS + "status 67". pm3: CPLC fabricator 4790 / type 0503 / OS 8211
@@ -827,7 +827,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   key 1 3K3DES 00112233445566778899AABBCCDDEEFF0102030405060708; C3C3C3 key 0 DES 00*8, key 1 2K3DES
   00112233445566778899AABBCCDDEEFF.
 - Scan with keys (DESFire menu, or R on the card screen): built-in dictionary (16 keys, pm3's commonest)
-  + sdmc:/nfcprobe/desfire/keys.txt (8 / 16 / 24-byte hex lines) on the PICC master key and every app key
+  + sdmc:/prox3ds/desfire/keys.txt (8 / 16 / 24-byte hex lines) on the PICC master key and every app key
   (by the key type from GetKeySettings; unknown type: AES, 2K3DES, 3K3DES); AE = wrong key, 40 / 9D stop.
   Key 0 re-reads what was refused (key settings, file list, file settings); every file whose read /
   read-write (value: also write) key is known is read after a fresh select + auth, in its comm mode.
@@ -924,7 +924,7 @@ Mechanism (eprint 2024/1275, pm3 armsrc AcquireStaticEncryptedNonces + tools sta
   "NOT verified". Hardware check pending (no MFU card on the reader at the time).
 
 ## DESFire extras: AID names, EV2 NonFirst, ISO IDs, key settings, key versions -- 2026-11-01
-- AID names: nfcprobe/source/aidnames.c is generated by tools/gen_aidnames.py from pm3's
+- AID names: prox3ds/source/aidnames.c is generated by tools/gen_aidnames.py from pm3's
   client/resources/aid_desfire.json (244 AIDs, same byte order as our display: LEAF F51CDE etc. match).
   Application screen line 1 and the saved info show "name (vendor)".
 - AuthenticateEV2NonFirst (77 keyNo, no LenCap): AF + E(K, RndB); AF + E(K, RndA || rol(RndB)); 00 + E(K,
@@ -958,7 +958,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   a reader ID (CommitReaderID never). A commit ends the authentication in such an application. Standard
   file writes still need no commit (pm3 the same). pm3 doesn't verify TMVs either.
   UI: create file type "transaction MAC" (TM key + version); writes in such an application send
-  CommitReaderID ("nfcprobe") when the file wants it (free, or the write's key; else it says which key)
+  CommitReaderID ("Prox3DS") when the file wants it (free, or the write's key; else it says which key)
   and commit with option 01: the toast shows TMC / TMV; the contents screen decodes them. Verified: credit
   with reader ID (TMC 2 -> 4), TMAC created through the form with CommitReaderID never, credit -> TMC 1.
 - SetConfiguration (5C option data, PICC master key, full): option 02 = the ATS (TL first), which pm3 sends
@@ -981,8 +981,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   Its password is still unknown; nothing was sent to it.
 - mfukeys.c: pm3 `hf mfu pwdgen` (common/generator.c) A-G, with its own SHA-1 / MD5 / CRC-16; all 7 of
   pm3's self-test vectors match. pm3's fingerprints with a derived password (Amiibo, Amiibo Power Up band,
-  Lego Dimensions) put that one first. MFU_KEYS = sdmc:/nfcprobe/mfu_keys.txt (8 hex = password, 32 hex =
-  UL-C key, text after it = label), MFU_KNOWN = sdmc:/nfcprobe/mfu/known.txt (UID + key that worked,
+  Lego Dimensions) put that one first. MFU_KEYS = sdmc:/prox3ds/mfu_keys.txt (8 hex = password, 32 hex =
+  UL-C key, text after it = label), MFU_KNOWN = sdmc:/prox3ds/mfu/known.txt (UID + key that worked,
   written on every successful auth).
 - "Read with password" (menu, or Y on the card screen) scans, then opens a picker: type one, remembered,
   file, derived, defaults. It shows AUTHLIM from CFG1 (unknown when the config pages are protected) and
@@ -1049,7 +1049,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   10:09 -> 2:31.
 
 ## Classic: keys from the UID (pm3 `hf mf keygen`), value blocks -- 2026-11-01
-- nfcprobe/source/mfckeys.c ports pm3 common/generator.c KDFTable: Saflok / Maid, MIZIP (Mini),
+- prox3ds/source/mfckeys.c ports pm3 common/generator.c KDFTable: Saflok / Maid, MIZIP (Mini),
   Disney Infinity (7-byte UID, SHA-1), Skylanders, Bambu Lab + Snapmaker spools (HKDF-SHA256, own small
   SHA-256), Vanderbilt ACT (pm3's "+3" trailer quirk kept for 4K big sectors). Every sector of every
   KDF matches `hf mf keygen -u 11223344 -k N` (Disney with 04112233445566).
@@ -1071,7 +1071,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - The extra backdoor keys (A31667A8CEC1 FM11RF08, 518B3354E760 FM11RF32N) were already in mfBackdoorKeys.
 
 ## Classic: card info (Saflok, MAD, signature, Fudan ID) -- 2026-11-01
-- nfcprobe/source/mfcinfo.c, editor action "Card info (MAD, Saflok, signature)" + a summary in the read
+- prox3ds/source/mfcinfo.c, editor action "Card info (MAD, Saflok, signature)" + a summary in the read
   result. Offline checks:
   - Saflok (pm3 client/src/cmdhfsaflok.c): 17 bytes = block 1 + block 2 byte 0, byte table + bit rotation
     (safDecrypt), bit fields, creation date + interval = expiry. All 3 pm3 self-test vectors match field
@@ -1241,7 +1241,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   9/42. Keyless dump 39 s, byte-identical to the previous one.
 
 ## NDEF on Ultralight / NTAG (Type 2) -- 2026-11-01
-- nfcprobe/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
+- prox3ds/source/ndef.c: T2T TLVs (00 / 01 / 02 / 03 / FD / FE, 1- or 3-byte lengths), NDEF record
   parser (SR / long, IL, chunk flag), descriptions for URI (prefix codes), Text (lang, UTF-8 / UTF-16),
   Smart Poster (its URI), MIME, absolute URI, external (Android AAR); builders for URI / Text records (SR
   under 256 bytes, else the 4-byte length) and the 03 .. FE TLV. Records built here decode the same in
@@ -1308,7 +1308,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   The list is AmiiboAPI's database/amiibo.json (~180 KB, 932 figures) through jsDelivr
   (cdn.jsdelivr.net/gh/N3evin/AmiiboAPI@master/...): raw.githubusercontent.com only offers AES-GCM suites
   and the 3DS SSL module fails the handshake with D8A0A03C; jsDelivr takes AES-CBC. httpc, SSL verify off
-  (old CAs, clock 2052), to sdmc:/nfcprobe/amiibo.json via
+  (old CAs, clock 2052), to sdmc:/prox3ds/amiibo.json via
   .new + load check + rename (`nfcnet put amiibo.json` works too). Parsed in place: amiibos (16-hex-digit IDs
   -> name), amiibo_series (ID byte 6), game_series (first 12 bits), characters (bytes 0-1), types (byte 3).
   New figure (amiiboNew): plain zeroed, page 4 A5 00 00 00, model info at 0x1DC, the 4 bytes after it and the
@@ -1326,20 +1326,20 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   System Settings still doesn't see the GTU even with that verified backdoor image: the data is not why;
   likely PACK 4883 (or another check the GTU fails). A pm3 sniff of 3DS <-> GTU would show where it stops.
 
-## Smart card family, GlobalPlatform, YubiKey OATH (nfcprobe) -- 2026-11-01
+## Smart card family, GlobalPlatform, YubiKey OATH (Prox3DS) -- 2026-11-01
 - Generic scan: DESFire's probe returns FAMILY_PASS when GetVersion fails, the next matching family (scFamily,
   scui.c) takes the card. Scan = ATS, gpSelect (ISD A000000151000000 / A000000003000000 / default app) + GET DATA
-  9F7F / 66 / E0 / C1, then SELECT of every scApplets[] AID + sdmc:/nfcprobe/smartcard/aids.txt.
+  9F7F / 66 / E0 / C1, then SELECT of every scApplets[] AID + sdmc:/prox3ds/smartcard/aids.txt.
 - J3H145: scan finds ISD + test applet; CRD decodes as GP 2.1.1 (OID 2A864886FC6B 02 02 01 01; pm3 printed
   2.2.1), SCP03 i=00, Java Card 2. Sequence counter (C1) = 0.
 - GP from the 3DS (gp.c): default keys found offline, EXTERNAL AUTHENTICATE ok, GET STATUS (P2 02 tag format,
-  P1 80 / 40 / 10) -> 18 entries. Install of dspm-test.cap from sdmc:/nfcprobe/cap (DELETE old package 9000,
+  P1 80 / 40 / 10) -> 18 entries. Install of dspm-test.cap from sdmc:/prox3ds/cap (DELETE old package 9000,
   LOAD 608 bytes, INSTALL 9000), applet answers its name afterwards; instance DELETE (P2 00) keeps the package.
   Load file byte-identical to gpload.py's. Card left as before (test applet installed).
 - One INITIALIZE UPDATE got "no answer" right after a scan (first GP open); the retry and every later one
   worked. Watch for it.
 - OATH (oath.c) verified on the user's YubiKey 5 NFC (OATH 5.4.3, no password): LIST, CALCULATE ALL, DELETE.
-  Test account nfcprobe:test (JBSWY3DPEHPK3PXP) added by APDU: 3DS code 940131 = Python TOTP; deleted from the
+  Test account Prox3DS:test (JBSWY3DPEHPK3PXP) added by APDU: 3DS code 940131 = Python TOTP; deleted from the
   app again (0 accounts). Not yet tried: password, HOTP, touch accounts, adding from the app (swkbd).
 - YubiKey: random UID, new on wake-ups (seen 5FC544F567B53E and 2749CB0301CB49); ROM scan reports SAK B3.
   iso14aSelect now falls back to a real anticollision (93/95/97 20, bit mode; select level 2+ in data mode)
@@ -1348,7 +1348,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   (pool.ntp.org) or as a UTC offset in minutes.
   `ant oath` in javacard/ builds Yubico's ykneo-oath (clone in javacard/ykneo-oath, gitignored; applet
   A000000527210101, package A0000005272101) to install on the J3H145 via the app as a stand-in.
-- Net op 0x0A OP_PUT_FILE (`nfcnet.py HOST put LOCAL [DEST]`): files under sdmc:/nfcprobe/.
+- Net op 0x0A OP_PUT_FILE (`nfcnet.py HOST put LOCAL [DEST]`): files under sdmc:/prox3ds/.
 - PC checks: sha1/HMAC/PBKDF2 and base32 vs Python, inflate on deflated zips (stored, fixed, dynamic blocks).
 
 ## Card mode (listen-A) exploration (chip/lmon.c, tools/exp/listen/) -- 2026-11-01
@@ -1426,7 +1426,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   - So the earlier "TX too weak" verdict was a placement problem (pm3 lying ON TOP of the 3DS).
   - Correction: memrw itself is harmless. The ROM's FRAME_LOG (0x380A0 = 1 1, which stock.py turned on
     with memrw) is what keeps host DATA from going out; memrw loaded with FRAME_LOG off answers 4/4.
-  - nfcprobe card mode (source/emu.c): monLoad, LA_* config, map 04 02 02, listen A, then APDUs as NCI
+  - Prox3DS card mode (source/emu.c): monLoad, LA_* config, map 04 02 02, listen A, then APDUs as NCI
     DATA (PBF reassembly, a credit per packet, CORE_CONN_CREDITS returns it when the next block comes).
     Type 4 NDEF tag verified with pm3: `hf 14a ndefread` 8/8 back to back, UPDATE BINARY write + read back.
   - Re-arm after deactivation to idle: RF_DISCOVER sent right away (or 20 ms later) gets RSP OK and field
@@ -1527,7 +1527,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   wrong-key auths, all silent, every key found), hf mf dump twice identical; a few single reads NACKed or
   auth errors, retried by pm3.
 
-## DESFire emulation from saved info files (nfcprobe dfemu.c, desfire.c dfLoadInfo) -- 2026-11-02
+## DESFire emulation from saved info files (Prox3DS dfemu.c, desfire.c dfLoadInfo) -- 2026-11-02
 - ISO-DEP stays with the ROM (host answers through NCI DATA, as the T4T tag), so DESFire needs no chip code:
   dfLoadInfo reads a Save info .txt back (status names back to codes, hex lines, keys by name / length),
   dfEmuApdu answers native frames and 90-wrapped APDUs (59-byte frames, AF chaining, GetVersion 7 + 7 + rest).
@@ -1614,7 +1614,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Research (no public register docs for the BCM2079x RF block): Android's nfc_brcm_defs.h names
   NCI_PARAM_ID_DH_PARITY_CRC_CTL 0xC7 and GID_PROP SET / GET_CLF_REGISTERS 0x03 / 0x2A, no layout known.
 
-## pm3 dictionaries for MFC / DESFire / UL-C (nfcprobe pm3dict.c) -- 2026-11-02
+## pm3 dictionaries for MFC / DESFire / UL-C (Prox3DS pm3dict.c) -- 2026-11-02
 
 - Besides iClass, pm3's client/dictionaries has lists for families the app reads: mfc_default_keys.dic
   (2511 keys), mfdes_default_keys.dic (58), mfulc_default_keys.dic (7, same as the built-in UL-C list).
@@ -1622,7 +1622,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   recovery tables, not dictionaries), extras/ (word and password lists, iclass_other = 0..N counters).
 - pm3dict.c: one download job (jsDelivr, as iClass; through path.new, kept only if it has keys of the
   family's lengths) behind a "Download keys" entry in the MIFARE Classic, DESFire and Ultralight menus.
-  Files: nfcprobe/mfc_default_keys.dic, desfire/mfdes_default_keys.dic, mfu/mfulc_default_keys.dic.
+  Files: prox3ds/mfc_default_keys.dic, desfire/mfdes_default_keys.dic, mfu/mfulc_default_keys.dic.
 - DESFire: loadDict reads it after the built-ins and keys.txt (dict 128 -> 256 entries).
 - UL-C: mfuKeyList offers its keys after the built-in ones (built-in labels win), label = the text after
   pm3's "(<key as text>)".
@@ -1633,7 +1633,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   again if it found any. Built and the parsers checked on the host against pm3's files (key counts,
   UL-C labels); not run on the 3DS yet (console offline).
 
-## EMV payment cards (nfcprobe emv.c / emvui.c) -- 2026-11-02
+## EMV payment cards (Prox3DS emv.c / emvui.c) -- 2026-11-02
 
 - pm3 `emv reader`, read only, as a smart card applet tool: "Payment card (EMV)" (the PPSE entry in
   scApplets: the smart card scan lists it, A opens it; also in the Smart card menu). Net op 0x2C OP_EMV /
@@ -1641,7 +1641,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - Flow: SELECT 2PAY.SYS.DDF01, the 61 entries under BF0C (4F / 50 / 87, sorted by priority, up to 4); no
   PPSE: 14 known AIDs one by one. Per application: SELECT (9F38 PDOL, 9F4D log entry, 9F12 / 50 label), GPO
   80 A8 with 83 + the PDOL filled the way pm3 does (TTQ 26000000 qVSDC, amount 1.00, USA / USD, 9A / 9F21 from
-  the OATH clock (unixNow, now shared), random 9F37, terminal type 22, merchant "nfcprobe", zeros otherwise;
+  the OATH clock (unixNow, now shared), random 9F37, terminal type 22, merchant "Prox3DS", zeros otherwise;
   numeric fields right aligned). Format 1 (80: AIP + AFL) and 2 (77). The AFL's records; GPO refused: READ
   RECORD over SFI 1-10, records 1-16 (stops per SFI at the first error). GET DATA 9F36 / 9F13 / 9F17, then
   9F4F (log format DOL) and the log records from 9F4D's SFI.
@@ -1676,7 +1676,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   with the default keys, 18 entries); Fudan Classic 4ACF2F0C (scan x3, two dumps identical, 64 blocks, UI
   scan). All its keys are FF now, sector 5 included (the A0B1C2D3E4F5 / B1C2D3E4F5A6 test keys are gone).
 
-## Tear-off (issue #18; nfcprobe mfu.c mfuTorn, mfutear.c; tools/exp/tear/) -- 2026-11-02
+## Tear-off (issue #18; Prox3DS mfu.c mfuTorn, mfutear.c; tools/exp/tear/) -- 2026-11-02
 - Reader field switch: 0x5C360 (RF block, 6 while a card is active, 0 = field off). It acts at once, even
   in the middle of a TX -> RX transaction: 10 us at 0 resets a card. Found by zeroing every nonzero
   register of 0x5C000-0x5C7FF for 5 ms with a card active (tools/exp/tear/zero.py): only 0x5C054 (4),
@@ -1722,7 +1722,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   51b0e1c (Mastercard select changes). Only reached when selectKnown fails: on this UL-C the first WUPA
   after the ROM's activation gets no answer (the anticollision WUPA right after does).
 
-## Own text keyboard instead of the system one (nfcprobe entry.c entryText) -- 2026-11-02
+## Own text keyboard instead of the system one (Prox3DS entry.c entryText) -- 2026-11-02
 - The system keyboard (swkbd applet) hung for good when closed right after opening (Amiibo search):
   through Rosalina's GDB stub (extended-remote :4000, `info os processes`, attach): our UI thread in
   swkbdInputText -> aptLaunchLibraryApplet -> aptWaitForWakeUp(TR_LIBAPPLET), the swkbd process (still
@@ -1736,7 +1736,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   password x2, APDU). Fixed-length keys keep entryHex. On the 3DS: search opens at once; 5 quick
   open / cancel cycles leave the UI responsive.
 
-## Saved dump lists: SD card file calls are slow (nfcprobe dumplist.c) -- 2026-11-02
+## Saved dump lists: SD card file calls are slow (Prox3DS dumplist.c) -- 2026-11-02
 - Entering a saved dumps list took 3.3 s with 72 dumps: per file stat() ~23 ms and archive_getmtime() ~21 ms on
   the SD card; the readdir walk itself 85 ms. The Ultralight list also opened each file for its header.
 - dumplist.c: FSDIR_Read (16 entries per call) gives names and sizes without a stat; the date and the family's
@@ -1771,7 +1771,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   0xAAA stop; t = next, fn, arg, deadline, flags (20 bytes, may be statically initialised).
 - chip/rearm.h: the command hook keeps a copy of the host's last listen-only RF_DISCOVER (RF_DEACTIVATE
   clears it), the event hook starts the 1 ms timer on event 0, the timer (same function, arg 0xFF) replays
-  the copy if the state is still idle. The host no longer re-arms (nfcprobe emu.c). reader.c has no room:
+  the copy if the state is still idle. The host no longer re-arms (Prox3DS emu.c). reader.c has no room:
   the hooks live in its AON code (AON_SPLIT 0x68104 after `capturing` became a u8; variables still end at
   0x68410), the copy in the image (exactly full again); emu.c has room in its image.
 - Debug images: the 0x68410 limit bites quickly (a 4-byte overrun worked, 0x18 killed listening).
@@ -1809,7 +1809,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   name / 256-byte answer, YKOATH SELECT + PUT + CALCULATE (94287082) + LIST, all exact. Once the first
   session's event didn't reach the PC (3 sessions counted, 2 events); not seen again in 3 more sessions.
 
-## Java Card VM, step 2: the VM in nfcprobe (jcvm.c, jcapi.c, jccard.c, jcui.c) -- 2026-11-03
+## Java Card VM, step 2: the VM in Prox3DS (jcvm.c, jcapi.c, jccard.c, jcui.c) -- 2026-11-03
 - Layout as the Python VM. Cells u16, references are handles into a 4096-entry object table (0 = null), so
   the heap saves as it is. Classes: API classes first (jcApiClasses index = class index), CAP classes after.
 - Instance field token = cell index in the declaring class (ykneo-oath OathObj: 7 refs + 7 byte/short/
@@ -1822,7 +1822,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   of them): a NULL virtual native falls through to the super class's.
 - Uncaught ISOException -> its reason as SW, any other -> 6F00, VM failure (missing native, bad CAP) -> 6F00
   + jcCard.vm.why (shown in the emulation view). Exceptions the VM throws: one system-owned instance per class.
-- Persistence: JC_STATE = sdmc:/nfcprobe/jc/card.bin: packages by CAP path (reloaded from the SD card on
+- Persistence: JC_STATE = sdmc:/prox3ds/jc/card.bin: packages by CAP path (reloaded from the SD card on
   restore), static images, every non-system object, applets. Classes saved as package << 8 | number (API:
   C000 + index) so deleting a package doesn't shift the rest. Saved at the next session start and on stop
   (if anything ran), after installs / deletes.
@@ -1835,7 +1835,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - First run on the 3DS crashed it (off the network): jcCardInit copied the JcVm (~100 KB) through a local.
   JcVm / JcCard are static only; -Wstack-usage=2048 is clean on the jc files now.
 - UI: Emulate > Java Card applets (jcui.c): the applets, A emulates (emuStartJc: random UID, SAK 20), X:
-  install a CAP from sdmc:/nfcprobe/cap, delete its package, wipe. Sim scenes jc_empty / jc_list / jc_emu.
+  install a CAP from sdmc:/prox3ds/cap, delete its package, wipe. Sim scenes jc_empty / jc_list / jc_emu.
 
 ## Java Card VM: ground truth from the J3H145 (javacard/cprobe, tools/exp/cprobe) -- 2026-11-03
 - VmTest (dspm-vmtest.cap) installed on the card with gpload.py and run through the pm3: all 17 answers
@@ -1861,7 +1861,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
 - APDU: buffer 261 bytes, in / out block size 254 / 252, protocol 0x81. Extended APDUs work (600 bytes in,
   609 out) when the next blocks are received at offset 0; receiveBytes(offsetCdata = 7) -> APDUException
   BUFFER_BOUNDS.
-- On the 3DS (2026-11-03, pm3 on the 3DS, apps installed from sdmc:/nfcprobe/cap in Emulate > Java Card
+- On the 3DS (2026-11-03, pm3 on the 3DS, apps installed from sdmc:/prox3ds/cap in Emulate > Java Card
   applets): no crash any more. VmTest: all 17 answers the same as the J3H145's (8311 bytecodes). ykneo-oath
   natively in C: PUT + CALCULATE at T=1 -> 94287082 (RFC 6238), LIST; TestApplet + VmTest + OATH installed
   together and selected in turn in one session. After an app restart (card.bin restored) the OATH
@@ -1916,7 +1916,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   A000000018434D00; no EXTERNAL AUTHENTICATE sent). The 4th INITIALIZE UPDATE in a row gave 6982: the card
   limits them; it still selects / answers fine. Stopped there: no applet loading on this card, so no
   CryptoProbe. Useful as a FIDO2 / U2F card.
-- nfcprobe Smart card > FIDO U2F / FIDO2 (fido.c, fidoui.c; also the applet's tool on the card screen):
+- Prox3DS Smart card > FIDO U2F / FIDO2 (fido.c, fidoui.c; also the applet's tool on the card screen):
   SELECT (the U2F version string), CTAP2 authenticatorGetInfo over NFCCTAP_MSG (80 10 00 00, a small CBOR
   reader: versions, extensions, AAGUID, options, PIN protocols, algorithms, transports, limits, firmware,
   passkey slots free) and, only with a PIN set, clientPIN getPINRetries. Read only: no credential made or

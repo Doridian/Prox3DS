@@ -7,7 +7,7 @@ import javacard.framework.ISOException;
 import javacard.framework.Util;
 
 /**
- * Test applet for nfcprobe's ISO-DEP layer (isodep.c): answers of any length (RX chaining), long
+ * Test applet for Prox3DS's ISO-DEP layer (isodep.c): answers of any length (RX chaining), long
  * commands echoed back (TX chaining) and slow commands (S(WTX)). AID F0334453504D01.
  *
  * 00 01 00 00 Lc data       echo the data

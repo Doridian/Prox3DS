@@ -27,14 +27,14 @@
 /tools/exp/dfemu/dfh
 /tools/exp/dfemu/dfh2
 /tools/exp/jcvm/jch
-# nfcprobe (devkitPro)
-/nfcprobe/build/
-/nfcprobe/build-release/
-/nfcprobe/*.3dsx
-/nfcprobe/*.elf
-/nfcprobe/*.smdh
-/nfcprobe/data/reader_ncd.bin
-/nfcprobe/data/emu_*_ncd.bin
+# Prox3DS (devkitPro)
+/prox3ds/build/
+/prox3ds/build-release/
+/prox3ds/*.3dsx
+/prox3ds/*.elf
+/prox3ds/*.smdh
+/prox3ds/data/reader_ncd.bin
+/prox3ds/data/emu_*_ncd.bin
 
 # --- Logs ---
 *.log
@@ -42,9 +42,9 @@
 # --- Python ---
 __pycache__/
 *.py[cod]
-# nfcprobe UI simulator
-/nfcprobe/sim/uisim
-/nfcprobe/sim/out/
+# Prox3DS UI simulator
+/prox3ds/sim/uisim
+/prox3ds/sim/out/
 # javacard: third-party applet sources (cloned) and their builds
 /javacard/ykneo-oath/
 /javacard/ykneo-oath.cap

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes nfcprobe/source/jcapitab.c / .h from the Java Card SDK's export files: every API package, its
+"""Writes prox3ds/source/jcapitab.c / .h from the Java Card SDK's export files: every API package, its
 classes by token (super, interfaces) and their methods by token, for the Java Card VM (jcvm.c) to link
 CAP files against. Each method points at a weak native jn_<package>_<Class>_<method>[_<params>]: the
 ones jcapi.c defines are linked, the rest stay NULL (calling one throws).
@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "jcv
 import exp  # noqa: E402
 
 root = sys.argv[1] if len(sys.argv) > 1 else exp.EXP_DIR
-src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../nfcprobe/source")
+src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../prox3ds/source")
 
 
 def mangle(desc):

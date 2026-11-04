@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""PC side of nfcprobe's network server (nfcprobe/source/netsrv.c, TCP port 8020).
+"""PC side of Prox3DS's network server (prox3ds/source/netsrv.c, TCP port 8020).
 
 usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT, GET_PATCH_VERSION
        nfcnet.py HOST spd FILE.ncd       power cycle, download an SPD patch, show the version
        nfcnet.py HOST send HEX [HEX...]  send raw I2C packets (HCIT included), print the replies
        nfcnet.py HOST release            power off and give the pins back
-       nfcnet.py HOST update [FILE]      send a new nfcprobe.3dsx (default: the build), app restarts into it
-  Card ops implemented in the app (nfcprobe mfc.c):
+       nfcnet.py HOST update [FILE]      send a new prox3ds.3dsx (default: the build), app restarts into it
+  Card ops implemented in the app (Prox3DS mfc.c):
        nfcnet.py HOST scan                         activate a card, show ATQA/SAK/UID
        nfcnet.py HOST mfread BLOCK KEY [b] [N]     Mifare Classic auth + read N blocks
        nfcnet.py HOST mfchk BLOCK a|b KEY...       on-chip key check (pm3 fchk style), which key fits
@@ -42,9 +42,9 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
        nfcnet.py HOST mfuwrite PAGE HEX8           Ultralight / NTAG user page write + read-back (WRITES THE CARD)
        nfcnet.py HOST mfuclone FILE                clone a pm3 mfu dump onto a Gen4 GTU (switches it to
                                                    Ultralight mode; WRITES THE CARD AND ITS CONFIG)
-       nfcnet.py HOST apdu [-a] HEX [HEX...]       ISO-DEP (nfcprobe isodep.c): -a = DESELECT + reselect + RATS
+       nfcnet.py HOST apdu [-a] HEX [HEX...]       ISO-DEP (Prox3DS isodep.c): -a = DESELECT + reselect + RATS
                                                    first (shows the ATS); each HEX one command, its answer
-       nfcnet.py HOST df [-a] STEP [STEP...]      DESFire through nfcprobe desfire.c (EV1 secure messaging),
+       nfcnet.py HOST df [-a] STEP [STEP...]      DESFire through Prox3DS desfire.c (EV1 secure messaging),
                                                    -a = ISO-DEP activate first. STEPs (MAY WRITE THE CARD):
                                                      auth:K:TYPE:KEY       TYPE des/2k3des/3k3des/aes (EV1)
                                                      ev2:K:aes:KEY         AuthenticateEV2First
@@ -310,7 +310,7 @@ class Nfc:
         return self.card_call(OP_DF, bytes([action]) + args, timeout)
 
     def put_file(self, path, data):
-        """A file onto the SD card, under sdmc:/nfcprobe/ (directories made as needed)."""
+        """A file onto the SD card, under sdmc:/prox3ds/ (directories made as needed)."""
         p = path.encode()
         for o in range(0, max(len(data), 1), UPDATE_CHUNK):
             self.call(OP_PUT_FILE, struct.pack("<IB", o, len(p)) + p + data[o:o + UPDATE_CHUNK])
@@ -380,7 +380,7 @@ class Nfc:
         return ([first] if first else []) + self.drain()
 
     def spd_download(self, ncd, log=print):
-        """Send an SPD patch record by record (see nfcprobe spdDownload)."""
+        """Send an SPD patch record by record (see Prox3DS spdDownload)."""
         o, rec = 0, 0
         while o + 5 <= len(ncd):
             ln = 4 + ncd[o + 3]
@@ -456,13 +456,13 @@ def main():
     elif what == "release":
         nfc.release()
     elif what == "update":
-        path = args[0] if args else os.path.join(os.path.dirname(__file__), "../nfcprobe/nfcprobe.3dsx")
+        path = args[0] if args else os.path.join(os.path.dirname(__file__), "../prox3ds/prox3ds.3dsx")
         nfc.update(open(path, "rb").read())
         print("updated, app restarting")
-    elif what == "put":  # LOCAL [sdmc:/nfcprobe/...]: default: CAP files to cap/, else the app's folder
+    elif what == "put":  # LOCAL [sdmc:/prox3ds/...]: default: CAP files to cap/, else the app's folder
         local = args[0]
         name = os.path.basename(local)
-        dest = args[1] if len(args) > 1 else "sdmc:/nfcprobe/" + ("cap/" if name.lower().endswith(".cap") else "") + name
+        dest = args[1] if len(args) > 1 else "sdmc:/prox3ds/" + ("cap/" if name.lower().endswith(".cap") else "") + name
         nfc.put_file(dest, open(local, "rb").read())
         print(f"put {dest}")
     elif what == "shot":

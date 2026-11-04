@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes nfcprobe/source/aidnames.c from pm3's client/resources/aid_desfire.json (DESFire AID names).
+"""Writes prox3ds/source/aidnames.c from pm3's client/resources/aid_desfire.json (DESFire AID names).
 
 usage: gen_aidnames.py [PATH/aid_desfire.json]  (default: ~/Programming/RE/proxmark3/client/resources)
 The data is Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later; see CREDITS.md.
@@ -7,7 +7,7 @@ The data is Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later; see CREDITS.
 import json, os, sys
 
 src = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/Programming/RE/proxmark3/client/resources/aid_desfire.json")
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../nfcprobe/source/aidnames.c")
+out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../prox3ds/source/aidnames.c")
 
 
 def c(s):

@@ -40,7 +40,7 @@ enum { MODE_OFF, MODE_MFU, MODE_MFC = 3 };
 #define MFU_MAX_PAGES 256
 #define N_LOG 16 // power of two
 
-// Shared with the host (nfcprobe emu.c, tools/exp/listen/mfuemu.py): keep the layout.
+// Shared with the host (Prox3DS emu.c, tools/exp/listen/mfuemu.py): keep the layout.
 struct emu {
 	u8 mode;
 	u8 npages;       // MFU: pages in mem (READ rolls over here); MFC: blocks (20 Mini, 64 1K, 128 2K, 0 4K)

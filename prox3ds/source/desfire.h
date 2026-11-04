@@ -123,7 +123,7 @@ bool dfRememberKey(const DfKey *k);
 // key k with key (NULL: no authentication), then the command c in comm mode (hdr: dfCmd), and
 // CommitTransaction after it with commit. 1 = done, 0 = refused / lost card (dfWhy), -1 = monitor error.
 // flags: DF_COMMIT = CommitTransaction after the command; DF_READER_ID = CommitReaderID (16 bytes,
-// "nfcprobe") before that, for a transaction MAC file that wants one; DF_TMAC = commit with option 01:
+// "Prox3DS") before that, for a transaction MAC file that wants one; DF_TMAC = commit with option 01:
 // the TMC and TMV come back into dfTmac (12 bytes, dfTmacLen).
 enum { DF_COMMIT = 1, DF_READER_ID = 2, DF_TMAC = 4 };
 extern u8 dfTmac[12], dfTmacLen;

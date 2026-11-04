@@ -12,7 +12,7 @@ import javacard.framework.Util;
 import javacard.security.MessageDigest;
 
 /**
- * Java Card VM conformance applet for nfcprobe's VM (issue #19): every test writes what it computed, so
+ * Java Card VM conformance applet for Prox3DS's VM (issue #19): every test writes what it computed, so
  * the Python VM (tools/jcvm), the C VM (jcvm.c) and a real card (J3H145) can be compared byte for byte.
  * AID F0334453504D02.
  *

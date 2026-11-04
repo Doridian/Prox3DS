@@ -1,4 +1,4 @@
-# nfcprobe DESFire info (key dictionary: 12 keys, EV1 secure messaging for AES)
+# Prox3DS DESFire info (key dictionary: 12 keys, EV1 secure messaging for AES)
 UID 04112233445566
 ATS 067577810280
 MIFARE DESFire EV3

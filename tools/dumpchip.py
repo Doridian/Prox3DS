@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the chip-side dumper (chip/dumper1.c) over nfcprobe's network server.
+"""Drive the chip-side dumper (chip/dumper1.c) over Prox3DS's network server.
 
     dumpchip.py HOST v1 SRC SCAN_START SCAN_END   one load: report 16 bytes at SRC
     dumpchip.py HOST read ADDR [LEN]              v2, 20 bytes per load

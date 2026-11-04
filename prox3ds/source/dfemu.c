@@ -296,7 +296,7 @@ static void authStart(u8 cmd, const u8 *p, u32 n)
 	u8 type = kt == 2 ? DF_AES : kt == 1 ? DF_3K3DES : DF_2K3DES;
 	au.known = k->known && k->type == type;
 	au.cmd = cmd, au.keyNo = p[0];
-	dfCipherInit(&au.k, type, au.known ? k->key : (const u8 *)"nfcprobe-unknown-key-pad");
+	dfCipherInit(&au.k, type, au.known ? k->key : (const u8 *)"prox3ds-unknown-key-pad");
 	au.rl = type == DF_2K3DES ? 8 : 16;
 	rnd(au.rb, au.rl);
 	u8 e[16];

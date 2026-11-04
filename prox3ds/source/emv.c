@@ -326,7 +326,7 @@ static void dolValue(u32 tag, u8 *out, u32 len)
 	case 0x9C: v[0] = 0, n = 1, numeric = true; break; // purchase
 	case 0x9F37: case 0x9F6A: for (n = 0; n < 4; n++) v[n] = rnd8(); break; // unpredictable number
 	case 0x9F35: v[0] = 0x22, n = 1; break; // attended, offline with online capability
-	case 0x9F4E: memcpy(v, "nfcprobe", n = 8); break;
+	case 0x9F4E: memcpy(v, "Prox3DS", n = 7); break;
 	}
 	memset(out, 0, len);
 	if (numeric && n < len) memcpy(out + len - n, v, n);

@@ -1,4 +1,4 @@
-# Host build of the nfcprobe UI with fake citro2d / libctru (see README). make run: scenes -> out/*.png
+# Host build of the Prox3DS UI with fake citro2d / libctru (see README). make run: scenes -> out/*.png
 CC      := gcc
 CFLAGS  := -m32 -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -g -O0 -Wall -Wno-unused-function -Wno-format -Iinclude -I../source -I.
 SRC     := fake.c hw.c scenes.c hook_app.c hook_mfui.c hook_editor.c hook_mfuui.c hook_mfuedit.c hook_dfui.c hook_ndefui.c hook_amiiboui.c hook_scui.c hook_gpui.c hook_oathui.c hook_emvui.c hook_fidoui.c hook_mfutear.c hook_iclassui.c hook_emuui.c hook_jcui.c \

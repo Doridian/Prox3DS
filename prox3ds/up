@@ -1,0 +1,6 @@
+rm prox3ds.log
+cd 3ds
+rm prox3ds.3dsx
+put prox3ds.3dsx
+exit
+

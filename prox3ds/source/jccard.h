@@ -5,7 +5,7 @@
 // response, transient memory on reset / deselect, the heap saved to the SD card. The emulation hands it
 // APDUs (jcCardApdu is an EmuApdu); the Python prototype is tools/jcvm/card.py.
 
-#define JC_DIR   "sdmc:/nfcprobe/jc"
+#define JC_DIR   "sdmc:/prox3ds/jc"
 #define JC_STATE JC_DIR "/card.bin"
 #define JC_BUF   261  // APDU buffer: header + 255 bytes + Le, as JCOP
 #define JC_EXT   2048 // the longest command / response (extended length, applets with ExtendedLength)

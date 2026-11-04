@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes nfcprobe/source/madnames.c from pm3's client/resources/mad.json (MIFARE Application Directory
+"""Writes prox3ds/source/madnames.c from pm3's client/resources/mad.json (MIFARE Application Directory
 AIDs, NXP AN10787).
 
 usage: gen_madnames.py [PATH/mad.json]  (default: ~/Programming/RE/proxmark3/client/resources)
@@ -8,7 +8,7 @@ The data is Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later; see CREDITS.
 import json, os, sys
 
 src = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/Programming/RE/proxmark3/client/resources/mad.json")
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../nfcprobe/source/madnames.c")
+out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../prox3ds/source/madnames.c")
 
 
 def c(s):

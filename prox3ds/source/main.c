@@ -1,4 +1,4 @@
-// nfcprobe: Mifare Classic tool on the New3DS NFC controller (BCM20791B5).
+// Prox3DS: Mifare Classic tool on the New3DS NFC controller (BCM20791B5).
 // Kills the nfc sysmodule, takes over its GPIO/I2C, and either just queries the
 // controller or loads our own patch (chip/reader.c) and runs card operations through it.
 // The nfc module is relaunched on exit. The UI is in app.c / editor.c.
@@ -15,7 +15,7 @@
 #include "probe.h"
 #include "ui.h"
 
-#define LOG_PATH     "sdmc:/nfcprobe.log" // debug build only; the release keeps the log in RAM (Log: save)
+#define LOG_PATH     "sdmc:/prox3ds.log" // debug build only; the release keeps the log in RAM (Log: save)
 #define MS(x)        ((s64)(x) * 1000000LL)
 
 static FILE *logFile;
@@ -442,7 +442,7 @@ void chipProbe(void)
 	nfchwExit();
 }
 
-char appPath[256] = "sdmc:/3ds/nfcprobe.3dsx"; // argv[0] when the loader gives one
+char appPath[256] = "sdmc:/3ds/prox3ds.3dsx"; // argv[0] when the loader gives one
 volatile bool restartRequested;
 
 // Relaunch the (updated) .3dsx the way the Homebrew Menu starts one under Luma: tell Rosalina's
@@ -479,10 +479,10 @@ int main(int argc, char *argv[])
 	osSetSpeedupEnable(true); // New 3DS: 804 MHz + L2, for the key recoveries
 	gfxInitDefault();
 	uiInit();
-#ifndef NFCPROBE_RELEASE
+#ifndef PROX3DS_RELEASE
 	logFile = fopen(LOG_PATH, "a");
 #endif
-	logp("--- nfcprobe (built " __DATE__ " " __TIME__ ") ---\n");
+	logp("--- Prox3DS (built " __DATE__ " " __TIME__ ") ---\n");
 	time_t now = time(NULL);
 	struct tm *tm = gmtime(&now);
 	logp("app: %s, console clock %04d-%02d-%02d %02d:%02d\n", appPath, tm->tm_year + 1900, tm->tm_mon + 1,

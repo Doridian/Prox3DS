@@ -4,16 +4,16 @@ CFLAGS  := -mcpu=cortex-m0 -mthumb -Os -ffreestanding -nostdlib -fno-builtin \
            -fno-tree-loop-distribute-patterns -fno-jump-tables -Wall -Wl,--no-warn-rwx-segments
 TARGETS := null dumper1 dumper2 dumper3 dumper4 reader lmon emu_mfu emu_mfc
 
-all: $(TARGETS:=.bin) ../nfcprobe/data/reader_ncd.bin ../nfcprobe/data/emu_mfu_ncd.bin ../nfcprobe/data/emu_mfc_ncd.bin
+all: $(TARGETS:=.bin) ../prox3ds/data/reader_ncd.bin ../prox3ds/data/emu_mfu_ncd.bin ../prox3ds/data/emu_mfc_ncd.bin
 
 # The monitor as an SPD patch, embedded in the app.
-../nfcprobe/data/reader_ncd.bin: reader.bin ../tools/mkpatch.py
+../prox3ds/data/reader_ncd.bin: reader.bin ../tools/mkpatch.py
 	@mkdir -p $(@D)
 	python3 ../tools/mkpatch.py $< $@ --aon reader.aon.bin
 
 # The card emulation images (one per card family, emu.c built twice), loaded in its place for chip-answered
 # card mode.
-../nfcprobe/data/emu_%_ncd.bin: emu_%.bin ../tools/mkpatch.py
+../prox3ds/data/emu_%_ncd.bin: emu_%.bin ../tools/mkpatch.py
 	@mkdir -p $(@D)
 	python3 ../tools/mkpatch.py $< $@ --aon emu_$*.aon.bin
 

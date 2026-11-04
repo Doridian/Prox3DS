@@ -30,7 +30,7 @@ import javacardx.apdu.ExtendedLength;
 import javacardx.crypto.Cipher;
 
 /**
- * Crypto ground truth for nfcprobe's Java Card VM (issue #19): runs Cipher / Signature / MessageDigest /
+ * Crypto ground truth for Prox3DS's Java Card VM (issue #19): runs Cipher / Signature / MessageDigest /
  * KeyBuilder with the keys and data it is given, so a real card (J3H145) and the VM can be compared.
  * AID F0334453504D03. Errors: CryptoException 64rr, APDUException 67sr, other CardRuntimeException 66sr,
  * AIOOBE 65s1, NPE 65s2, other exceptions 65s3 (r = reason, s = stage: 1 receive, 2 work, 3 send).

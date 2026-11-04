@@ -16,7 +16,7 @@ void simEmuRun(bool written)
 	emuNdefSet(msg, ndefText("en", "Hello from the 3DS", msg, sizeof(msg)));
 	if (written) {
 		u8 w[2 + 200];
-		u32 n = ndefUri("https://github.com/Doridian/3dspm/a/rather/long/path?with=a&query=string", w + 2, 200);
+		u32 n = ndefUri("https://github.com/Doridian/Prox3DS/a/rather/long/path?with=a&query=string", w + 2, 200);
 		w[0] = n >> 8, w[1] = n;
 		emuNdefApdu(NULL, 0, NULL, 0);
 		emuNdefApdu((const u8[]){ 0x00, 0xA4, 0x04, 0x00, 0x07, 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01 }, 12, msg, sizeof(msg));

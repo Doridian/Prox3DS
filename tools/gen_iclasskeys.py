@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes nfcprobe/source/iclasskeys.c from pm3's client/dictionaries/iclass_default_keys.dic and
+"""Writes prox3ds/source/iclasskeys.c from pm3's client/dictionaries/iclass_default_keys.dic and
 iclass_elite_keys.dic (iClass master keys; the app tries the defaults standard and elite, the elite
 list elite).
 
@@ -9,7 +9,7 @@ The data is Proxmark3 (C) Proxmark3 contributors, GPL-3.0-or-later; see CREDITS.
 import os, re, sys
 
 src = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/Programming/RE/proxmark3/client/dictionaries")
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../nfcprobe/source/iclasskeys.c")
+out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../prox3ds/source/iclasskeys.c")
 
 
 def keys(name):
