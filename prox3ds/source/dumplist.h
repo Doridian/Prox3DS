@@ -18,9 +18,9 @@ typedef struct {
 	const char *dir;                         // "sdmc:/..."
 	const char *ext;                         // NULL: ".bin"
 	int (*info)(const char *path, u32 size); // NULL: info 0
-	DumpEnt ent[DUMP_MAX];                   // the listing, newest first
-	int n;
-	DumpEnt scratch[DUMP_MAX];
+	DumpEnt *ent; // the listing, newest first; allocated on the first scan (inline, the initialized statics
+	int n;        // would carry ~35 KB of zeros each in .data)
+	DumpEnt *scratch;
 	LightLock lock;
 	bool ready, scanned;
 } DumpDir;

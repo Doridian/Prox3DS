@@ -82,6 +82,8 @@ void dumpScan(DumpDir *d)
 	LightLock_Lock(&regLock);
 	if (!d->ready) {
 		LightLock_Init(&d->lock);
+		d->ent = calloc(2 * DUMP_MAX, sizeof(*d->ent));
+		d->scratch = d->ent + DUMP_MAX;
 		d->ready = true;
 		if (ndirs < 4) dirs[ndirs++] = d;
 	}
