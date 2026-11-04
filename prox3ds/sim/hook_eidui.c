@@ -11,3 +11,9 @@ void simEid(const EidCard *e, int can)
 	if (can == 3) strcpy(canWhy, "mapping: 6A80 wrong data");
 	appScreen(&eidScreen);
 }
+
+void simMrtd(const MrtdDoc *d)
+{
+	md = *d;
+	appScreen(&mrtdScreen);
+}

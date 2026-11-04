@@ -19,6 +19,7 @@
 #include "desfire.h"
 #include "emu.h"
 #include "eid.h"
+#include "emrtd.h"
 #include "emv.h"
 #include "mfc.h"
 #include "isodep.h"
@@ -473,19 +474,59 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		const char *pin = eidPinText(e.pinSw, &col);
 		k += snprintf(o + k, OUT_MAX - k, "extended length %lu / %lu\nPIN state %04X %s\n", e.extIn, e.extOut,
 			e.pinSw, pin ? pin : "");
+		if (inLen && inLen < 40 && (memchr(in, ',', inLen) || (in[0] == 'r' && inLen > 1 && in[1] != 'b'))) {
+			// read the LDS: "DOC,YYMMDD,YYMMDD" (MRZ) or "r" + CAN
+			static MrtdDoc d;
+			char a[40], *b1, *b2;
+			u8 key[20];
+			memcpy(a, in, inLen);
+			a[inLen] = 0;
+			u64 t0 = osGetTime();
+			if (a[0] == 'r') {
+				r = mrtdRead(&e, EID_CAN, (const u8 *)a + 1, strlen(a + 1), &d);
+			} else {
+				// "b" first: BAC even when the chip has PACE
+				char *doc = a[0] == 'b' ? a + 1 : a;
+				if (a[0] == 'b') e.pace = -1;
+				b1 = strchr(doc, ','), *b1++ = 0, b2 = strchr(b1, ',');
+				if (!b2) return -3;
+				*b2++ = 0;
+				eidMrzSecret(doc, b1, b2, key);
+				r = mrtdRead(&e, EID_MRZ, key, 20, &d);
+			}
+			iso14aParity(true);
+			k += snprintf(o + k, OUT_MAX - k, "read: %d %s (%llu ms), access %s\n", r, r == 1 ? "" : mrtdWhy(),
+				osGetTime() - t0, d.access);
+			if (r < 0) return -1;
+			for (int i = 0; i < MRTD_FILES; i++) {
+				if (!d.f[i].data && !d.f[i].sw) continue;
+				k += snprintf(o + k, OUT_MAX - k, "  %s%d: %lu bytes, %04X\n", i == MRTD_COM ? "COM" : i == MRTD_SOD ? "SOD" : "DG",
+					i == MRTD_COM || i == MRTD_SOD ? 0 : i, d.f[i].len, d.f[i].sw);
+			}
+			k += snprintf(o + k, OUT_MAX - k, "DG1: %s %s %s / %s, %s, born %s, %c, expires %s\n", d.docType, d.issuer,
+				d.surname, d.given, d.number, d.birth, d.sex ? d.sex : '?', d.expiry);
+			k += snprintf(o + k, OUT_MAX - k, "PA: hash %d, listed %lX ok %lX bad %lX, attrs %d, sig %d %s\n  DS %s\n  "
+				"issuer %s\n  valid %s - %s %s\nphoto %s %lu bytes at %lu\n", d.hashLen, d.listed, d.ok, d.bad,
+				d.attrs, d.sig, d.sigAlg, d.dsSubject, d.dsIssuer, d.dsFrom, d.dsTo, d.paWhy, d.photoJp2 ? "jp2" : "jpg",
+				d.photoLen, d.photoOff);
+			char path[128];
+			if (r == 1 && mrtdSave(&d, path, sizeof(path))) k += snprintf(o + k, OUT_MAX - k, "saved %s\n", path);
+			*outLen = k;
+			return 0;
+		}
 		if (inLen && inLen < sizeof(can)) {
 			memcpy(can, in, inLen);
 			can[inLen] = 0;
 			u64 t0 = osGetTime();
-			r = eidPace(&e, EID_CAN, can, &sm);
+			r = eidPace(&e, EID_CAN, (const u8 *)can, strlen(can), &sm);
 			k += snprintf(o + k, OUT_MAX - k, "PACE: %d %s (%llu ms)\n", r, r == 1 ? "ok" : eidWhy(), osGetTime() - t0);
 			if (r == 1) {
 				static const u8 epass[] = { 0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01 };
 				u8 b[16];
 				u16 sw = 0;
-				int n = eidSmCmd(&sm, 0xA4, 0x04, 0x0C, epass, sizeof(epass), false, b, sizeof(b), &sw);
+				int n = eidSmCmd(&sm, 0xA4, 0x04, 0x0C, epass, sizeof(epass), -1, b, sizeof(b), &sw);
 				k += snprintf(o + k, OUT_MAX - k, "SM SELECT ePass: %d, %04X %s\n", n, sw, n < 0 ? eidWhy() : "");
-				n = eidSmCmd(&sm, 0xB0, 0x81, 0, NULL, 0, true, b, sizeof(b), &sw);
+				n = eidSmCmd(&sm, 0xB0, 0x81, 0, NULL, 0, 0, b, sizeof(b), &sw);
 				k += snprintf(o + k, OUT_MAX - k, "SM READ DG1: %d, %04X %s\n", n, sw, n < 0 ? eidWhy() : "");
 			}
 			if (r < 0) {

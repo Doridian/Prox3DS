@@ -701,7 +701,7 @@ def main():
         r = nfc.card_call(OP_EMV, b"", 120)
         print(r.decode(errors="replace") if r is not None else f"emv failed: {nfc.why}")
     elif what == "eid":
-        r = nfc.card_call(OP_EID, args[0].encode() if args else b"", 60)
+        r = nfc.card_call(OP_EID, args[0].encode() if args else b"", 300)
         print(r.decode(errors="replace") if r is not None else f"eid failed: {nfc.why}")
     elif what == "tearscan":
         p, f, to, st = (int(x) for x in args[:4])

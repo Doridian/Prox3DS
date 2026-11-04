@@ -2,6 +2,7 @@
 #include <3ds.h>
 
 #include "dfcrypto.h"
+#include "ecc.h"
 #include "mfc.h"
 
 // ID documents with a chip: ICAO 9303 passports and TR-03110 ID cards (the German eID card, "nPA"). What
@@ -41,8 +42,9 @@ typedef struct {
 } EidCard;
 
 typedef struct {
-	DfCipher enc, mac;
-	u8 ssc[16];
+	DfCipher enc, mac, macB; // BAC: 2K3DES, the MAC's two single-DES halves; PACE: AES (macB unused)
+	u8 ssc[16], bs;          // send sequence counter, block size (8 / 16)
+	bool des;
 } EidSm;
 
 const char *eidWhy(void);
@@ -50,13 +52,21 @@ const char *eidWhy(void);
 int eidRead(EidCard *e);
 // EF.CardAccess's contents into e (access, info, pace); false: not SecurityInfos.
 bool eidParseAccess(EidCard *e, const u8 *p, u32 len);
-// PACE with a password (EID_CAN: the digits), ISO-DEP activated again first. 1 = done (the card's token
-// checked), sm set up; 2 = wrong password; 0 = failed (eidWhy); -1 = monitor error.
+// PACE with a password (EID_CAN: the digits; EID_MRZ: eidMrzSecret's 20 bytes), ISO-DEP activated again
+// first. 1 = done (the card's token checked), sm set up; 2 = wrong password; 0 = failed (eidWhy); -1 = monitor.
 enum { EID_MRZ = 1, EID_CAN = 2, EID_PIN = 3, EID_PUK = 4 };
-int eidPace(const EidCard *e, u8 ref, const char *pwd, EidSm *sm);
-// One command under secure messaging (CLA's SM bits set here); le: Le 00 wanted. The plain answer's data
-// length, -1 = no answer / bad MAC (eidWhy), -2 = monitor error.
-int eidSmCmd(EidSm *sm, u8 ins, u8 p1, u8 p2, const u8 *data, u32 lc, bool le, u8 *out, u32 max, u16 *sw);
+int eidPace(const EidCard *e, u8 ref, const u8 *pw, u32 pwLen, EidSm *sm);
+// SHA-1 of the MRZ information: document number (up to 9, '<' filled), birth and expiry (YYMMDD), each with
+// its check digit computed here.
+void eidMrzSecret(const char *doc, const char *birth, const char *expiry, u8 out[20]);
+// BAC with eidMrzSecret's bytes (the LDS1 application SELECTed already, plain). Returns as eidPace.
+int eidBac(const u8 secret[20], EidSm *sm);
+// One command under secure messaging (CLA's SM bits set here); le: -1 none, 0-255 (0 = 256). The plain
+// answer's data length, -1 = no answer / bad MAC (eidWhy), -2 = monitor error.
+int eidSmCmd(EidSm *sm, u8 ins, u8 p1, u8 p2, const u8 *data, u32 lc, int le, u8 *out, u32 max, u16 *sw);
+// Curves by TR-03110 standardized id / by OID (named curves in certificates; -1 unknown).
+bool eidCurve(int param, EcCurve *c);
+int eidCurveFor(const u8 *oid, u32 len);
 
 // In words, for the screen
 const char *eidAppName(const u8 *aid, u32 len); // "eID", "ePass", ...; NULL = unknown

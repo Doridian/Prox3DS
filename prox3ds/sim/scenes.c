@@ -656,6 +656,49 @@ static void scnEidCan(void) { EidCard e = eidDe; e.pinSw = 0x63C1; simEid(&e, 1)
 static void scnEidFail(void) { EidCard e = eidDe; e.pinSw = 0x63C0; simEid(&e, 3); }
 static void scnEidBac(void) { EidCard e; memset(&e, 0, sizeof(e)); e.pace = -1; e.napps = 0; simEid(&e, 0); }
 
+// ICAO 9303's specimen passport (not a real one), read and verified as the German passport was
+static MrtdDoc mrtdSpec;
+static void mrtdFill(void)
+{
+	static u8 dg1[] = "\x61\x5B\x5F\x1F\x58"
+		"P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<"
+		"L898902C36UTO7408122F1204159ZE184226B<<<<<10";
+	MrtdDoc *d = &mrtdSpec;
+	memset(d, 0, sizeof(*d));
+	strcpy(d->access, "PACE (MRZ)");
+	d->f[1].data = dg1, d->f[1].len = 93, d->f[1].sw = 0x9000;
+	static u8 dummy[1];
+	d->f[2].data = dummy, d->f[2].len = 15000, d->f[14].data = dummy, d->f[14].len = 745;
+	d->f[MRTD_COM].data = dummy, d->f[MRTD_SOD].data = dummy;
+	d->f[3].sw = 0x6982;
+	mrtdParseDg1(d);
+	if (strcmp(d->surname, "ERIKSSON") || strcmp(d->given, "ANNA MARIA") || strcmp(d->number, "L898902C3") ||
+		strcmp(d->birth, "740812") || d->sex != 'F' || strcmp(d->expiry, "120415"))
+		printf("mrtd: DG1 parse wrong: '%s' '%s' '%s' %s %c %s\n", d->surname, d->given, d->number, d->birth, d->sex, d->expiry);
+	d->hashLen = 32, d->listed = 0x400E, d->ok = 0x4006, d->attrs = d->sig = PA_OK;
+	strcpy(d->sigAlg, "ECDSA brainpoolP256r1");
+	strcpy(d->dsSubject, "Document Signer Passport, Utopia Printing Office, UTO");
+	strcpy(d->dsIssuer, "csca-utopia, UTO");
+	strcpy(d->dsFrom, "2014-02-03"), strcpy(d->dsTo, "2024-08-03");
+	d->photoLen = 14912, d->photoOff = 88, d->photoJp2 = true;
+}
+static void scnMrtd(void) { mrtdFill(); simMrtd(&mrtdSpec); }
+static void scnMrtdBad(void)
+{
+	MrtdDoc d = mrtdSpec;
+	d.ok = 0x4002, d.bad = 0x4, d.sig = PA_UNSUPPORTED;
+	strcpy(d.sigAlg, "RSA-PSS 4096"), strcpy(d.paWhy, "RSA key too big for the app"), strcpy(d.access, "BAC");
+	simMrtd(&d);
+}
+static void scnMrtdNpa(void)
+{
+	MrtdDoc d;
+	memset(&d, 0, sizeof(d));
+	strcpy(d.access, "PACE (CAN)");
+	d.f[1].sw = d.f[2].sw = d.f[MRTD_SOD].sw = 0x6982, d.f[MRTD_COM].sw = 0x6A82;
+	simMrtd(&d);
+}
+
 // the Thales IDPrime 3940 FIDO's getInfo, as read (2026-11-03)
 static FidoInfo fidoKey;
 static void fidoFill(void)
@@ -927,7 +970,8 @@ static const SimStep script[] = {
 	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
 	CALL(reset), CALL(scnEmv), SHOT("emv_card"), D, D, D, SHOT("emv_card_log_end"), CALL(scnEmvFull), SHOT("emv_card_full"),
 	KEYS(KEY_R), SHOT("emv_app2"),
-	CALL(reset), CALL(scnEid), SHOT("eid_de"), CALL(scnEidCan), SHOT("eid_de_can"), CALL(scnEidFail), SHOT("eid_de_fail"), CALL(scnEidBac), SHOT("eid_bac"),
+	CALL(reset), CALL(scnMrtd), SHOT("mrtd_passport"), CALL(scnMrtdBad), SHOT("mrtd_bad"), CALL(scnMrtdNpa), SHOT("mrtd_npa"),
+	CALL(reset), CALL(scnEid), SHOT("eid_de"), A, SHOT("eid_menu"), B, CALL(scnEidCan), SHOT("eid_de_can"), CALL(scnEidFail), SHOT("eid_de_fail"), CALL(scnEidBac), SHOT("eid_bac"),
 	CALL(reset), CALL(scnFido), SHOT("fido_key"), CALL(scnFidoPin), SHOT("fido_key_pin"), CALL(scnFidoU2f), SHOT("fido_u2f"),
 
 	// keyboard

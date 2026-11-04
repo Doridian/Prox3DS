@@ -586,6 +586,25 @@ static bool pssVerify(u8 alg, const u8 *h, u8 *em, u32 k, int modBits)
 	return !memcmp(h2, H, hl);
 }
 
+bool rsaVerifyDigest(const u8 *n, u32 nLen, const u8 *e, u32 eLen, const u8 *h, u32 hl, const u8 *sig, u32 sigLen,
+	bool pss)
+{
+	static u8 em[4 * BN_N], want[4 * BN_N];
+	static Bn m;
+	u8 alg = hl == 20 ? MD_SHA : hl == 28 ? MD_SHA_224 : hl == 32 ? MD_SHA_256 : hl == 48 ? MD_SHA_384 :
+		hl == 64 ? MD_SHA_512 : 0;
+	while (nLen && !*n) n++, nLen--;
+	if (!alg || nLen < 64 || nLen > 256 || sigLen > nLen) return false; // RSA-2048 at most (bn.h)
+	if (!rsaExp(n, nLen, e, eLen, sig, sigLen, em)) return false;
+	if (pss) {
+		bnFromBytes(&m, n, nLen);
+		return pssVerify(alg, h, em, nLen, bnBits(&m));
+	}
+	if (nLen < hl + 30) return false;
+	pkcs1Sig(alg, h, want, nLen);
+	return !memcmp(em, want, nLen);
+}
+
 static int modBits(NatKey *k)
 {
 	static Bn n;

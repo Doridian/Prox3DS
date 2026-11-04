@@ -340,7 +340,7 @@ static void token(const DfCipher *mac, const EidInfo *pi, const u8 *pt, u32 ptLe
 	cmac8(mac, d, n, out);
 }
 
-int eidPace(const EidCard *e, u8 ref, const char *pwd, EidSm *sm)
+int eidPace(const EidCard *e, u8 ref, const u8 *pw, u32 pwLen, EidSm *sm)
 {
 	static EcCurve c;
 	static Bn s, sk;
@@ -367,7 +367,7 @@ int eidPace(const EidCard *e, u8 ref, const char *pwd, EidSm *sm)
 	STEP("nonce", n, sw);
 	u8 z[32], kpi[32], iv[16] = { 0 };
 	if (!getObj(ans, n, 0x80, z, 16)) FAIL(0, "nonce: no 16-byte 80");
-	kdf((const u8 *)pwd, strlen(pwd), 3, kl, kpi);
+	kdf(pw, pwLen, 3, kl, kpi);
 	DfCipher kc;
 	dfCipherInit(&kc, aesType(kl), kpi);
 	dfCbc(&kc, iv, z, 16, false);
@@ -394,6 +394,7 @@ int eidPace(const EidCard *e, u8 ref, const char *pwd, EidSm *sm)
 	kdf(k, c.len, 1, kl, ke);
 	kdf(k, c.len, 2, kl, km);
 	memset(sm, 0, sizeof(*sm));
+	sm->bs = 16;
 	dfCipherInit(&sm->enc, aesType(kl), ke);
 	dfCipherInit(&sm->mac, aesType(kl), km);
 
@@ -412,18 +413,44 @@ int eidPace(const EidCard *e, u8 ref, const char *pwd, EidSm *sm)
 #undef LOST
 }
 
-// --- secure messaging (ICAO 9303-11 9.8, AES: SSC 16 bytes, IV = E(KEnc, SSC)) ---
+// --- secure messaging (ICAO 9303-11 9.8): AES (PACE; SSC 16 bytes, IV = E(KEnc, SSC), CMAC) or 3DES (BAC;
+// SSC 8 bytes, IV 0, ISO 9797-1 MAC algorithm 3), padding method 2 ---
 
 static void sscInc(EidSm *sm)
 {
-	for (int i = 15; i >= 0 && !++sm->ssc[i]; i--);
+	for (int i = sm->bs - 1; i >= 0 && !++sm->ssc[i]; i--);
 }
 
-static u32 pad16(u8 *p, u32 n)
+static u32 padBs(u8 *p, u32 n, u32 bs)
 {
 	p[n++] = 0x80;
-	while (n % 16) p[n++] = 0;
+	while (n % bs) p[n++] = 0;
 	return n;
+}
+
+static void smIv(const EidSm *sm, u8 *iv)
+{
+	memset(iv, 0, 16);
+	if (!sm->des) memcpy(iv, sm->ssc, 16), dfBlock(&sm->enc, iv, true);
+}
+
+// ISO 9797-1 MAC algorithm 3 (retail MAC): single DES CBC with Ka, the last block through Kb^-1 and Ka
+static void retailMac(const DfCipher *ka, const DfCipher *kb, const u8 *p, u32 len, u8 *mac)
+{
+	u8 h[8] = { 0 };
+	for (u32 i = 0; i < len; i += 8) {
+		for (int k = 0; k < 8; k++) h[k] ^= p[i + k];
+		dfBlock(ka, h, true);
+	}
+	dfBlock(kb, h, false);
+	dfBlock(ka, h, true);
+	memcpy(mac, h, 8);
+}
+
+static void smMac(const EidSm *sm, const u8 *p, u32 len, u8 *mac) // p padded already
+{
+	if (sm->des) retailMac(&sm->mac, &sm->macB, p, len, mac);
+	else cmac8(&sm->mac, p, len, mac);
 }
 
 static u32 putLen(u8 *p, u32 len)
@@ -433,10 +460,11 @@ static u32 putLen(u8 *p, u32 len)
 	return p[0] = 0x82, p[1] = len >> 8, p[2] = len, 3;
 }
 
-int eidSmCmd(EidSm *sm, u8 ins, u8 p1, u8 p2, const u8 *data, u32 lc, bool le, u8 *out, u32 max, u16 *sw)
+int eidSmCmd(EidSm *sm, u8 ins, u8 p1, u8 p2, const u8 *data, u32 lc, int le, u8 *out, u32 max, u16 *sw)
 {
-	static u8 c[300], m[320], a[SC_MAX_ANS];
+	static u8 c[300], m[320], a[SC_MAX_ANS], mm[SC_MAX_ANS + 48], dec[SC_MAX_ANS];
 	if (lc > 200) FAIL(-1, "SM: %lu bytes of data", lc);
+	u32 bs = sm->bs;
 	u8 hdr[4] = { 0x0C, ins, p1, p2 }, iv[16];
 	sscInc(sm);
 	u32 dl = 0;
@@ -444,27 +472,26 @@ int eidSmCmd(EidSm *sm, u8 ins, u8 p1, u8 p2, const u8 *data, u32 lc, bool le, u
 	if (lc) {
 		u8 enc[224];
 		memcpy(enc, data, lc);
-		u32 el = pad16(enc, lc);
-		memcpy(iv, sm->ssc, 16);
-		dfBlock(&sm->enc, iv, true);
+		u32 el = padBs(enc, lc, bs);
+		smIv(sm, iv);
 		dfCbc(&sm->enc, iv, enc, el, true);
 		dos[dl++] = 0x87;
 		dl += putLen(dos + dl, el + 1);
 		dos[dl++] = 0x01;
 		memcpy(dos + dl, enc, el), dl += el;
 	}
-	if (le) dos[dl++] = 0x97, dos[dl++] = 1, dos[dl++] = 0;
+	if (le >= 0) dos[dl++] = 0x97, dos[dl++] = 1, dos[dl++] = le;
 	// MAC over SSC || pad(header) || pad(DOs)
-	u32 ml = 0;
-	memcpy(m, sm->ssc, 16), ml = 16;
-	memcpy(m + ml, hdr, 4), ml = pad16(m, ml + 4);
-	if (dl) memcpy(m + ml, dos, dl), ml = pad16(m, ml + dl);
+	u32 ml = bs;
+	memcpy(m, sm->ssc, bs);
+	memcpy(m + ml, hdr, 4), ml = padBs(m, ml + 4, bs);
+	if (dl) memcpy(m + ml, dos, dl), ml = padBs(m, ml + dl, bs);
 	u32 cl = 0;
 	memcpy(c, hdr, 4), cl = 4;
 	c[cl++] = dl + 10;
 	memcpy(c + cl, dos, dl), cl += dl;
 	c[cl++] = 0x8E, c[cl++] = 8;
-	cmac8(&sm->mac, m, ml, c + cl), cl += 8;
+	smMac(sm, m, ml, c + cl), cl += 8;
 	c[cl++] = 0;
 	int n = scApdu(c, cl, a, sizeof(a), sw);
 	if (n < 0) FAIL(n == -2 ? -2 : -1, "%s", n == -2 ? "monitor" : scWhy());
@@ -474,26 +501,23 @@ int eidSmCmd(EidSm *sm, u8 ins, u8 p1, u8 p2, const u8 *data, u32 lc, bool le, u
 	Tlv t87 = { 0 }, t99 = { 0 }, t8e = { 0 }, t;
 	const u8 *p = a, *pe = a + n, *macEnd = a;
 	while (tlvNext(&p, pe, &t)) {
-		if (t.tag == 0x87) t87 = t, macEnd = p;
+		if (t.tag == 0x87 || t.tag == 0x85) t87 = t, macEnd = p;
 		else if (t.tag == 0x99) t99 = t, macEnd = p;
 		else if (t.tag == 0x8E) t8e = t;
 	}
 	if (!t99.v || t99.len != 2 || !t8e.v || t8e.len != 8) FAIL(-1, "SM answer without 99 / 8E");
-	static u8 mm[SC_MAX_ANS + 48];
-	u32 mml = 16;
-	memcpy(mm, sm->ssc, 16);
-	memcpy(mm + mml, a, macEnd - a), mml = pad16(mm, mml + (macEnd - a));
+	u32 mml = bs;
+	memcpy(mm, sm->ssc, bs);
+	memcpy(mm + mml, a, macEnd - a), mml = padBs(mm, mml + (macEnd - a), bs);
 	u8 mac[8];
-	cmac8(&sm->mac, mm, mml, mac);
+	smMac(sm, mm, mml, mac);
 	if (memcmp(mac, t8e.v, 8)) FAIL(-1, "SM answer: wrong MAC");
 	*sw = t99.v[0] << 8 | t99.v[1];
 	if (!t87.v) return 0;
-	if (t87.len < 17 || t87.v[0] != 0x01 || (t87.len - 1) % 16) FAIL(-1, "SM answer: bad 87");
+	if (t87.len < 1 + bs || t87.v[0] != 0x01 || (t87.len - 1) % bs) FAIL(-1, "SM answer: bad 87");
 	u32 el = t87.len - 1;
-	static u8 dec[SC_MAX_ANS];
 	memcpy(dec, t87.v + 1, el);
-	memcpy(iv, sm->ssc, 16);
-	dfBlock(&sm->enc, iv, true);
+	smIv(sm, iv);
 	dfCbc(&sm->enc, iv, dec, el, false);
 	while (el && !dec[el - 1]) el--;
 	if (!el || dec[el - 1] != 0x80) FAIL(-1, "SM answer: bad padding");
@@ -501,6 +525,103 @@ int eidSmCmd(EidSm *sm, u8 ins, u8 p1, u8 p2, const u8 *data, u32 lc, bool le, u
 	u32 k = el < max ? el : max;
 	memcpy(out, dec, k);
 	return k;
+}
+
+// --- BAC (ICAO 9303-11 4.3) ---
+
+static u8 checkDigit(const char *s)
+{
+	static const u8 w[3] = { 7, 3, 1 };
+	u32 sum = 0;
+	for (int i = 0; s[i]; i++) {
+		char ch = s[i];
+		u32 v = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'A' && ch <= 'Z' ? ch - 'A' + 10 : 0;
+		sum += v * w[i % 3];
+	}
+	return '0' + sum % 10;
+}
+
+void eidMrzSecret(const char *doc, const char *birth, const char *expiry, u8 out[20])
+{
+	char info[40], d[16];
+	snprintf(d, sizeof(d), "%-9s", doc);
+	for (char *q = d; *q; q++) if (*q == ' ') *q = '<';
+	snprintf(info, sizeof(info), "%s%c%.6s%c%.6s%c", d, checkDigit(d), birth, checkDigit(birth), expiry,
+		checkDigit(expiry));
+	sha1((const u8 *)info, strlen(info), out);
+}
+
+int eidBac(const u8 secret[20], EidSm *sm)
+{
+	u8 ke[16], km[16], ric[8], rifd[8], kifd[16], s[40], r[64], iv[8] = { 0 };
+	DfCipher enc, ka, kb;
+	*why = 0;
+	kdf(secret, 16, 1, 16, ke);
+	kdf(secret, 16, 2, 16, km);
+	dfCipherInit(&enc, DF_2K3DES, ke);
+	dfCipherInit(&ka, DF_DES, km);
+	dfCipherInit(&kb, DF_DES, km + 8);
+	static const u8 gc[5] = { 0x00, 0x84, 0x00, 0x00, 0x08 };
+	u16 sw;
+	int n = scApdu(gc, 5, r, sizeof(r), &sw);
+	if (n == -2) FAIL(-1, "monitor");
+	if (n < 0) FAIL(0, "card lost: %s", scWhy());
+	if (sw != 0x9000 || n != 8) FAIL(0, "GET CHALLENGE: %04X %s", sw, scSwName(sw));
+	memcpy(ric, r, 8);
+	rnd(rifd, 8);
+	rnd(kifd, 16);
+	memcpy(s, rifd, 8), memcpy(s + 8, ric, 8), memcpy(s + 16, kifd, 16);
+	dfCbc(&enc, iv, s, 32, true);
+	u8 c[46] = { 0x00, 0x82, 0x00, 0x00, 0x28 };
+	memcpy(c + 5, s, 32);
+	padBs(s, 32, 8);
+	retailMac(&ka, &kb, s, 40, c + 37);
+	c[45] = 0x28;
+	n = scApdu(c, 46, r, sizeof(r), &sw);
+	if (n == -2) FAIL(-1, "monitor");
+	if (n < 0) FAIL(0, "card lost: %s", scWhy());
+	if (sw == 0x6300 || sw == 0x6982 || sw == 0x6988) FAIL(2, "EXTERNAL AUTHENTICATE: %04X: wrong MRZ data", sw);
+	if (sw != 0x9000 || n != 40) FAIL(0, "EXTERNAL AUTHENTICATE: %04X %s", sw, scSwName(sw));
+	u8 mac[8];
+	memcpy(s, r, 32);
+	padBs(s, 32, 8);
+	retailMac(&ka, &kb, s, 40, mac);
+	if (memcmp(mac, r + 32, 8)) FAIL(2, "the chip's MAC is wrong");
+	memset(iv, 0, 8);
+	dfCbc(&enc, iv, r, 32, false);
+	if (memcmp(r, ric, 8) || memcmp(r + 8, rifd, 8)) FAIL(2, "the chip's answer has the wrong nonces");
+	u8 seed[16];
+	for (int i = 0; i < 16; i++) seed[i] = kifd[i] ^ r[16 + i];
+	kdf(seed, 16, 1, 16, ke);
+	kdf(seed, 16, 2, 16, km);
+	memset(sm, 0, sizeof(*sm));
+	sm->bs = 8, sm->des = true;
+	dfCipherInit(&sm->enc, DF_2K3DES, ke);
+	dfCipherInit(&sm->mac, DF_DES, km);
+	dfCipherInit(&sm->macB, DF_DES, km + 8);
+	memcpy(sm->ssc, ric + 4, 4), memcpy(sm->ssc + 4, rifd + 4, 4);
+	logp("BAC done\n");
+	return 1;
+}
+
+bool eidCurve(int param, EcCurve *c)
+{
+	const CurveDef *d = curveFor(param);
+	return d && curveInit(c, d);
+}
+
+int eidCurveFor(const u8 *oid, u32 len)
+{
+	static const struct {
+		const char *hex;
+		int param;
+	} o[] = { { "2A8648CE3D030107", 12 }, { "2B2403030208010107", 13 } };
+	for (u32 i = 0; i < sizeof(o) / sizeof(*o); i++) {
+		u8 b[16];
+		int n = scUnhex(o[i].hex, b, sizeof(b));
+		if ((u32)n == len && !memcmp(b, oid, len)) return o[i].param;
+	}
+	return -1;
 }
 
 // --- in words ---

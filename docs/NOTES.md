@@ -2065,3 +2065,16 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   ok; DS cert "Document Signer Passport" (Bundesdruckerei, issuer csca-germany), valid 2014-02-03 to
   2024-08-03, ECDSA-SHA256 with brainpoolP256r1 given as *explicit* parameters (python cryptography refuses
   those: sod.py verifies by hand). Signature ok. The CSCA link is not checked (needs csca-germany's cert).
+- In Prox3DS (emrtd.c, eidui.c, 2026-11-04): ID document screen, A -> read with the MRZ (form: number, birth,
+  expiry; check digits computed) / with the CAN / check the CAN only. PACE when EF.CardAccess has it, else
+  BAC (eid.c eidBac: 3DES SM, retail MAC). Reads COM, SOD, then every DG COM or SOD names (223-byte SM
+  READ BINARYs). DG1 into fields (TD1 / TD2 / TD3), DG2's image located (jp2 / j2k / jpeg). Passive
+  authentication in C: DG hashes, signed attrs digest, DS signature: ECDSA on named (P-256, bp256r1) or
+  explicit curves (ecc.c), RSA PKCS#1 v1.5 / PSS to 2048 bits (jccrypto.c rsaVerifyDigest, new). Y saves
+  SC_DIR/emrtd-<number>/ with pm3's names (EF_COM.bin, EF_SOD.bin, EF_DGn.bin, EF_DG2.jp2).
+- On the 3DS with the passport: PACE-MRZ read 9.0 s, BAC read 17.3 s (forced: nfcnet `eid bDOC,BIRTH,EXP`);
+  both: DG1 / DG2 / DG14 hashes ok, attrs ok, ECDSA bp256r1 (explicit params) valid; files as pm3's. Wrong
+  MRZ: PACE 6300 at mutual auth, BAC 6300 at EXTERNAL AUTHENTICATE -> "wrong MRZ".
+- nfcnet `eid` args: CAN (check), rCAN (read with the CAN), DOC,YYMMDD,YYMMDD (read with the MRZ), b + that (BAC).
+- Not done: the photo on screen (JPEG 2000: would need a decoder, e.g. OpenJPEG), the CSCA link, chip
+  authentication (DG14) / active authentication (DG15).
