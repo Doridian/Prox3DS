@@ -15,3 +15,8 @@ void entryHex(const char *title, const char *what, u32 len, const u8 *init, void
 enum { ENTRY_HEX = 1, ENTRY_HIDE = 2, ENTRY_CAPS = 4 };
 void entryText(const char *title, const char *what, const char *init, u32 max, u32 flags, void (*done)(const char *s));
 void entryDec(const char *title, const char *what, s64 min, s64 max, s64 init, void (*done)(s64 v));
+// A date as documents print it, DD.MM.YYYY: the keypad types the 8 digits straight through; left / right
+// pick day, month or year, up / down step it (L / R: 10 years). Only a real date between minYear and
+// maxYear is taken; done gets it.
+void entryDate(const char *title, const char *what, int y, int m, int d, int minYear, int maxYear,
+	void (*done)(int y, int m, int d));

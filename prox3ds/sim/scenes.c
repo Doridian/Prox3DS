@@ -740,6 +740,9 @@ static void scnFidoU2f(void)
 }
 
 static void kbDone(const char *s) { (void)s; }
+static void dateDone(int y, int m, int d) {}
+static void scnDate(void) { entryDate("Date of birth", "As printed on the document (the MRZ has it as YYMMDD).", 1974, 8, 12, 1906, 2026, dateDone); }
+static void scnDateBad(void) { entryDate("Expiry date", "As printed on the document.", 2025, 2, 31, 2000, 2099, dateDone); }
 static void scnKbText(void) { entryText("Write a URL", "https://..., tel:..., mailto:...", "https://example.org/a?b=c", 511, 0, kbDone); }
 static void scnKbHex(void) { entryText("APDU", "CLA INS P1 P2 [Lc data] [Le], in hex.", "00A4040007A0000000041010", 522, ENTRY_HEX, kbDone); }
 static void scnKbPw(void) { entryText("OATH password", "This applet has a password.", "hunter2", 127, ENTRY_HIDE, kbDone); }
@@ -970,6 +973,7 @@ static const SimStep script[] = {
 	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
 	CALL(reset), CALL(scnEmv), SHOT("emv_card"), D, D, D, SHOT("emv_card_log_end"), CALL(scnEmvFull), SHOT("emv_card_full"),
 	KEYS(KEY_R), SHOT("emv_app2"),
+	CALL(reset), CALL(scnDate), SHOT("date"), R, SHOT("date_month"), U, SHOT("date_month_up"), CALL(reset), CALL(scnDateBad), SHOT("date_bad"),
 	CALL(reset), CALL(scnMrtd), SHOT("mrtd_passport"), CALL(scnMrtdBad), SHOT("mrtd_bad"), CALL(scnMrtdNpa), SHOT("mrtd_npa"),
 	CALL(reset), CALL(scnEid), SHOT("eid_de"), A, SHOT("eid_menu"), B, CALL(scnEidCan), SHOT("eid_de_can"), CALL(scnEidFail), SHOT("eid_de_fail"), CALL(scnEidBac), SHOT("eid_bac"),
 	CALL(reset), CALL(scnFido), SHOT("fido_key"), CALL(scnFidoPin), SHOT("fido_key_pin"), CALL(scnFidoU2f), SHOT("fido_u2f"),

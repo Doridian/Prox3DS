@@ -184,8 +184,6 @@ static bool digits6(const char *s)
 }
 
 static void fDoc(char *out) { strcpy(out, *mrzDoc ? mrzDoc : "-"); }
-static void fBirth(char *out) { strcpy(out, *mrzBirth ? mrzBirth : "-"); }
-static void fExpiry(char *out) { strcpy(out, *mrzExpiry ? mrzExpiry : "-"); }
 
 static void docDone(const char *s)
 {
@@ -197,28 +195,54 @@ static void docDone(const char *s)
 	t[k] = 0;
 	if (*t) strcpy(mrzDoc, t);
 }
-static void birthDone(const char *s)
-{
-	if (digits6(s)) strcpy(mrzBirth, s);
-	else msgBox("Date of birth", "Six digits, YYMMDD (as in the MRZ).");
-}
-static void expiryDone(const char *s)
-{
-	if (digits6(s)) strcpy(mrzExpiry, s);
-	else msgBox("Expiry date", "Six digits, YYMMDD (as in the MRZ).");
-}
 static void eDoc(void)
 {
 	entryText("Document number", "As printed (up to 9 letters / digits; the MRZ's second line starts with it).", mrzDoc,
 		9, ENTRY_CAPS, docDone);
 }
+static int curYear(void)
+{
+	time_t now = unixNow();
+	struct tm *t = gmtime(&now);
+	return t ? 1900 + t->tm_year : 2026;
+}
+
+// YYMMDD <-> a full date (birth: a year after this one's YY is 19YY; expiry: 20YY)
+static bool mrzDate(const char *s, bool birth, int *y, int *m, int *d)
+{
+	if (strlen(s) != 6) return false;
+	int yy = (s[0] - '0') * 10 + s[1] - '0';
+	*y = (birth && yy > curYear() % 100 ? 1900 : 2000) + yy;
+	*m = (s[2] - '0') * 10 + s[3] - '0', *d = (s[4] - '0') * 10 + s[5] - '0';
+	return true;
+}
+
+static void fDate(char *out, const char *s, bool birth)
+{
+	int y, m, d;
+	if (mrzDate(s, birth, &y, &m, &d)) sprintf(out, "%02d.%02d.%04d", d, m, y);
+	else strcpy(out, "-");
+}
+static void fBirth(char *out) { fDate(out, mrzBirth, true); }
+static void fExpiry(char *out) { fDate(out, mrzExpiry, false); }
+
+static void birthDone(int y, int m, int d) { snprintf(mrzBirth, sizeof(mrzBirth), "%02u%02u%02u", (unsigned)y % 100, (unsigned)m % 100, (unsigned)d % 100); }
+static void expiryDone(int y, int m, int d) { snprintf(mrzExpiry, sizeof(mrzExpiry), "%02u%02u%02u", (unsigned)y % 100, (unsigned)m % 100, (unsigned)d % 100); }
+
 static void eBirth(void)
 {
-	entryText("Date of birth", "YYMMDD, as in the MRZ (12 August 1974: 740812).", mrzBirth, 6, ENTRY_HEX, birthDone);
+	int y = 1990, m = 1, d = 1;
+	mrzDate(mrzBirth, true, &y, &m, &d);
+	entryDate("Date of birth", "As printed on the document (the MRZ has it as YYMMDD).", y, m, d, curYear() - 120,
+		curYear(), birthDone);
 }
+
 static void eExpiry(void)
 {
-	entryText("Expiry date", "YYMMDD, as in the MRZ.", mrzExpiry, 6, ENTRY_HEX, expiryDone);
+	int y = curYear(), m = 1, d = 1;
+	mrzDate(mrzExpiry, false, &y, &m, &d);
+	entryDate("Expiry date", "As printed on the document. An expired one works too: the chip doesn't check.", y, m,
+		d, 2000, 2099, expiryDone);
 }
 
 static const Field mrzFields[] = {

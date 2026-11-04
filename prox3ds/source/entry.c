@@ -207,6 +207,164 @@ void entryDec(const char *title, const char *what, s64 min, s64 max, s64 init, v
 	e.cur = e.n - 1;
 }
 
+// --- a date: DD.MM.YYYY, typed straight through or stepped part by part ---
+
+static struct {
+	char title[64], what[256];
+	u8 dig[8];  // D D M M Y Y Y Y
+	int cur;    // the digit the keypad types next
+	int minYear, maxYear;
+	void (*done)(int y, int m, int d);
+} dt;
+
+static const char *const monthNames[12] = { "January", "February", "March", "April", "May", "June", "July",
+	"August", "September", "October", "November", "December" };
+
+static int dtPart(int part) // 0 day, 1 month, 2 year
+{
+	return part == 2 ? dt.dig[4] * 1000 + dt.dig[5] * 100 + dt.dig[6] * 10 + dt.dig[7] :
+		dt.dig[2 * part] * 10 + dt.dig[2 * part + 1];
+}
+
+static void dtSet(int part, int v)
+{
+	if (part == 2) {
+		for (int i = 7; i >= 4; i--, v /= 10) dt.dig[i] = v % 10;
+	} else {
+		dt.dig[2 * part] = v / 10 % 10, dt.dig[2 * part + 1] = v % 10;
+	}
+}
+
+static int daysIn(int y, int m)
+{
+	static const u8 n[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+	if (m < 1 || m > 12) return 31;
+	return n[m - 1] + (m == 2 && ((y % 4 == 0 && y % 100) || y % 400 == 0));
+}
+
+// "" = a real date in range, else what is wrong
+static const char *dtProblem(void)
+{
+	int d = dtPart(0), m = dtPart(1), y = dtPart(2);
+	if (m < 1 || m > 12) return "no such month";
+	if (d < 1 || d > daysIn(y, m)) return "no such day in that month";
+	if (y < dt.minYear || y > dt.maxYear) return "year out of range";
+	return "";
+}
+
+static int dtPartOf(int cur)
+{
+	return cur < 2 ? 0 : cur < 4 ? 1 : 2;
+}
+
+static void dtStep(int part, int delta)
+{
+	int y = dtPart(2), m = dtPart(1), d = dtPart(0);
+	if (part == 0) {
+		int n = daysIn(y, m);
+		d = d < 1 || d > n ? 1 : (d - 1 + delta + n) % n + 1;
+		dtSet(0, d);
+	} else if (part == 1) {
+		m = m < 1 || m > 12 ? 1 : (m - 1 + delta + 12) % 12 + 1;
+		dtSet(1, m);
+	} else {
+		y = y < dt.minYear ? dt.minYear : y > dt.maxYear ? dt.maxYear : y + delta;
+		if (y < dt.minYear) y = dt.maxYear;
+		if (y > dt.maxYear) y = dt.minYear;
+		dtSet(2, y);
+	}
+}
+
+static void dtType(int d)
+{
+	dt.dig[dt.cur] = d;
+	if (dt.cur < 7) dt.cur++;
+}
+
+static void dtFinish(void)
+{
+	const char *p = dtProblem();
+	if (*p) {
+		toast("Not a valid date: %s", p);
+		return;
+	}
+	appBack();
+	dt.done(dtPart(2), dtPart(1), dtPart(0));
+}
+
+static void dtDraw(void)
+{
+	char right[32];
+	snprintf(right, sizeof(right), "%d..%d", dt.minYear, dt.maxYear);
+	uiHeader(dt.title, right);
+	float y = uiTextWrap(12, 26, UI_W - 24, S_SMALL, uiCol[COL_TEXT], dt.what) + 14;
+	// DD . MM . YYYY, big; the part being stepped underlined, the digit the keypad types next in the cursor
+	float cell = 18, gap = 14, x = (UI_W - (8 * cell + 2 * gap)) / 2;
+	int part = dtPartOf(dt.cur);
+	for (int i = 0; i < 8; i++) {
+		float cx = x + i * cell + (i >= 2) * gap + (i >= 4) * gap;
+		char c[2] = { '0' + dt.dig[i], 0 };
+		if (i == dt.cur) uiRect(cx, y - 2, cell, 30, uiCol[COL_CURSOR]);
+		if (dtPartOf(i) == part) uiRect(cx, y + 30, cell, 2, uiCol[COL_ACCENT]);
+		uiMonoS(cx, y, 0.95f, cell, uiCol[i == dt.cur ? COL_BG : COL_TEXT], c);
+		if (i == 1 || i == 3) uiMonoS(cx + cell + gap / 2 - cell / 2, y, 0.95f, cell, uiCol[COL_DIM], ".");
+	}
+	y += 40;
+	static const char *const partName[3] = { "day", "month", "year" };
+	const char *p = dtProblem();
+	int m = dtPart(1);
+	if (*p) uiTextCenter(UI_W / 2, y, S_BODY, uiCol[COL_WARN], "%s", p);
+	else uiTextCenter(UI_W / 2, y, S_BODY, uiCol[COL_OK], "%d %s %d", dtPart(0), monthNames[m - 1], dtPart(2));
+	uiTextCenter(UI_W / 2, y + LINE_H + 4, S_SMALL, uiCol[COL_DIM], "Stepping the %s", partName[part]);
+	uiFooter(BTN_LR " day / month / year   " BTN_UD " step   " BTN_A " done   " BTN_B " cancel");
+}
+
+static void dtInput(u32 kDown, u32 kRepeat)
+{
+	int part = dtPartOf(dt.cur);
+	if (kRepeat & KEY_LEFT) dt.cur = part == 0 ? 4 : part == 1 ? 0 : 2;
+	if (kRepeat & KEY_RIGHT) dt.cur = part == 0 ? 2 : part == 1 ? 4 : 0;
+	if (kRepeat & KEY_UP) dtStep(part, 1);
+	if (kRepeat & KEY_DOWN) dtStep(part, -1);
+	if (kRepeat & KEY_R) dtStep(2, 10);
+	if (kRepeat & KEY_L) dtStep(2, -10);
+	if (kDown & KEY_A) dtFinish();
+	else if (kDown & KEY_B) appBack();
+}
+
+static void dtBottom(void)
+{
+	u32 key = uiCol[COL_BAR], side = uiCol[COL_PANEL];
+	float w = 58, h = 44, g = 3, x0 = 4, y0 = 6;
+	for (int i = 0; i < 10; i++) {
+		int pos = i == 0 ? 10 : i - 1, r = pos / 3, c = pos % 3;
+		char l[2] = { '0' + i, 0 };
+		if (uiButtonRep(x0 + c * (w + g), y0 + r * (h + g), w, h, key, l)) dtType(i);
+	}
+	if (uiButtonRep(x0, y0 + 3 * (h + g), w, h, side, "")) dt.cur = dt.cur ? dt.cur - 1 : 0;
+	if (uiButtonRep(x0 + 2 * (w + g), y0 + 3 * (h + g), w, h, side, "")) dt.cur = dt.cur < 7 ? dt.cur + 1 : 7;
+	float sx = x0 + 3 * (w + g) + 10, sw = UI_BW - sx - 4;
+	if (uiButtonRep(sx, y0, sw / 2 - 2, h, side, "-")) appPress(KEY_DOWN);
+	if (uiButtonRep(sx + sw / 2 + 2, y0, sw / 2 - 2, h, side, "+")) appPress(KEY_UP);
+	if (uiButton(sx, y0 + (h + g), sw, h, side, "Day/Mon/Year")) appPress(KEY_RIGHT);
+	if (uiButton(sx, y0 + 2 * (h + g), sw, h, side, "Cancel")) appPress(KEY_B);
+	if (uiButton(sx, y0 + 3 * (h + g), sw, h, uiCol[COL_SEL], "Done")) appPress(KEY_A);
+	uiTextCenter(UI_BW / 2, UI_H - 18, S_SMALL, uiCol[COL_DIM], "Type DD MM YYYY straight through");
+}
+
+static const Screen dateScreen = { NULL, dtInput, dtDraw, dtBottom };
+
+void entryDate(const char *title, const char *what, int y, int m, int d, int minYear, int maxYear,
+	void (*done)(int y, int m, int d))
+{
+	snprintf(dt.title, sizeof(dt.title), "%s", title);
+	snprintf(dt.what, sizeof(dt.what), "%s", what);
+	dt.minYear = minYear, dt.maxYear = maxYear, dt.done = done;
+	dtSet(0, d), dtSet(1, m), dtSet(2, y);
+	dt.cur = 0;
+	appScreen(&dateScreen);
+}
+
 // --- text: an on-screen keyboard (the system one can hang for good when closed during its opening
 // animation, docs/NOTES.md) ---
 
