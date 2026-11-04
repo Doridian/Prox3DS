@@ -633,6 +633,29 @@ static void emvFill(void)
 static void scnEmv(void) { emvFill(); simEmv(&emvCard, false); }
 static void scnEmvFull(void) { simEmv(&emvCard, true); }
 
+// the German ID card's EF.CardAccess, EF.DIR, EF.ATR/INFO, as read (2026-11-04)
+static EidCard eidDe;
+static void eidFill(void)
+{
+	static const char *ca = "3181C1300D060804007F00070202020201023012060A04007F000702020302020201020201413012060A04007F0007020204020202010202010D301C060904007F000702020302300C060704007F0007010202010D020141302A060804007F0007020206161E687474703A2F2F6273692E62756E642E64652F6369662F6E70612E786D6C303E060804007F000702020831323012060A04007F00070202030202020102020145301C060904007F000702020302300C060704007F0007010202010D020145";
+	static u8 b[256];
+	memset(&eidDe, 0, sizeof(eidDe));
+	int n = scUnhex(ca, b, sizeof(b));
+	if (!eidParseAccess(&eidDe, b, n) || eidDe.ninfo != 7 || eidDe.pace != 2) printf("eid: CardAccess parse wrong (%d infos, pace %d)\n", eidDe.ninfo, eidDe.pace);
+	static const char *apps[] = { "A000000167455349474E", "A0000002471001", "E80704007F00070302" };
+	for (int i = 0; i < 3; i++) {
+		int k = scUnhex(apps[i], eidDe.app[i].aid, 16);
+		eidDe.app[i].aidLen = k;
+	}
+	eidDe.napps = 3;
+	eidDe.extIn = eidDe.extOut = 0x5F0;
+	eidDe.pinSw = 0x9000;
+}
+static void scnEid(void) { eidFill(); simEid(&eidDe, 0); }
+static void scnEidCan(void) { EidCard e = eidDe; e.pinSw = 0x63C1; simEid(&e, 1); }
+static void scnEidFail(void) { EidCard e = eidDe; e.pinSw = 0x63C0; simEid(&e, 3); }
+static void scnEidBac(void) { EidCard e; memset(&e, 0, sizeof(e)); e.pace = -1; e.napps = 0; simEid(&e, 0); }
+
 // the Thales IDPrime 3940 FIDO's getInfo, as read (2026-11-03)
 static FidoInfo fidoKey;
 static void fidoFill(void)
@@ -904,6 +927,7 @@ static const SimStep script[] = {
 	CALL(oathAdd), SHOT("oath_add"), B, CALL(oathEmpty), SHOT("oath_empty"),
 	CALL(reset), CALL(scnEmv), SHOT("emv_card"), D, D, D, SHOT("emv_card_log_end"), CALL(scnEmvFull), SHOT("emv_card_full"),
 	KEYS(KEY_R), SHOT("emv_app2"),
+	CALL(reset), CALL(scnEid), SHOT("eid_de"), CALL(scnEidCan), SHOT("eid_de_can"), CALL(scnEidFail), SHOT("eid_de_fail"), CALL(scnEidBac), SHOT("eid_bac"),
 	CALL(reset), CALL(scnFido), SHOT("fido_key"), CALL(scnFidoPin), SHOT("fido_key_pin"), CALL(scnFidoU2f), SHOT("fido_u2f"),
 
 	// keyboard

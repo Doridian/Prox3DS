@@ -56,6 +56,8 @@ usage: nfcnet.py HOST probe              take over, power cycle, CORE_RESET/INIT
                                                      info / infokeys       read all (+ key dictionary), print
        nfcnet.py HOST emv                         EMV payment card, read only (GPO counts the card's ATC up):
                                                    number, expiry, records, log; also saved to SD
+       nfcnet.py HOST eid [CAN]                   ID document / German eID: EF.CardAccess, EF.DIR, PIN state (no
+                                                   try used); with the CAN also PACE + an SM command
        nfcnet.py HOST tearscan PAGE FROM TO STEP OLD8 NEW8   Ultralight tear-off write scan (us after the
                                                    WRITE frame; PAGE 0 = last user page). WRITES THE PAGE
        nfcnet.py HOST countertear CNT [BD_US]      EV1 counter reset by tear-off (pm3 hf mfu countertear;
@@ -82,7 +84,7 @@ OP_PUT_FILE = 0x0A
 GEN4_PWD = bytes(4)
 OP_SHOT, OP_KEYS, OP_MFU_CLONE, OP_ISODEP, OP_LOG, OP_DF, OP_MF_CHK = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26
 OP_MF_VALUE, OP_MFU_NDEF, OP_AMIIBO, OP_MF_DARKSIDE = 0x27, 0x28, 0x29, 0x2A
-OP_ICLASS, OP_EMV, OP_MFU_TEAR, OP_RELAY = 0x2B, 0x2C, 0x2D, 0x2E
+OP_ICLASS, OP_EMV, OP_MFU_TEAR, OP_RELAY, OP_EID = 0x2B, 0x2C, 0x2D, 0x2E, 0x2F
 MF_VAL_OPS = {"dec": 0xC0, "inc": 0xC1, "restore": 0xC2}
 DF_TYPES = {"des": 1, "2k3des": 1, "3k3des": 2, "aes": 3}  # dfcrypto.h (DES goes as 2K3DES, halves equal)
 DF_COMM = {"plain": 0, "mac": 1, "full": 3, "enc": 4, "full80": 5}
@@ -698,6 +700,9 @@ def main():
     elif what == "emv":
         r = nfc.card_call(OP_EMV, b"", 120)
         print(r.decode(errors="replace") if r is not None else f"emv failed: {nfc.why}")
+    elif what == "eid":
+        r = nfc.card_call(OP_EID, args[0].encode() if args else b"", 60)
+        print(r.decode(errors="replace") if r is not None else f"eid failed: {nfc.why}")
     elif what == "tearscan":
         p, f, to, st = (int(x) for x in args[:4])
         a = struct.pack("<BBHHH", 0, p, f, to, st) + bytes.fromhex(args[4]) + bytes.fromhex(args[5])

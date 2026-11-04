@@ -2041,3 +2041,13 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   or the photo) without Terminal Authentication (a BSI-issued CV certificate chain) -- by design (only
   authorities read the photo). Reachable without TA: the metadata above, CAN check, PIN status, and the
   PIN management that AusweisApp does (PACE-PIN then RESET RETRY COUNTER 2C 02 03 new PIN; PUK unblock).
+- In Prox3DS (eid.c / eidui.c, 2026-11-04): smart card scan -> "ID document (eMRTD)" (the ePass AID answers a
+  plain SELECT, 6F00 9000): EF.CardAccess in words (the PACE entry used in the accent colour), EF.DIR (label
+  50 when the AID is unknown: E828BD080F A000000167455349474E = "CIA zu DF.eSign"), extended length, the PIN
+  state; A = CAN check: PACE (ECDH-GM, AES-128/192/256, brainpoolP256r1 / P-256; ecc.c ecPaceGm) and one SM
+  command (SELECT ePass). eidSmCmd is the AES SM for the passport work later. nfcnet.py `eid [CAN]` (OP_EID 0x2F).
+  On the 3DS: PACE ~0.95-1.0 s, SM SELECT ePass 9000 (MAC checked), SM READ DG1 6982; a wrong CAN: the
+  mutual authentication answers 6300 -> "wrong CAN" (the CAN has no try counter).
+- isodep.c waited 80 ms per block (and gave up after 4 R(NAK)s, ~0.4-0.9 s): the ID card takes ~0.5 s for a
+  PACE step and sends no WTX (it may: FWI 13 = 2.5 s). Now the poll count follows the ATS's FWT (TB1),
+  at least the old 80 ms; WTX multiplies it.

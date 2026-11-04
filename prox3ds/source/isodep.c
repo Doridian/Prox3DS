@@ -9,6 +9,7 @@
 
 static char why[64];
 static u8 bn; // our block number
+static int fwtPolls = 40; // 2 ms polls for an answer: the card's FWT from its ATS (TB1), at least 80 ms
 
 const char *isoDepWhy(void)
 {
@@ -69,6 +70,15 @@ int isoDepActivate(u8 *ats, u32 atsMax)
 		}
 		memcpy(ats, a, (u32)r < atsMax ? (u32)r : atsMax);
 		bn = 0;
+		// FWT = 256 * 16 / fc * 2^FWI (FWI from TB1, default 4): a German ID card says FWI 13 (2.5 s) and
+		// takes over a second for a PACE step without sending WTX
+		int fwi = 4;
+		if (r >= 2 && (a[1] & 0x20)) {
+			int i = 2 + !!(a[1] & 0x10);
+			if (i < r && a[i] >> 4 != 15) fwi = a[i] >> 4;
+		}
+		fwtPolls = (302 << fwi) / 2000 + 2;
+		if (fwtPolls < 40) fwtPolls = 40;
 		return 1;
 	}
 	return 0;
@@ -78,7 +88,7 @@ int isoDepTx(const u8 *inf, u32 len, u8 *out, u32 max)
 {
 	u8 cmd[ISO_DEP_MAX_INF + 1], r[2], a[34];
 	u32 n = 0, off = 0, chunk = 0;
-	int fails = 0, wtx = 0, polls = 40;
+	int fails = 0, wtx = 0, polls = fwtPolls;
 	const u8 *tx = cmd;
 	u32 txLen = 0;
 	// the next piece of the command: chained (PCB bit 4) while more follows
@@ -91,7 +101,7 @@ int isoDepTx(const u8 *inf, u32 len, u8 *out, u32 max)
 	LOAD_CHUNK();
 	for (;;) {
 		int k = block(tx, txLen, a, sizeof(a), polls);
-		polls = 40;
+		polls = fwtPolls;
 		if (k < 0) FAIL(-1, "monitor");
 		if (!k) {
 			// R(NAK): the card repeats its last block, or ACKs if our I-block never got there
@@ -124,7 +134,7 @@ int isoDepTx(const u8 *inf, u32 len, u8 *out, u32 max)
 			if (++wtx > 2000) FAIL(0, "endless WTX"); // a minute or more at the shortest FWT
 			r[0] = 0xF2, r[1] = a[1] & 0x3F;
 			tx = r, txLen = 2, fails = 0;
-			polls = 40 * (r[1] ? r[1] : 1);
+			polls = fwtPolls * (r[1] ? r[1] : 1);
 		} else if ((pcb & 0xF6) == 0xA2 && (pcb & 1) == bn && (cmd[0] & 0x10)) {
 			// R(ACK) for our chained block: on to the next piece
 			bn ^= 1, off += chunk, fails = 0;

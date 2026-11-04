@@ -30,7 +30,8 @@ const ScApplet scApplets[] = {
 	{ "NDEF (Type 4 tag)", "D2760000850101", "An NFC Forum Type 4 tag: an NDEF message (URL, text, ...).", NULL },
 	{ "Payment card (EMV)", "325041592E5359532E4444463031", "EMV contactless payment card (the PPSE directory): "
 		"card number, expiry, cardholder, counters and the transaction log. Read only, nothing is paid.", emvOpenTool },
-	{ "Passport (eMRTD)", "A0000002471001", "ICAO electronic passport / ID card (needs the MRZ to read).", NULL },
+	{ "ID document (eMRTD)", "A0000002471001", "ICAO passport / ID card (German eID card): what the chip "
+		"offers (EF.CardAccess), the eID PIN's state (no try used), a CAN check (PACE).", eidOpenTool },
 	{ "Calypso transit", "315449432E494341", "Calypso public transport card.", NULL },
 	{ "Keycard", "A0000008040001", "Status Keycard (crypto wallet).", NULL },
 	{ "Prox3DS test applet", "F0334453504D01", "javacard/ in the Prox3DS repository: echo, N bytes, slow "

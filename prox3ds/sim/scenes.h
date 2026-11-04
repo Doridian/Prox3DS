@@ -1,5 +1,6 @@
 #pragma once
 // Hooks into the UI files' static state (hook_*.c include them), for scenes.c.
+#include "../source/eid.h"
 #include "../source/amiibo.h"
 #include "../source/app.h"
 #include "../source/desfire.h"
@@ -52,6 +53,7 @@ void simOath(const OathInfo *o, int offset);
 void simOathAdd(void);
 void simEmv(const EmvCard *e, bool full);
 void simFido(const FidoInfo *f);
+void simEid(const EidCard *e, int can);
 void simIclass(const IcCard *c);
 void simIclassMenu(void);
 

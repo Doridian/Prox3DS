@@ -18,6 +18,7 @@
 #include "amiibo.h"
 #include "desfire.h"
 #include "emu.h"
+#include "eid.h"
 #include "emv.h"
 #include "mfc.h"
 #include "isodep.h"
@@ -124,6 +125,8 @@ enum {
 	// wants a request 1 + the answer (data + SW). Request 2 stops, final reply result 0: fields u32,
 	// sessions u32, APDUs u32. A PC that answers nothing for RELAY_WAIT_MS gets 6F00 sent for it.
 	OP_RELAY       = 0x2E,
+	OP_EID         = 0x2F, // [CAN digits] -> ID document (eid.c): EF.CardAccess in words, EF.DIR, PIN state; with a
+	                       // CAN also PACE and an SM SELECT of the ePass application. Text; on failure the reason
 };
 
 #define OUT_MAX 0x2000
@@ -440,6 +443,58 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		FILE *f = fopen(path, "r");
 		*outLen = f ? fread(out, 1, OUT_MAX, f) : 0;
 		if (f) fclose(f);
+		return 0;
+	}
+	case OP_EID: {
+		if (!card.active && !iso14aStart()) return 1;
+		static EidCard e;
+		static EidSm sm;
+		char *o = (char *)out, can[16];
+		int r = eidRead(&e), k = 0;
+		if (r <= 0) {
+			iso14aParity(true);
+			*outLen = strlen(eidWhy());
+			memcpy(out, eidWhy(), *outLen);
+			return r < 0 ? -1 : 1;
+		}
+		char h[80];
+		scHex(h, e.ats, e.atsLen);
+		k += snprintf(o + k, OUT_MAX - k, "ATS %s\nEF.CardAccess: %u bytes, %d entries\n", h, e.accessLen, e.ninfo);
+		for (int i = 0; i < e.ninfo; i++) {
+			eidInfoText(&e.info[i], h, sizeof(h));
+			k += snprintf(o + k, OUT_MAX - k, "  %s%s\n", h, i == e.pace ? "  <- used" : "");
+		}
+		for (int i = 0; i < e.napps; i++) {
+			const char *n = eidAppName(e.app[i].aid, e.app[i].aidLen);
+			scHex(h, e.app[i].aid, e.app[i].aidLen);
+			k += snprintf(o + k, OUT_MAX - k, "EF.DIR: %s %s %s\n", h, n ? n : "", e.app[i].label);
+		}
+		u32 col;
+		const char *pin = eidPinText(e.pinSw, &col);
+		k += snprintf(o + k, OUT_MAX - k, "extended length %lu / %lu\nPIN state %04X %s\n", e.extIn, e.extOut,
+			e.pinSw, pin ? pin : "");
+		if (inLen && inLen < sizeof(can)) {
+			memcpy(can, in, inLen);
+			can[inLen] = 0;
+			u64 t0 = osGetTime();
+			r = eidPace(&e, EID_CAN, can, &sm);
+			k += snprintf(o + k, OUT_MAX - k, "PACE: %d %s (%llu ms)\n", r, r == 1 ? "ok" : eidWhy(), osGetTime() - t0);
+			if (r == 1) {
+				static const u8 epass[] = { 0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01 };
+				u8 b[16];
+				u16 sw = 0;
+				int n = eidSmCmd(&sm, 0xA4, 0x04, 0x0C, epass, sizeof(epass), false, b, sizeof(b), &sw);
+				k += snprintf(o + k, OUT_MAX - k, "SM SELECT ePass: %d, %04X %s\n", n, sw, n < 0 ? eidWhy() : "");
+				n = eidSmCmd(&sm, 0xB0, 0x81, 0, NULL, 0, true, b, sizeof(b), &sw);
+				k += snprintf(o + k, OUT_MAX - k, "SM READ DG1: %d, %04X %s\n", n, sw, n < 0 ? eidWhy() : "");
+			}
+			if (r < 0) {
+				iso14aParity(true);
+				return -1;
+			}
+		}
+		iso14aParity(true);
+		*outLen = k;
 		return 0;
 	}
 	case OP_MFU_DUMP: {
