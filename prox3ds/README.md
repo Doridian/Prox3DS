@@ -1,4 +1,7 @@
-# Prox3DS
+# Prox3DS: the app
+
+How the 3DS app is put together. For what it does and how to use it, build and release it, see the
+[top-level README](../README.md).
 
 Mifare Classic and Ultralight / NTAG tool for the New3DS NFC controller (BCM20791). Build with `make` (devkitPro, needs
 citro2d), run the .3dsx from the Homebrew Launcher. NFC is handed back to the system on exit (START).
