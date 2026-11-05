@@ -207,6 +207,18 @@ static int selectAnticoll(void)
 	return sak;
 }
 
+int iso14aPresent(void)
+{
+	MonFrame f[4];
+	u8 hlta[4] = { 0x50, 0x00 }, wupa = 0x52;
+	crcA(hlta, 2, hlta + 2);
+	if (!monTxraw(hlta, 4, 4 << 4, 0, 1, 0x88)) return -1;
+	int n = iso14aTx(&wupa, 1, 0x07, f, 4);
+	if (n < 0) return -1;
+	const MonFrame *a = answer(f, n, 2);
+	return a && a->len == 2;
+}
+
 int iso14aSelect(void)
 {
 	int r = selectKnown();

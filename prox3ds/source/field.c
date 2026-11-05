@@ -26,6 +26,8 @@
 #define POLL_MS    250
 #define SHOW_MS    10000 // the last reading stays (dim) this long after the field went off
 #define LIVE_MS    1500
+#define EMPTY_MIN  130.0f // plausible empty levels (166 on the test console)
+#define EMPTY_MAX  210.0f
 #define FULL_LOAD  85.0f // the gauge's full scale, in vector length below the empty field
 
 static float offI = 1.3f, offQ = 7.6f, empty = 166.0f; // the test console's values until learned
@@ -35,8 +37,6 @@ static float level; // smoothed vector length, 0 = no reading since armed
 static volatile int bars = -1;
 static volatile float loadFrac;
 static volatile u32 lastMs;
-static float run[3];
-static int runN;
 
 static u32 nowMs(void)
 {
@@ -50,7 +50,7 @@ static void load(void)
 	FILE *f = fopen(FIELD_FILE, "r");
 	if (!f) return;
 	float a, b, c;
-	if (fscanf(f, "%f %f %f", &a, &b, &c) == 3 && fabsf(a) < 40 && fabsf(b) < 40 && c > 40 && c < 600) {
+	if (fscanf(f, "%f %f %f", &a, &b, &c) == 3 && fabsf(a) < 40 && fabsf(b) < 40 && c >= EMPTY_MIN && c <= EMPTY_MAX) {
 		offI = a;
 		offQ = b;
 		empty = c;
@@ -98,20 +98,96 @@ static void publish(void)
 	lastMs = nowMs();
 }
 
-// The empty field is the longest vector there is: three steady readings above it raise it.
+// The empty field, learned in Tuning only: the card stopped answering (lifted), then 1 s of steady
+// readings within 3 s of that. Not "the largest reading ever": a pm3 lying on the 3DS (its antenna is a
+// tuned 13.56 MHz coil) pushes the level both ways, 53 tight and 174 at some distance (2026-11-04).
+#define HIST       64
+static struct {
+	float r;
+	u32 t;
+} hist[HIST];
+static int histN;
+static bool cardGone, learned;
+static u32 goneAt;
+
 static void learnEmpty(float r)
 {
-	if (r <= empty + 1.5f) {
-		runN = 0;
+	u32 now = nowMs();
+	hist[histN % HIST].r = r, hist[histN % HIST].t = now;
+	histN++;
+	if (!cardGone || learned || now - goneAt < 1000 || now - goneAt > 3000) return;
+	float lo = 1e9f, hi = 0, sum = 0;
+	int n = 0;
+	for (int k = 0; k < HIST && k < histN; k++) {
+		int i = (histN - 1 - k) % HIST;
+		if (now - hist[i].t > 1000) break;
+		if (hist[i].t < goneAt) return;
+		lo = fminf(lo, hist[i].r), hi = fmaxf(hi, hist[i].r), sum += hist[i].r, n++;
+	}
+	if (n < 8 || hi - lo > 3) return;
+	float e = sum / n;
+	learned = true;
+	if (e < EMPTY_MIN || e > EMPTY_MAX) {
+		logp("field: %.0f with no card is no empty field, kept %.0f\n", e, empty);
 		return;
 	}
-	if (runN && fabsf(r - run[0]) > 3) runN = 0;
-	run[runN++] = r;
-	if (runN < 3) return;
-	empty = (run[0] + run[1] + run[2]) / 3;
-	runN = 0;
+	if (fabsf(e - empty) < 1) return;
+	empty = e;
 	dirty = true;
-	logp("field: empty level now %.0f\n", empty);
+	logp("field: baseline now %.0f\n", empty);
+}
+
+bool fieldMeasureEmpty(char *msg, u32 max)
+{
+	if (!armed) {
+		snprintf(msg, max, "No field: put a card on first");
+		return false;
+	}
+	float lo = 1e9f, hi = 0, sum = 0;
+	int n = 0;
+	inPoll = true;
+	for (int k = 0; k < 40 && n < 25; k++) {
+		float i, q;
+		if (readIQ(&i, &q)) {
+			float r = sqrtf((i - offI) * (i - offI) + (q - offQ) * (q - offQ));
+			lo = fminf(lo, r), hi = fmaxf(hi, r), sum += r, n++;
+		}
+		svcSleepThread(40 * 1000000LL);
+	}
+	inPoll = false;
+	if (n < 15) {
+		snprintf(msg, max, "No steady reading: baseline kept");
+		logp("field: %s\n", msg);
+		return false;
+	}
+	float e = sum / n;
+	if (hi - lo > 4) {
+		snprintf(msg, max, "Not steady (%.0f-%.0f): baseline kept", lo, hi);
+		logp("field: %s\n", msg);
+		return false;
+	}
+	if (e < EMPTY_MIN || e > EMPTY_MAX) {
+		snprintf(msg, max, "%.0f: a card near? Baseline kept", e);
+		logp("field: %s\n", msg);
+		return false;
+	}
+	empty = e;
+	learned = true;
+	dirty = true;
+	save();
+	snprintf(msg, max, "Baseline set to %.0f", empty);
+	logp("field: %s\n", msg);
+	return true;
+}
+
+void fieldCardPresent(bool present)
+{
+	if (present) {
+		cardGone = learned = false;
+	} else if (!cardGone) {
+		cardGone = true;
+		goneAt = nowMs();
+	}
 }
 
 static bool sample(void)
@@ -130,7 +206,7 @@ void fieldArm(void)
 {
 	load();
 	level = 0;
-	runN = 0;
+	cardGone = learned = false;
 	armed = true;
 	inPoll = true;
 	bool ok = sample();
@@ -235,10 +311,6 @@ void fieldJobEnd(void)
 				offQ = b;
 				calibrated = dirty = true;
 				logp("field: I/Q offset %.1f %.1f, level %.0f (fit sd %.1f)\n", a, b, r, e);
-				if (r > empty + 1.5f) {
-					empty = r;
-					logp("field: empty level now %.0f\n", empty);
-				}
 			}
 		}
 	}

@@ -195,6 +195,14 @@ u32 jobCount(void)
 }
 
 static bool keepChip;
+static void (*jobKeys)(u32 kDown), (*nextKeys)(u32 kDown);
+static const char *jobKeysHint, *nextKeysHint;
+
+void jobOnKeys(void (*keys)(u32 kDown), const char *hints)
+{
+	nextKeys = keys;
+	nextKeysHint = hints;
+}
 
 void jobKeepChip(void)
 {
@@ -237,6 +245,8 @@ void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool
 	jobView = view;
 	jobHint = nextHint ? nextHint : "Keep the card on the bottom screen.";
 	nextHint = NULL;
+	jobKeys = nextKeys, jobKeysHint = nextKeysHint;
+	nextKeys = NULL, nextKeysHint = NULL;
 	progJob();
 	jobTitle = title;
 	jobRun = run;
@@ -262,6 +272,7 @@ static void jobReap(void)
 	threadFree(worker);
 	worker = NULL;
 	jobFinished = jobBusy = false;
+	jobKeys = NULL, jobKeysHint = NULL;
 	if (jobDone) jobDone();
 }
 
@@ -680,12 +691,25 @@ static void menuExit(void)
 
 // Tuning: keeps a card session up and samples the field fast for the gauge. The field stays on once
 // the card is activated, so lifting the card shows the empty field (the gauge drops to zero).
+static volatile bool tuneResetAsked;
+static char tuneMsg[64]; // the last reset's outcome, top left of the gauge
+
 static void tuneRun(void)
 {
 	while (!mfCancel) {
 		if (!cardWait()) return;
 		int bad = 0;
-		while (!mfCancel && bad < 10) {
+		for (u32 n = 0; !mfCancel && bad < 10; n++) {
+			if (tuneResetAsked) {
+				tuneResetAsked = false;
+				snprintf(tuneMsg, sizeof(tuneMsg), "Measuring the baseline...");
+				if (iso14aPresent() == 1) snprintf(tuneMsg, sizeof(tuneMsg), "A card still answers: take it away");
+				else fieldMeasureEmpty(tuneMsg, sizeof(tuneMsg));
+			}
+			if (n % 6 == 0) {
+				int p = iso14aPresent(); // lifted: the empty field, which the meter learns
+				if (p >= 0) fieldCardPresent(p);
+			}
 			bad = fieldTuneSample() ? 0 : bad + 1;
 			svcSleepThread(MS(40));
 		}
@@ -716,6 +740,7 @@ static float tuneView(float x, float y, float w)
 {
 	static float needle, peak;
 	static u64 peakAt;
+	if (*tuneMsg) uiText(x, y - SMALL_H - 2, S_SMALL, uiCol[COL_WARN], "%s", tuneMsg); // the op row, left of the clock
 	y -= 4; // up into the empty op row, the arc (cursor R + 16 above cy) still clear of the title bar
 	bool live = false;
 	float target = fieldGauge(&live);
@@ -776,18 +801,42 @@ static float tuneView(float x, float y, float w)
 	if (live && lvl > 0) snprintf(a, sizeof(a), "%3.0f", lvl);
 	else snprintf(a, sizeof(a), "---");
 	snprintf(b, sizeof(b), "%3.0f", empty);
-	float lx = cx - 72 - sw / 2, rx = cx + 72 - sw / 2;
-	uiMonoS(lx + sw / 2 - 2.5f * MONO_W, ry - 13, S_MONO, MONO_W, uiCol[COL_ACCENT], "FIELD");
-	uiSeg7(lx, ry, small, live ? uiCol[COL_TEXT] : uiCol[COL_DIM], ghost, a);
-	uiMonoS(rx + sw / 2 - 2.5f * MONO_W, ry - 13, S_MONO, MONO_W, uiCol[COL_ACCENT], "EMPTY");
-	uiSeg7(rx, ry, small, uiCol[COL_DIM], ghost, b);
+	// baseline (the learned empty field) left, the field now right; labels centered over the digits'
+	// tops (the digits lean right by a tenth of their height)
+	float lx = cx - 72 - sw / 2, rx = cx + 72 - sw / 2, lean = small * 0.1f;
+	uiMonoS(lx + sw / 2 + lean - 4 * MONO_W, ry - 13, S_MONO, MONO_W, uiCol[COL_ACCENT], "BASELINE");
+	uiSeg7(lx, ry, small, uiCol[COL_DIM], ghost, b);
+	uiMonoS(rx + sw / 2 + lean - 2.5f * MONO_W, ry - 13, S_MONO, MONO_W, uiCol[COL_ACCENT], "FIELD");
+	uiSeg7(rx, ry, small, live ? uiCol[COL_TEXT] : uiCol[COL_DIM], ghost, a);
 	if (!live) uiMonoS(cx - 5 * MONO_W, ry + 8, S_MONO, MONO_W, uiCol[COL_WARN], "PLACE CARD");
 	return ry + small + 4 - y;
 }
 
+static void tuneResetYes(void)
+{
+	tuneResetAsked = true;
+}
+
+static void tuneKeys(u32 kDown)
+{
+	if (!(kDown & KEY_X)) return;
+	bool live = false;
+	fieldGauge(&live);
+	if (!live) {
+		msgBox("Reset baseline", "Put a card on the reader first: the 3DS only turns its field on for a card. "
+			"Then take it away and press " BTN_X " again.");
+		return;
+	}
+	confirm("Reset baseline", tuneResetYes, "Take every card (and any Proxmark) away from the 3DS: nothing "
+		"within ~10 cm. The field is then measured for a second and becomes the new baseline (the empty field).");
+}
+
 static void menuTune(void)
 {
-	jobNextHint("Lift the card to see the empty field.");
+	tuneResetAsked = false;
+	*tuneMsg = 0;
+	jobNextHint(BTN_X " reset baseline");
+	jobOnKeys(tuneKeys, BTN_B " stop   " BTN_X " reset baseline");
 	jobStartView("Tuning", tuneRun, NULL, true, tuneView);
 }
 
@@ -1005,8 +1054,11 @@ void appRun(void)
 			mfCancel = true;
 			break;
 		}
-		if (jobBusy) {
+		if (jobBusy && dlg.kind) {
+			dialogInput(kDown, kRepeat); // a job's own question (jobOnKeys), the job keeps running
+		} else if (jobBusy) {
 			if ((kDown & KEY_B) && jobCancellable) mfCancel = true;
+			else if (jobKeys && kDown) jobKeys(kDown);
 		} else if (netCardOp && (kDown & KEY_B)) {
 			mfCancel = true;
 			toast("Stopping the network request");
@@ -1021,8 +1073,8 @@ void appRun(void)
 		uiFrameBegin();
 		stack[depth - 1]->draw();
 		if (jobBusy) busyDraw();
-		else if (dlg.kind) dialogDraw();
-		if (jobBusy) uiHints(jobCancellable ? BTN_B " stop" : "");
+		if (dlg.kind) dialogDraw();
+		if (jobBusy && !dlg.kind) uiHints(jobKeysHint ? jobKeysHint : jobCancellable ? BTN_B " stop" : "");
 		if (frame < toastUntil && !jobBusy && !dlg.kind) {
 			char t[128];
 			snprintf(t, sizeof(t), "%s", toastMsg);

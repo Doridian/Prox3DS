@@ -858,7 +858,7 @@ static const SimStep script[] = {
 	CALL(simHome), SHOT("touch_locked"), TOUCH(150, 200), D, SHOT("touch_locked_tap"), CALL(simHome), SHOT("touch_unlocked"),
 	CALL(reset), CALL(simTools), SHOT("tools_0"), D, SHOT("tools_1"), D, SHOT("tools_2"), D, SHOT("tools_3"),
 	CALL(fieldDim), SHOT("tools_meter_dim"), CALL(fieldLive), CALL(simTune), SHOT("tuning"), D, D, D, D, D, D, D, D, D, D,
-	D, D, D, D, D, D, D, D, D, D, SHOT("tuning_settled"), CALL(busyEnd), CALL(reset),
+	D, D, D, D, D, D, D, D, D, D, SHOT("tuning_settled"), X, SHOT("tuning_reset"), B, CALL(busyEnd), CALL(reset),
 	CALL(fieldLive), CALL(busyRead), SHOT("busy_read"), CALL(busyStop), SHOT("busy_stopping"), CALL(busyChip), SHOT("busy_chip"),
 	CALL(busyEnd), CALL(toastHome), SHOT("toast_home"), CALL(toastLong), SHOT("toast_long"),
 

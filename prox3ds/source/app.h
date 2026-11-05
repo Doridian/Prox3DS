@@ -47,6 +47,9 @@ void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool
 	float (*view)(float x, float y, float w));
 // The busy box's hint next to "B stop" for the next job started (default: keep the card on the bottom screen).
 void jobNextHint(const char *hint);
+// The next job started gets these keys (UI thread, while it runs; B stays stop) and these bottom screen hints
+// (BTN_B " stop" first). A dialog opened from there sits on top of the busy box, the job running on.
+void jobOnKeys(void (*keys)(u32 kDown), const char *hints);
 void fmtDuration(char *out, u32 ms); // "m:ss"
 bool cardWait(void); // in a job: take the chip, poll until a card is activated (or cancelled)
 // The chip is powered off after every job (battery; its RF field also blinds the touchscreen). In a job:

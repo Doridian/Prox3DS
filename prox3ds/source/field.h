@@ -14,6 +14,10 @@ void fieldPoll(void);   // from the monitor transport: a sample every few hundre
 void fieldJobEnd(void);
 
 bool fieldTuneSample(void); // the Tuning screen's job: one sample now (false = no field / junk)
+void fieldCardPresent(bool present); // Tuning: does the card still answer (lifted = the empty field)
+// Tuning, field on and no card near: 1 s of readings become the empty level (whatever it was). false =
+// not steady or not plausible, kept.
+bool fieldMeasureEmpty(char *msg, u32 max); // msg: the outcome, for the screen
 
 #define FIELD_BARS 5
 // UI: bars 0..FIELD_BARS of the last reading, -1 = none recent. live = the field is on now.

@@ -2112,3 +2112,8 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   0xBF / 0x17): no full field to measure. After RF_DEACTIVATE the RF block reads all 0 (powered down).
 - Net server: after each client it took hwLock to turn a left-on field off, so it hung for the length of any
   job holding the chip (Tuning, emulation). Now TryLock.
+- A pm3 RDV4 lying on the 3DS loads the field to 53 (empty 166-174): its antenna is a tuned 13.56 MHz coil,
+  it couples far harder than any card (big card ~90). On the way in it also pushed the level up to 174, which
+  the old "largest steady reading" rule took as the new empty level. Now the baseline (empty level) is only
+  learned in Tuning: the card stops answering (HLTA + WUPA every 240 ms), then 1 s steady (+-1.5) within 3 s;
+  or X there measures it on request. 130..210 only.

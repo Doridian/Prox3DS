@@ -52,6 +52,8 @@ void fieldDisarm(void) {}
 void fieldPoll(void) {}
 void fieldJobEnd(void) {}
 bool fieldTuneSample(void) { return false; }
+void fieldCardPresent(bool present) {}
+bool fieldMeasureEmpty(char *msg, u32 max) { return false; }
 int fieldBars(bool *live) { if (live) *live = simFieldLive; return simFieldBars; }
 float fieldGauge(bool *live) { if (live) *live = simFieldLive; return simFieldGauge; }
 float fieldLevel(float *empty) { if (empty) *empty = 166; return 166 - 25 * simFieldGauge; }
