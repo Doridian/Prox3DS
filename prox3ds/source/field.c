@@ -28,12 +28,15 @@
 #define LIVE_MS    1500
 #define EMPTY_MIN  130.0f // plausible empty levels (166 on the test console)
 #define EMPTY_MAX  210.0f
+#define DEADZONE   8.0f  // loading that is just the empty field drifting
 #define FULL_LOAD  85.0f // the gauge's full scale, in vector length below the empty field
 
 static float offI = 1.3f, offQ = 7.6f, empty = 166.0f; // the test console's values until learned
 static bool loaded, calibrated, dirty, inPoll;
 static volatile bool armed;
 static float level; // smoothed vector length, 0 = no reading since armed
+static float med[5];
+static int medN;
 static volatile int bars = -1;
 static volatile float loadFrac;
 static volatile u32 lastMs;
@@ -87,13 +90,15 @@ static bool readIQ(float *i, float *q)
 
 static void publish(void)
 {
-	float l = empty - level;
-	// square-root scale: an NTAG well placed loads ~16-21 (about half), a big card ~72 (most of it)
-	float fr = l > 0 ? sqrtf(l / FULL_LOAD) : 0;
+	// below DEADZONE it's the empty field drifting (166-174 between sessions, +-2 within one, nothing near:
+	// the surroundings), not a card. Then a square-root scale: an NTAG well placed (16-21) about a third,
+	// a big card (~72) about 90 %.
+	float l = empty - level - DEADZONE;
+	float fr = l > 0 ? sqrtf(l / (FULL_LOAD - DEADZONE)) : 0;
 	loadFrac = fr > 1 ? 1 : fr;
-	static const float steps[FIELD_BARS] = { 3, 8, 16, 30, 50 };
+	static const float steps[FIELD_BARS] = { 0.05f, 0.3f, 0.5f, 0.7f, 0.9f };
 	int n = 0;
-	while (n < FIELD_BARS && l >= steps[n]) n++;
+	while (n < FIELD_BARS && loadFrac >= steps[n]) n++;
 	bars = n;
 	lastMs = nowMs();
 }
@@ -197,7 +202,20 @@ static bool sample(void)
 	float r = sqrtf((i - offI) * (i - offI) + (q - offQ) * (q - offQ));
 	if (r < 40 || r > 600) return false;
 	learnEmpty(r);
-	level = level ? 0.5f * level + 0.5f * r : r;
+	// median of the last 5, then smoothed: single noisy reads (Q jumps by ~6 now and then) dip the length
+	// by a few units and flicked the gauge
+	med[medN++ % 5] = r;
+	int m = medN < 5 ? medN : 5;
+	float t[5];
+	memcpy(t, med, sizeof(t));
+	for (int a = 1; a < m; a++)
+		for (int b = a; b > 0 && t[b] < t[b - 1]; b--) {
+			float x = t[b];
+			t[b] = t[b - 1], t[b - 1] = x;
+		}
+	float mr = t[m / 2];
+	level = level ? 0.6f * level + 0.4f * mr : mr;
+
 	publish();
 	return true;
 }
@@ -206,6 +224,7 @@ void fieldArm(void)
 {
 	load();
 	level = 0;
+	medN = 0;
 	cardGone = learned = false;
 	armed = true;
 	inPoll = true;

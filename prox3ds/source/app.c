@@ -795,13 +795,18 @@ static float tuneView(float x, float y, float w)
 	char num[8];
 	snprintf(num, sizeof(num), "%3d", (int)(needle * 100 + 0.5f));
 	const float big = 56;
-	float nw = uiSeg7Width(big, 3), ny = cy - 96; // inside the inner ring (R - th - 5)
-	uiMonoS(cx - 3 * MONO_W, ny - 16, S_MONO, MONO_W, uiCol[COL_ACCENT], "SIGNAL");
-	uiSeg7(cx - nw / 2 - 6, ny, big, live ? uiCol[COL_KEYB] : uiCol[COL_DIM], ghost, num);
-	uiMonoS(cx + nw / 2 - 2, ny + big - 12, S_MONO, MONO_W, uiCol[COL_DIM], "%");
+	float nw = uiSeg7Width(big, 3), ny = cy - 74; // inside the inner ring (R - th - 5)
+	uiMonoS(cx - 3 * 11.5f, ny - 29, 0.62f, 11.5f, uiCol[COL_ACCENT], "SIGNAL");
+	// "%" half the digits' height, bottom aligned with them (the system font's "%" covers rows 6.1 .. 24 x
+	// scale below y, measured on the console), the pair centered
+	const float ps = big / 2 / 17.9f, gapP = 10;
+	float pw = uiTextWidth(ps, "%"), gx = cx - (nw + gapP + pw) / 2;
+	uiSeg7(gx, ny, big, live ? uiCol[COL_KEYB] : uiCol[COL_DIM], ghost, num);
+	uiText(gx + nw + gapP, ny + big - 24.6f * ps, ps, uiCol[COL_DIM], "%%");
 	// under the signal: the last reset's outcome for a few seconds, else "place card" without a field
 	const char *note = tuneMsgUntil > now && *tuneMsg ? tuneMsg : live ? NULL : "PLACE CARD";
-	if (note) uiMonoS(cx - strlen(note) * MONO_W / 2, ny + big + 10, S_MONO, MONO_W, uiCol[COL_WARN], note);
+	// on the MIN / MAX labels' baseline (measured on the console: 13 px lower than the arc's ends)
+	if (note) uiMonoS(cx - strlen(note) * 10.0f / 2, cy + 1, 0.54f, 10.0f, uiCol[COL_WARN], note);
 	uiMonoS(cx - R - 4, cy + 4, S_MONO, MONO_W, uiCol[COL_DIM], "MIN");
 	uiMonoS(cx + R + 4 - 3 * MONO_W, cy + 4, S_MONO, MONO_W, uiCol[COL_DIM], "MAX");
 	// the corners: baseline (the learned empty field) top left, the field now top right; labels centered

@@ -2117,3 +2117,7 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   the old "largest steady reading" rule took as the new empty level. Now the baseline (empty level) is only
   learned in Tuning: the card stops answering (HLTA + WUPA every 240 ms), then 1 s steady (+-1.5) within 3 s;
   or X there measures it on request. 130..210 only.
+- Empty-field drift: one field-on with nothing near held 170-174 (phase 161 deg) for 40 s, other sessions
+  166-167. An ellipse fit (separate I / Q gains) is no better than the circle (axes within 1 %, sd 1.1 vs 1.3),
+  so it is the field strength itself (surroundings), not the phase. Single reads now and then dip the length
+  by 3-6 (Q jumps). Meter: a median of 5 before the smoothing, and a deadzone of 8 below the baseline.
