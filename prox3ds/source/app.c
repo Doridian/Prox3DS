@@ -195,6 +195,12 @@ u32 jobCount(void)
 }
 
 static bool keepChip;
+static bool jobClock = true, nextNoClock;
+
+void jobNextNoClock(void)
+{
+	nextNoClock = true;
+}
 static void (*jobKeys)(u32 kDown), (*nextKeys)(u32 kDown);
 static const char *jobKeysHint, *nextKeysHint;
 
@@ -246,6 +252,7 @@ void jobStartView(const char *title, void (*run)(void), void (*done)(void), bool
 	jobHint = nextHint ? nextHint : "Keep the card on the bottom screen.";
 	nextHint = NULL;
 	jobKeys = nextKeys, jobKeysHint = nextKeysHint;
+	jobClock = !nextNoClock, nextNoClock = false;
 	nextKeys = NULL, nextKeysHint = NULL;
 	progJob();
 	jobTitle = title;
@@ -289,7 +296,7 @@ static float progressDraw(float x, float y, float w)
 {
 	char el[16], left[16];
 	fmtDuration(el, osGetTime() - prog.start);
-	uiTextRight(x + w, y, S_SMALL, uiCol[COL_DIM], "%s", el);
+	if (jobClock) uiTextRight(x + w, y, S_SMALL, uiCol[COL_DIM], "%s", el);
 	if (!*prog.op) return y + SMALL_H + 2;
 	uiText(x, y, S_SMALL, uiCol[COL_TEXT], "%s", prog.op);
 	y += SMALL_H + 2;
@@ -692,7 +699,8 @@ static void menuExit(void)
 // Tuning: keeps a card session up and samples the field fast for the gauge. The field stays on once
 // the card is activated, so lifting the card shows the empty field (the gauge drops to zero).
 static volatile bool tuneResetAsked;
-static char tuneMsg[64]; // the last reset's outcome, top left of the gauge
+static char tuneMsg[64]; // the last reset's outcome, under the signal for a few seconds
+static volatile u64 tuneMsgUntil;
 
 static void tuneRun(void)
 {
@@ -702,9 +710,11 @@ static void tuneRun(void)
 		for (u32 n = 0; !mfCancel && bad < 10; n++) {
 			if (tuneResetAsked) {
 				tuneResetAsked = false;
-				snprintf(tuneMsg, sizeof(tuneMsg), "Measuring the baseline...");
+				snprintf(tuneMsg, sizeof(tuneMsg), "MEASURING...");
+				tuneMsgUntil = osGetTime() + 5000;
 				if (iso14aPresent() == 1) snprintf(tuneMsg, sizeof(tuneMsg), "A card still answers: take it away");
 				else fieldMeasureEmpty(tuneMsg, sizeof(tuneMsg));
+				tuneMsgUntil = osGetTime() + 5000;
 			}
 			if (n % 6 == 0) {
 				int p = iso14aPresent(); // lifted: the empty field, which the meter learns
@@ -740,8 +750,7 @@ static float tuneView(float x, float y, float w)
 {
 	static float needle, peak;
 	static u64 peakAt;
-	if (*tuneMsg) uiText(x, y - SMALL_H - 2, S_SMALL, uiCol[COL_WARN], "%s", tuneMsg); // the op row, left of the clock
-	y -= 4; // up into the empty op row, the arc (cursor R + 16 above cy) still clear of the title bar
+	y -= SMALL_H + 2; // no op line and no clock (jobNextNoClock): the whole box is ours
 	bool live = false;
 	float target = fieldGauge(&live);
 	if (!live) target = 0;
@@ -749,9 +758,9 @@ static float tuneView(float x, float y, float w)
 	u64 now = osGetTime();
 	if (needle >= peak) peak = needle, peakAt = now;
 	else if (now - peakAt > 2000) peak -= (peak - needle) * 0.05f + 0.002f;
-	const float R = 98, th = 16, pi = 3.14159265f;
+	const float R = 140, th = 20, pi = 3.14159265f;
 	const int SEG = 30;
-	float cx = x + w / 2, cy = y + R + 6;
+	float cx = x + w / 2, cy = y + R + 26; // the cursor (R + 16 above) a little under the title bar
 	const float gap = 0.035f; // radians between segments
 	int lit = (int)(needle * SEG + 0.5f);
 	for (int i = 0; i < SEG; i++) {
@@ -785,31 +794,32 @@ static float tuneView(float x, float y, float w)
 	u32 ghost = C2D_Color32(0x26, 0x1A, 0x3C, 0xFF);
 	char num[8];
 	snprintf(num, sizeof(num), "%3d", (int)(needle * 100 + 0.5f));
-	const float big = 40;
-	float nw = uiSeg7Width(big, 3);
-	uiSeg7(cx - nw / 2 - 6, cy - 50, big, live ? uiCol[COL_KEYB] : uiCol[COL_DIM], ghost, num);
-	uiMonoS(cx + nw / 2 - 2, cy - 24, S_MONO, MONO_W, uiCol[COL_DIM], "%");
-	uiMonoS(cx - 3 * MONO_W, cy - 66, S_MONO, MONO_W, uiCol[COL_ACCENT], "SIGNAL");
+	const float big = 56;
+	float nw = uiSeg7Width(big, 3), ny = cy - 96; // inside the inner ring (R - th - 5)
+	uiMonoS(cx - 3 * MONO_W, ny - 16, S_MONO, MONO_W, uiCol[COL_ACCENT], "SIGNAL");
+	uiSeg7(cx - nw / 2 - 6, ny, big, live ? uiCol[COL_KEYB] : uiCol[COL_DIM], ghost, num);
+	uiMonoS(cx + nw / 2 - 2, ny + big - 12, S_MONO, MONO_W, uiCol[COL_DIM], "%");
+	// under the signal: the last reset's outcome for a few seconds, else "place card" without a field
+	const char *note = tuneMsgUntil > now && *tuneMsg ? tuneMsg : live ? NULL : "PLACE CARD";
+	if (note) uiMonoS(cx - strlen(note) * MONO_W / 2, ny + big + 10, S_MONO, MONO_W, uiCol[COL_WARN], note);
 	uiMonoS(cx - R - 4, cy + 4, S_MONO, MONO_W, uiCol[COL_DIM], "MIN");
 	uiMonoS(cx + R + 4 - 3 * MONO_W, cy + 4, S_MONO, MONO_W, uiCol[COL_DIM], "MAX");
-	// the raw field level and the empty-field level under the arc
+	// the corners: baseline (the learned empty field) top left, the field now top right; labels centered
+	// over the digits' tops (the digits lean right by a tenth of their height)
 	float lvl, empty;
 	lvl = fieldLevel(&empty);
 	const float small = 26;
-	float sw = uiSeg7Width(small, 3), ry = cy + 31;
+	float sw = uiSeg7Width(small, 3), lean = small * 0.1f, ry = y + 13;
 	char a[8], b[8];
 	if (live && lvl > 0) snprintf(a, sizeof(a), "%3.0f", lvl);
 	else snprintf(a, sizeof(a), "---");
 	snprintf(b, sizeof(b), "%3.0f", empty);
-	// baseline (the learned empty field) left, the field now right; labels centered over the digits'
-	// tops (the digits lean right by a tenth of their height)
-	float lx = cx - 72 - sw / 2, rx = cx + 72 - sw / 2, lean = small * 0.1f;
+	float lx = x + 4 * MONO_W - sw / 2 - lean, rx = x + w - 4 * MONO_W - sw / 2 - lean; // under 8-char labels
 	uiMonoS(lx + sw / 2 + lean - 4 * MONO_W, ry - 13, S_MONO, MONO_W, uiCol[COL_ACCENT], "BASELINE");
 	uiSeg7(lx, ry, small, uiCol[COL_DIM], ghost, b);
 	uiMonoS(rx + sw / 2 + lean - 2.5f * MONO_W, ry - 13, S_MONO, MONO_W, uiCol[COL_ACCENT], "FIELD");
 	uiSeg7(rx, ry, small, live ? uiCol[COL_TEXT] : uiCol[COL_DIM], ghost, a);
-	if (!live) uiMonoS(cx - 5 * MONO_W, ry + 8, S_MONO, MONO_W, uiCol[COL_WARN], "PLACE CARD");
-	return ry + small + 4 - y;
+	return cy + 16 - y;
 }
 
 static void tuneResetYes(void)
@@ -835,6 +845,7 @@ static void menuTune(void)
 {
 	tuneResetAsked = false;
 	*tuneMsg = 0;
+	jobNextNoClock();
 	jobNextHint(BTN_X " reset baseline");
 	jobOnKeys(tuneKeys, BTN_B " stop   " BTN_X " reset baseline");
 	jobStartView("Tuning", tuneRun, NULL, true, tuneView);

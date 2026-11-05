@@ -52,5 +52,6 @@ void simTune(void)
 	simBusy("Tuning", true, false);
 	jobHint = BTN_X " reset baseline";
 	jobKeys = tuneKeys, jobKeysHint = BTN_B " stop   " BTN_X " reset baseline";
+	jobClock = false;
 	jobView = tuneView;
 }
