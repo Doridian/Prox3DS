@@ -106,6 +106,13 @@ listen mode (anticollision, RATS / ATS and ISO-DEP in the chip; each APDU answer
   bottom screen down. A new APDU card type is an `EmuApdu` handler passed to `emuRun`; one that needs
   answers within the frame delay goes into `chip/emu.c` (the ROM's listen-A RX hook, see docs/NOTES.md).
 
+Tools menu: Tuning, Emulate, Log, Chip info.
+- Tuning / field meter (`source/field.c`): the carrier's I/Q at the RX (0x5C420-42C, the readout the ROM's
+  antenna self-test uses) gets shorter as a card loads the field. Its phase is random per field-on, so only the
+  length counts, measured from a DC offset fitted once per app run (field toggles at the end of the first card
+  job). The empty-field level is learned (the largest steady reading). Both go in `sdmc:/prox3ds/field.txt`.
+  The worker samples every 250 ms from the monitor transport during NFC-A card sessions; the header shows
+  bars, Tuning a gauge (a job that keeps the card session up and samples every 40 ms).
 - Chip info: reset / init / patch version.
 
 The saved dump lists (`source/dumplist.c`) read the directory in batches and cache each file's date: a stat or a

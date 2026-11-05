@@ -1066,8 +1066,9 @@ static void netMain(void *arg)
 		logp("net: client %s\n", inet_ntoa(client.sin_addr));
 		serveClient(fd);
 		close(fd);
-		if (card.active) { // a card op left the field on: off, or the touchscreen stays dead
-			LightLock_Lock(&hwLock);
+		// a card op left the field on: off, or the touchscreen stays dead. Unless a job has the chip
+		// (its card, it ends that way): waiting for it would stall the server for the whole job.
+		if (card.active && !LightLock_TryLock(&hwLock)) {
 			chipIdle();
 			LightLock_Unlock(&hwLock);
 		}

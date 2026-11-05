@@ -4,6 +4,7 @@
 // their own screens (MIFARE Classic: mfui.c, editor.c).
 
 #include <dirent.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 
 #include "app.h"
 #include "dumplist.h"
+#include "field.h"
 #include "probe.h"
 #include "ui.h"
 
@@ -210,6 +212,7 @@ static void jobThread(void *arg)
 {
 	LightLock_Lock(&hwLock);
 	jobRun();
+	if (!keepChip) fieldJobEnd(); // field still on: the meter's one-time calibration
 	// chip off (battery; and while its RF field is on the touchscreen reports nothing), unless the job
 	// keeps a card session for the next one
 	if (!keepChip) chipIdle();
@@ -673,6 +676,96 @@ static void menuExit(void)
 	quit = true;
 }
 
+// --- tools: tuning (field gauge), emulate, log, chip info ---
+
+// Tuning: keeps a card session up and samples the field fast for the gauge. The field stays on once
+// the card is activated, so lifting the card shows the empty field (the gauge drops to zero).
+static void tuneRun(void)
+{
+	while (!mfCancel) {
+		if (!cardWait()) return;
+		progOp("Move the card to find the strongest spot");
+		int bad = 0;
+		while (!mfCancel && bad < 10) {
+			bad = fieldTuneSample() ? 0 : bad + 1;
+			svcSleepThread(MS(40));
+		}
+		if (!mfCancel) logp("field lost, waiting for the card again\n");
+	}
+}
+
+static float tuneView(float x, float y, float w)
+{
+	static float needle;
+	bool live = false;
+	float target = fieldGauge(&live);
+	if (!live) target = 0;
+	needle += (target - needle) * 0.25f;
+	const float R = 96, th = 12, pi = 3.14159265f;
+	float cx = x + w / 2, cy = y + R + 8;
+	// the scale: weak (red) .. strong (green), 0..1 left to right over the upper half circle
+	const int SEG = 60;
+	for (int i = 0; i < SEG; i++) {
+		float f0 = (float)i / SEG, f1 = (float)(i + 1) / SEG;
+		float a0 = pi * (1 - f0), a1 = pi * (1 - f1);
+		u32 c = f0 < 0.2f ? uiCol[COL_ERR] : f0 < 0.5f ? uiCol[COL_WARN] : uiCol[COL_OK];
+		if (!live) c = uiCol[COL_SEL];
+		float r = R - th / 2;
+		uiLine(cx + r * cosf(a0), cy - r * sinf(a0), cx + r * cosf(a1), cy - r * sinf(a1), th, c);
+	}
+	for (int i = 0; i <= 10; i++) {
+		float a = pi * (1 - i / 10.0f), r0 = R - th - (i % 5 ? 4 : 10), r1 = R - th - 1;
+		uiLine(cx + r0 * cosf(a), cy - r0 * sinf(a), cx + r1 * cosf(a), cy - r1 * sinf(a), i % 5 ? 1 : 2, uiCol[COL_DIM]);
+	}
+	uiTextCenter(cx - R + th / 2, cy + 4, S_SMALL, uiCol[COL_DIM], "weak");
+	uiTextCenter(cx + R - th / 2, cy + 4, S_SMALL, uiCol[COL_DIM], "strong");
+	uiTextCenter(cx, cy - R + th + 16, S_SMALL, uiCol[COL_DIM], "signal");
+	// the needle
+	float a = pi * (1 - needle), nl = R - th - 14;
+	float px = -sinf(a) * 3, py = -cosf(a) * 3; // half the needle's base, across it
+	uiTri(cx + px, cy + py, cx - px, cy - py, cx + nl * cosf(a), cy - nl * sinf(a), uiCol[live ? COL_TEXT : COL_DIM]);
+	uiRect(cx - 5, cy - 5, 10, 10, uiCol[COL_ACCENT]);
+	uiTextCenter(cx, cy + 8, S_TITLE, uiCol[live ? COL_TEXT : COL_DIM], "%d%%", (int)(needle * 100 + 0.5f));
+	float lvl, empty;
+	lvl = fieldLevel(&empty);
+	if (live && lvl > 0) uiTextCenter(cx, cy + 26, 0.36f, uiCol[COL_DIM], "field %.0f (empty %.0f)", lvl, empty);
+	else uiTextCenter(cx, cy + 26, 0.36f, uiCol[COL_DIM], "put a card on the reader");
+	return R + 46;
+}
+
+static void menuTune(void)
+{
+	jobNextHint("Lift the card to see the empty field.");
+	jobStartView("Tuning", tuneRun, NULL, true, tuneView);
+}
+
+static const MenuEntry toolEntries[] = {
+	{ "Tuning", "A signal strength gauge, like the pm3's antenna volts: how strongly the card on the reader "
+		"couples into the field. Move the card around for the best spot.", menuTune },
+	{ "Emulate (card mode)", "The 3DS as a card for another reader: an NFC Forum Type 4 tag with a URL or text a "
+		"phone can read (and write).", emuOpenMenu },
+	{ "Log", LOG_HELP, openLog },
+	{ "Chip info", "Probe the NFC controller: reset, init, firmware patch version.", menuProbe },
+};
+static Menu toolMenu = { "Tools", toolEntries, sizeof(toolEntries) / sizeof(toolEntries[0]), NULL };
+
+static void toolInput(u32 kDown, u32 kRepeat)
+{
+	menuInput(&toolMenu, kDown, kRepeat);
+}
+
+static void toolDraw(void)
+{
+	menuDraw(&toolMenu);
+}
+
+static const Screen toolScreen = { NULL, toolInput, toolDraw };
+
+static void menuTools(void)
+{
+	appScreen(&toolScreen);
+}
+
 static MenuEntry rootEntries[7 + NFAMILIES + 1];
 static void rootExtra(float x, float y, float w);
 static Menu rootMenu = { "Prox3DS", rootEntries, 0, rootExtra };
@@ -709,12 +802,10 @@ static void rootInit(void)
 		rootEntries[n++] = (MenuEntry){ families[i]->name, families[i]->help, families[i]->menu };
 	rootEntries[n++] = (MenuEntry){ "iClass / PicoPass", "HID iClass (legacy and elite keys): key search, dump, the "
 		"Wiegand credential. Not in the generic scan: iClass is ISO15693, polled on its own.", iclassOpenMenu };
-	rootEntries[n++] = (MenuEntry){ "Emulate (card mode)", "The 3DS as a card for another reader: an NFC Forum Type 4 "
-		"tag with a URL or text a phone can read (and write).", emuOpenMenu };
 	rootEntries[n++] = (MenuEntry){ "Amiibo", "Read and copy Amiibo with this console's own keys, or make new ones "
 		"from the figure list (AmiiboAPI, downloaded over Wi-Fi).", amiiboOpenMenu };
-	rootEntries[n++] = (MenuEntry){ "Log", LOG_HELP, openLog };
-	rootEntries[n++] = (MenuEntry){ "Chip info", "Probe the NFC controller: reset, init, firmware patch version.", menuProbe };
+	rootEntries[n++] = (MenuEntry){ "Tools", "Tuning (a signal strength gauge for placing the card), card "
+		"emulation, the log, chip info.", menuTools };
 	rootEntries[n++] = (MenuEntry){ "Exit", "Give NFC back to the system and quit.", menuExit };
 	rootMenu.n = n;
 	appScreen(&rootScreen);

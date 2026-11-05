@@ -112,6 +112,11 @@ confirmation first.**
 A phone reads the emulated card with a quick tap on the bottom screen. A Proxmark needs the 3DS lying on
 it, bottom screen down.
 
+### Tuning: signal strength
+- Tools > Tuning shows a gauge of how strongly the card couples into the 3DS's field, like the pm3's antenna
+  volts: move the card around to find the best spot. While a card job runs, signal bars in the header show
+  the same reading.
+
 ### Amiibo
 - Read and decrypt Amiibo (figure, owner, nickname, game data) with **this console's own keys**: no key
   files to find.
@@ -136,6 +141,7 @@ Everything lives under `sdmc:/prox3ds/`:
 | `oath.txt` | Your UTC offset for OATH codes (the 3DS clock has no time zone) |
 | `emu/` | `apdu.txt` (APDU log answers) and `apdu.log` |
 | `logs/` | Logs saved from the Log screen |
+| `field.txt` | The signal meter's calibration (learned by itself: I/Q offset, empty-field level) |
 
 Dumps are plain files, so you can copy them to and from a PC and use them with a Proxmark.
 

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "field.h"
 #include "mfc.h"
 #include "crapto1.h"
 #include "mfckeys.h"
@@ -81,6 +82,7 @@ bool iso14aStart(void)
 					break;
 				}
 				card.active = true;
+				fieldArm();
 				iso14aSelect(); // the ROM's SENS_RES in the NTF is always 00 00; get the ATQA from a WUPA
 				return true;
 			}

@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "field.h"
 #include "mon.h"
 #include "nfchw.h"
 #include "probe.h"
@@ -45,6 +46,7 @@ static void drainQuiet(void)
 
 static bool loadImage(const u8 *ncd, u32 size)
 {
+	fieldDisarm();
 	static const u8 coreReset[] = { NCI_HCIT, 0x20, 0x00, 0x01, 0x01 };
 	static const u8 coreInit[]  = { NCI_HCIT, 0x20, 0x01, 0x00 };
 	static const u8 patchVer[]  = { NCI_HCIT, 0x2F, 0x2D, 0x00 };
@@ -82,6 +84,7 @@ int monDo(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax)
 int monDoWait(u8 op, u32 addr, const void *data, u32 len, u8 *out, u32 outMax, u32 waitMs)
 {
 	u8 pkt[4 + 0x100];
+	fieldPoll(); // the header's field meter, every few hundred ms of a card session
 	if (len > 0xFF - 5) return MON_STATUS(0xFF);
 	pkt[0] = NCI_HCIT;
 	pkt[1] = 0x2F;

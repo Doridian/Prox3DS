@@ -11,6 +11,7 @@
 
 #include "app.h"
 #include "nfchw.h"
+#include "field.h"
 #include "mfc.h"
 #include "probe.h"
 #include "ui.h"
@@ -345,6 +346,7 @@ bool chipEnsure(void)
 void chipIdle(void)
 {
 	if (!irqEvent) return;
+	fieldDisarm();
 	gpioNfcSetData(0, NFC_GPIO_REG_PU);
 	card.active = false;
 }

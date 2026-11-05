@@ -40,3 +40,16 @@ void simBusyEnd(void)
 	jobView = NULL;
 	mfCancel = false;
 }
+
+void simTools(void)
+{
+	toolMenu.l = (UiList){ 0 };
+	appScreen(&toolScreen);
+}
+
+void simTune(void)
+{
+	simBusy("Tuning", true, false);
+	jobHint = "Lift the card to see the empty field.";
+	jobView = tuneView;
+}

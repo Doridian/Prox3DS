@@ -315,7 +315,9 @@ static void fillLog(void)
 static void busyRead(void) { simBusy("Reading card", true, false); }
 static void busyStop(void) { simBusy("Writing to magic card", true, true); }
 static void busyChip(void) { simBusy("Chip info", false, false); }
-static void busyEnd(void) { simBusyEnd(); }
+static void busyEnd(void) { simBusyEnd(); simFieldBars = -1; }
+static void fieldLive(void) { simFieldBars = 4; simFieldLive = true; simFieldGauge = 0.64f; }
+static void fieldDim(void) { simFieldBars = 2; simFieldLive = false; simFieldGauge = 0; }
 static void toastHome(void) { toast("Touch locked: HOME unlocks, START exits"); }
 static void toastLong(void) { toast("Deleted hotel_keycard_from_the_conference_in_2025_backup.bin"); }
 
@@ -854,7 +856,10 @@ static const SimStep script[] = {
 	CALL(reset), CALL(tagOdd), SHOT("tag_unsupported"), B, SHOT("root_lastcard"),
 	CALL(fillLog), KEYS(KEY_SELECT), SHOT("log"), B,
 	CALL(simHome), SHOT("touch_locked"), TOUCH(150, 200), D, SHOT("touch_locked_tap"), CALL(simHome), SHOT("touch_unlocked"),
-	CALL(busyRead), SHOT("busy_read"), CALL(busyStop), SHOT("busy_stopping"), CALL(busyChip), SHOT("busy_chip"),
+	CALL(reset), CALL(simTools), SHOT("tools_0"), D, SHOT("tools_1"), D, SHOT("tools_2"), D, SHOT("tools_3"),
+	CALL(fieldDim), SHOT("tools_meter_dim"), CALL(fieldLive), CALL(simTune), SHOT("tuning"), D, D, D, D, D, D, D, D, D, D,
+	D, D, D, D, D, D, D, D, D, D, SHOT("tuning_settled"), CALL(busyEnd), CALL(reset),
+	CALL(fieldLive), CALL(busyRead), SHOT("busy_read"), CALL(busyStop), SHOT("busy_stopping"), CALL(busyChip), SHOT("busy_chip"),
 	CALL(busyEnd), CALL(toastHome), SHOT("toast_home"), CALL(toastLong), SHOT("toast_long"),
 
 	// MIFARE Classic

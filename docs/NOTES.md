@@ -2090,3 +2090,25 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   client that left a card active; also the battery. iso14aStart powers up and loads the monitor anyway.
   Jobs that keep a card session for the next one call jobKeepChip (the APDU console; R or B there ->
   chipOff). Touch verified fine after scans.
+
+## Field level / coupling meter (field.c, Tools > Tuning; tools/exp/rssi/) -- 2026-11-04
+- ROM ANTENNA_SELF_TEST (2F 10, 0x1A374 -> 0x1E3C8): field on (0x5C55C 41, 100 us, 81), then 2^n reads of an
+  I/Q pair, sum of I^2 + Q^2, compared against min / max from the command. Three readouts by flag:
+  0xD87A: 0x5C454 / 0x5C458 - 128 (8 bit); 0xD88A: (0x5C420 << 8 | 0x5C424) - 1024 and (0x5C428 << 8 |
+  0x5C42C) - 1024 (10 bit, hi 0-7); 0xD8B0: sxtb 0x5C510 / 0x5C514. Same vector, 10-bit = 8 x the 8-bit one.
+- The vector's phase is random per field-on: every power-up and every 0x5C360 0 -> 6 toggle lands on another
+  (a set of discrete angles), so only the length means anything. No register follows the phase (0x5C040-04C,
+  0x5C3C0-3D0, 0x5C400-40C checked). The 10-bit readout has a DC offset: 40 toggles with the card still fit a
+  circle at (1.6, 7.7), r 160.1, sd 1.5; with no card (1.0, 7.6), r 166.6. On the 3DS itself the job-end fit
+  gave (0.9, 7.0), sd 1.0. The 8-bit readout is offset-free (center -0.2, 0.5, r 19.9) but coarse.
+- Field off (0x5C360 0): the readouts are junk (10-bit +-237, 8-bit ~0), so the offset can't be read there;
+  the 10-bit vs 8 x 8-bit check rejects those samples.
+- Lengths: empty field 166 (170 once), NTAG215 at a weak spot 160, well placed 145-150, a bigger card ~90-96
+  (user). Noise ~1-1.5 within one field-on. Lifting the card off a running session keeps the field on, so
+  that reads the empty field (that's how the meter learns it).
+- No per-frame RX amplitude: the whole RF block diffed before / after card answers only shows status
+  (0x5C568, 588, 590, 5E4).
+- Without a card the ROM's discovery runs low-power tag detection (0x5C054 = 0, 0x5C560 = 2, the I/Q reads
+  0xBF / 0x17): no full field to measure. After RF_DEACTIVATE the RF block reads all 0 (powered down).
+- Net server: after each client it took hwLock to turn a left-on field off, so it hung for the length of any
+  job holding the chip (Tuning, emulation). Now TryLock.

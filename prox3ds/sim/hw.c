@@ -6,6 +6,7 @@
 #include <string.h>
 #include <3ds.h>
 
+#include "../source/field.h"
 #include "../source/mon.h"
 #include "../source/probe.h"
 #include "../source/ui.h"
@@ -41,6 +42,19 @@ void chipProbe(void) { logp("no chip in the simulator\n"); }
 bool spdDownload(const u8 *ncd, u32 size, bool verbose) { return false; }
 void netStart(void) {}
 void netStop(void) {}
+
+// The field meter: scenes set what it shows (bars -1 = none).
+int simFieldBars = -1;
+bool simFieldLive;
+float simFieldGauge;
+void fieldArm(void) {}
+void fieldDisarm(void) {}
+void fieldPoll(void) {}
+void fieldJobEnd(void) {}
+bool fieldTuneSample(void) { return false; }
+int fieldBars(bool *live) { if (live) *live = simFieldLive; return simFieldBars; }
+float fieldGauge(bool *live) { if (live) *live = simFieldLive; return simFieldGauge; }
+float fieldLevel(float *empty) { if (empty) *empty = 166; return 166 - 25 * simFieldGauge; }
 
 bool monLoad(void) { return false; }
 bool monLoadEmu(bool classic) { return false; }

@@ -17,6 +17,11 @@ void simTag(const Card *c);
 void simBusy(const char *title, bool cancellable, bool stopping);
 void simBusyEnd(void);
 void simBusyView(float (*view)(float x, float y, float w));
+void simTools(void);
+void simTune(void);
+extern int simFieldBars;
+extern bool simFieldLive;
+extern float simFieldGauge;
 
 void simMfcCard(const Card *c, const MfMagic *m);
 void simMfcGen4(void);

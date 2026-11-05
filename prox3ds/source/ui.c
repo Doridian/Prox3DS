@@ -6,6 +6,7 @@
 #include <string.h>
 #include <3ds.h>
 
+#include "field.h"
 #include "ui.h"
 
 u32 uiCol[COL_N];
@@ -293,14 +294,32 @@ void uiMono(float x, float y, u32 color, const char *s)
 	uiMonoS(x, y, S_MONO, MONO_W, color, s);
 }
 
+// The field meter (field.h): signal-strength bars at the header's right end; returns their width.
+#define METER_W (FIELD_BARS * 5 - 2)
+static float fieldMeter(float right)
+{
+	bool live = false;
+	int n = fieldBars(&live);
+	if (n < 0) return 0;
+	float x = right - METER_W;
+	for (int i = 0; i < FIELD_BARS; i++) {
+		float h = 4 + 2.5f * i;
+		u32 c = i < n ? uiCol[live ? COL_OK : COL_DIM] : uiCol[COL_SEL];
+		uiRect(x + 5 * i, 16 - h, 3, h, c);
+	}
+	return METER_W + 8;
+}
+
 void uiHeader(const char *title, const char *right)
 {
 	char t[256];
 	snprintf(t, sizeof(t), "%s", title);
 	uiRect(0, 0, UI_W, 20, uiCol[COL_BAR]);
 	uiRect(0, 19, UI_W, 1, uiCol[COL_ACCENT]);
-	uiText(6, 2, S_BODY, uiCol[COL_TEXT], "%s", uiFit(t, UI_W - 12 - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
-	if (right) uiTextRight(UI_W - 6, 3, S_SMALL, uiCol[COL_DIM], "%s", right);
+	float m = fieldMeter(UI_W - 6);
+	uiText(6, 2, S_BODY, uiCol[COL_TEXT], "%s",
+		uiFit(t, UI_W - 12 - m - (right ? uiTextWidth(S_SMALL, right) + 12 : 0), S_BODY));
+	if (right) uiTextRight(UI_W - 6 - m, 3, S_SMALL, uiCol[COL_DIM], "%s", right);
 }
 
 void uiFooter(const char *h)
