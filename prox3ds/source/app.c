@@ -684,7 +684,6 @@ static void tuneRun(void)
 {
 	while (!mfCancel) {
 		if (!cardWait()) return;
-		progOp("Move the card to find the strongest spot");
 		int bad = 0;
 		while (!mfCancel && bad < 10) {
 			bad = fieldTuneSample() ? 0 : bad + 1;
@@ -717,6 +716,7 @@ static float tuneView(float x, float y, float w)
 {
 	static float needle, peak;
 	static u64 peakAt;
+	y -= SMALL_H + 2; // up into the progress row: no op line, only the clock at its right end
 	bool live = false;
 	float target = fieldGauge(&live);
 	if (!live) target = 0;
@@ -756,22 +756,33 @@ static float tuneView(float x, float y, float w)
 		float bx = cx + (R + 16) * ca, by = cy - (R + 16) * sa, tx = cx + (R + 5) * ca, ty = cy - (R + 5) * sa;
 		uiTri(bx + px, by + py, bx - px, by - py, tx, ty, uiCol[live ? COL_CURSOR : COL_DIM]);
 	}
-	// readouts
+	// readouts: 7-segment, unlit segments ghosted
+	u32 ghost = C2D_Color32(0x26, 0x1A, 0x3C, 0xFF);
 	char num[8];
-	snprintf(num, sizeof(num), "%03d", (int)(needle * 100 + 0.5f));
-	const float big = 1.1f, cell = 19;
-	uiMonoS(cx - 1.5f * cell - 5, cy - 46, big, cell, uiCol[live ? COL_TEXT : COL_DIM], num);
-	uiMonoS(cx + 1.5f * cell - 3, cy - 30, S_MONO, MONO_W, uiCol[COL_DIM], "%");
-	uiMonoS(cx - 3 * MONO_W, cy - 62, S_MONO, MONO_W, uiCol[COL_ACCENT], "SIGNAL");
-	uiMonoS(cx - R - 4, cy + 6, S_MONO, MONO_W, uiCol[COL_DIM], "MIN");
-	uiMonoS(cx + R + 4 - 3 * MONO_W, cy + 6, S_MONO, MONO_W, uiCol[COL_DIM], "MAX");
+	snprintf(num, sizeof(num), "%3d", (int)(needle * 100 + 0.5f));
+	const float big = 40;
+	float nw = uiSeg7Width(big, 3);
+	uiSeg7(cx - nw / 2 - 6, cy - 50, big, live ? uiCol[COL_KEYB] : uiCol[COL_DIM], ghost, num);
+	uiMonoS(cx + nw / 2 - 2, cy - 24, S_MONO, MONO_W, uiCol[COL_DIM], "%");
+	uiMonoS(cx - 3 * MONO_W, cy - 66, S_MONO, MONO_W, uiCol[COL_ACCENT], "SIGNAL");
+	uiMonoS(cx - R - 4, cy + 4, S_MONO, MONO_W, uiCol[COL_DIM], "MIN");
+	uiMonoS(cx + R + 4 - 3 * MONO_W, cy + 4, S_MONO, MONO_W, uiCol[COL_DIM], "MAX");
+	// the raw field level and the empty-field level under the arc
 	float lvl, empty;
 	lvl = fieldLevel(&empty);
-	char st[40];
-	if (live && lvl > 0) snprintf(st, sizeof(st), "FLD %03.0f / %03.0f", lvl, empty);
-	else snprintf(st, sizeof(st), "NO FIELD - PLACE CARD");
-	uiMonoS(cx - strlen(st) * MONO_W / 2, cy + 6, S_MONO, MONO_W, uiCol[live ? COL_KEYB : COL_WARN], st);
-	return R + 44; // one log line left under it
+	const float small = 26;
+	float sw = uiSeg7Width(small, 3), ry = cy + 31;
+	char a[8], b[8];
+	if (live && lvl > 0) snprintf(a, sizeof(a), "%3.0f", lvl);
+	else snprintf(a, sizeof(a), "---");
+	snprintf(b, sizeof(b), "%3.0f", empty);
+	float lx = cx - 72 - sw / 2, rx = cx + 72 - sw / 2;
+	uiMonoS(lx + sw / 2 - 2.5f * MONO_W, ry - 13, S_MONO, MONO_W, uiCol[COL_ACCENT], "FIELD");
+	uiSeg7(lx, ry, small, live ? uiCol[COL_TEXT] : uiCol[COL_DIM], ghost, a);
+	uiMonoS(rx + sw / 2 - 2.5f * MONO_W, ry - 13, S_MONO, MONO_W, uiCol[COL_ACCENT], "EMPTY");
+	uiSeg7(rx, ry, small, uiCol[COL_DIM], ghost, b);
+	if (!live) uiMonoS(cx - 5 * MONO_W, ry + 8, S_MONO, MONO_W, uiCol[COL_WARN], "PLACE CARD");
+	return ry + small + 4 - y;
 }
 
 static void menuTune(void)

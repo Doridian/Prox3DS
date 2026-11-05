@@ -69,6 +69,9 @@ void uiTextCenter(float cx, float y, float scale, u32 color, const char *fmt, ..
 // Printable ASCII in fixed MONO_W cells (hex grids); anything else draws as '.'.
 void uiMono(float x, float y, u32 color, const char *s);
 void uiMonoS(float x, float y, float scale, float cell, u32 color, const char *s);
+// 7-segment digits ('0'-'9', '-', ' ') h tall at (x, y), unlit segments in ghost (0 = none); returns the width
+float uiSeg7(float x, float y, float h, u32 color, u32 ghost, const char *s);
+float uiSeg7Width(float h, int n);
 void uiHeader(const char *title, const char *right);
 void uiFooter(const char *hints);
 // A selected list row: highlight with a bar down its left edge.

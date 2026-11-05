@@ -289,6 +289,75 @@ void uiMonoS(float x, float y, float scale, float cell, u32 color, const char *s
 	}
 }
 
+// 7-segment display: slanted hexagonal segments, the unlit ones drawn in ghost (0 = not drawn).
+static float segSlant, segBase, segX0;
+static void segPt(float x, float y, float *ox, float *oy)
+{
+	*ox = x + (segBase - y) * segSlant;
+	*oy = y;
+}
+
+static void segTri(float x0, float y0, float x1, float y1, float x2, float y2, u32 c)
+{
+	float a, b, d, e, f, g;
+	segPt(x0, y0, &a, &b), segPt(x1, y1, &d, &e), segPt(x2, y2, &f, &g);
+	uiTri(a, b, d, e, f, g, c);
+}
+
+// a hexagonal bar from (x0, y0) to (x1, y1), horizontal or vertical, t thick
+static void segBar(float x0, float y0, float x1, float y1, float t, u32 c)
+{
+	float h = t / 2;
+	if (y0 == y1) {
+		segTri(x0, y0, x0 + h, y0 - h, x0 + h, y0 + h, c);
+		segTri(x1, y1, x1 - h, y1 - h, x1 - h, y1 + h, c);
+		segTri(x0 + h, y0 - h, x1 - h, y0 - h, x1 - h, y0 + h, c);
+		segTri(x0 + h, y0 - h, x1 - h, y0 + h, x0 + h, y0 + h, c);
+	} else {
+		segTri(x0, y0, x0 - h, y0 + h, x0 + h, y0 + h, c);
+		segTri(x1, y1, x1 - h, y1 - h, x1 + h, y1 - h, c);
+		segTri(x0 - h, y0 + h, x0 + h, y0 + h, x1 + h, y1 - h, c);
+		segTri(x0 - h, y0 + h, x1 + h, y1 - h, x1 - h, y1 - h, c);
+	}
+}
+
+static u8 segMask(char ch)
+{
+	static const u8 digits[10] = { 0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F };
+	if (ch >= '0' && ch <= '9') return digits[ch - '0'];
+	if (ch == '-') return 0x40;
+	return 0;
+}
+
+float uiSeg7(float x, float y, float h, u32 color, u32 ghost, const char *s)
+{
+	float w = h * 0.5f, t = h * 0.13f, g = t * 0.25f, adv = w + h * 0.22f;
+	segSlant = 0.1f;
+	segBase = y + h;
+	segX0 = x;
+	float start = x;
+	for (; *s; s++, x += adv) {
+		u8 m = segMask(*s);
+		float l = x + t / 2, r = x + w - t / 2, top = y + t / 2, mid = y + h / 2, bot = y + h - t / 2;
+		// a b c d e f g
+		const float bars[7][4] = {
+			{ l + g, top, r - g, top }, { r, top + g, r, mid - g }, { r, mid + g, r, bot - g },
+			{ l + g, bot, r - g, bot }, { l, mid + g, l, bot - g }, { l, top + g, l, mid - g },
+			{ l + g, mid, r - g, mid },
+		};
+		for (int i = 0; i < 7; i++) {
+			u32 c = m & (1 << i) ? color : ghost;
+			if (c) segBar(bars[i][0], bars[i][1], bars[i][2], bars[i][3], t, c);
+		}
+	}
+	return x - start - (adv - w);
+}
+
+float uiSeg7Width(float h, int n)
+{
+	return n ? n * (h * 0.5f + h * 0.22f) - h * 0.22f : 0;
+}
+
 void uiMono(float x, float y, u32 color, const char *s)
 {
 	uiMonoS(x, y, S_MONO, MONO_W, color, s);
