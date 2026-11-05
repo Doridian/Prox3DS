@@ -694,43 +694,84 @@ static void tuneRun(void)
 	}
 }
 
+// rgb (0xRRGGBB) a .. b at t, as a citro2d color
+static u32 lerpCol(u32 a, u32 b, float t)
+{
+	int r = (a >> 16) + ((int)(b >> 16) - (int)(a >> 16)) * t;
+	int g = (a >> 8 & 0xFF) + ((int)(b >> 8 & 0xFF) - (int)(a >> 8 & 0xFF)) * t;
+	int bl = (a & 0xFF) + ((int)(b & 0xFF) - (int)(a & 0xFF)) * t;
+	return C2D_Color32(r, g, bl, 0xFF);
+}
+
+// One ring segment between radii r0 and r1, angles a0 .. a1 (two triangles).
+static void arcSeg(float cx, float cy, float r0, float r1, float a0, float a1, u32 c)
+{
+	float c0 = cosf(a0), s0 = sinf(a0), c1 = cosf(a1), s1 = sinf(a1);
+	uiTri(cx + r0 * c0, cy - r0 * s0, cx + r1 * c0, cy - r1 * s0, cx + r1 * c1, cy - r1 * s1, c);
+	uiTri(cx + r0 * c0, cy - r0 * s0, cx + r1 * c1, cy - r1 * s1, cx + r0 * c1, cy - r0 * s1, c);
+}
+
+// The gauge: an LED segment arc (pink .. accent purple .. cyan, the app's neons), the unlit segments in the
+// selection purple, a yellow cursor riding the arc, a peak-hold tick, mono readouts.
 static float tuneView(float x, float y, float w)
 {
-	static float needle;
+	static float needle, peak;
+	static u64 peakAt;
 	bool live = false;
 	float target = fieldGauge(&live);
 	if (!live) target = 0;
 	needle += (target - needle) * 0.25f;
-	const float R = 96, th = 12, pi = 3.14159265f;
-	float cx = x + w / 2, cy = y + R + 8;
-	// the scale: weak (red) .. strong (green), 0..1 left to right over the upper half circle
-	const int SEG = 60;
+	u64 now = osGetTime();
+	if (needle >= peak) peak = needle, peakAt = now;
+	else if (now - peakAt > 2000) peak -= (peak - needle) * 0.05f + 0.002f;
+	const float R = 98, th = 16, pi = 3.14159265f;
+	const int SEG = 30;
+	float cx = x + w / 2, cy = y + R + 6;
+	const float gap = 0.035f; // radians between segments
+	int lit = (int)(needle * SEG + 0.5f);
 	for (int i = 0; i < SEG; i++) {
-		float f0 = (float)i / SEG, f1 = (float)(i + 1) / SEG;
-		float a0 = pi * (1 - f0), a1 = pi * (1 - f1);
-		u32 c = f0 < 0.2f ? uiCol[COL_ERR] : f0 < 0.5f ? uiCol[COL_WARN] : uiCol[COL_OK];
-		if (!live) c = uiCol[COL_SEL];
-		float r = R - th / 2;
-		uiLine(cx + r * cosf(a0), cy - r * sinf(a0), cx + r * cosf(a1), cy - r * sinf(a1), th, c);
+		float f = (i + 0.5f) / SEG;
+		float a0 = pi * (1 - (float)i / SEG) - gap / 2, a1 = pi * (1 - (float)(i + 1) / SEG) + gap / 2;
+		u32 c = f < 0.5f ? lerpCol(0xFF4D7A, 0xB57CF2, f * 2) : lerpCol(0xB57CF2, 0x4DD8FF, f * 2 - 1);
+		if (i >= lit || !live) c = uiCol[COL_SEL];
+		arcSeg(cx, cy, R - th, R, a0, a1, c);
+	}
+	// outer hairline with notches every 10 %, inner hairline
+	for (int i = 0; i < 40; i++) {
+		float a0 = pi * (1 - i / 40.0f), a1 = pi * (1 - (i + 1) / 40.0f);
+		arcSeg(cx, cy, R + 3, R + 4, a0, a1, uiCol[COL_SEL]);
+		arcSeg(cx, cy, R - th - 5, R - th - 4, a0, a1, uiCol[COL_SEL]);
 	}
 	for (int i = 0; i <= 10; i++) {
-		float a = pi * (1 - i / 10.0f), r0 = R - th - (i % 5 ? 4 : 10), r1 = R - th - 1;
-		uiLine(cx + r0 * cosf(a), cy - r0 * sinf(a), cx + r1 * cosf(a), cy - r1 * sinf(a), i % 5 ? 1 : 2, uiCol[COL_DIM]);
+		float a = pi * (1 - i / 10.0f), d = i % 5 ? 0.006f : 0.012f;
+		arcSeg(cx, cy, R + 3, R + (i % 5 ? 7 : 10), a - d, a + d, uiCol[i % 5 ? COL_DIM : COL_ACCENT]);
 	}
-	uiTextCenter(cx - R + th / 2, cy + 4, S_SMALL, uiCol[COL_DIM], "weak");
-	uiTextCenter(cx + R - th / 2, cy + 4, S_SMALL, uiCol[COL_DIM], "strong");
-	uiTextCenter(cx, cy - R + th + 16, S_SMALL, uiCol[COL_DIM], "signal");
-	// the needle
-	float a = pi * (1 - needle), nl = R - th - 14;
-	float px = -sinf(a) * 3, py = -cosf(a) * 3; // half the needle's base, across it
-	uiTri(cx + px, cy + py, cx - px, cy - py, cx + nl * cosf(a), cy - nl * sinf(a), uiCol[live ? COL_TEXT : COL_DIM]);
-	uiRect(cx - 5, cy - 5, 10, 10, uiCol[COL_ACCENT]);
-	uiTextCenter(cx, cy + 8, S_TITLE, uiCol[live ? COL_TEXT : COL_DIM], "%d%%", (int)(needle * 100 + 0.5f));
+	// peak hold: a yellow tick just inside the arc; the cursor: a yellow wedge outside it
+	if (live && peak > 0.01f) {
+		float a = pi * (1 - peak);
+		arcSeg(cx, cy, R - th - 8, R - th - 2, a - 0.012f, a + 0.012f, uiCol[COL_CURSOR]);
+	}
+	{
+		float a = pi * (1 - needle), ca = cosf(a), sa = sinf(a), px = -sa * 5, py = -ca * 5;
+		float bx = cx + (R + 16) * ca, by = cy - (R + 16) * sa, tx = cx + (R + 5) * ca, ty = cy - (R + 5) * sa;
+		uiTri(bx + px, by + py, bx - px, by - py, tx, ty, uiCol[live ? COL_CURSOR : COL_DIM]);
+	}
+	// readouts
+	char num[8];
+	snprintf(num, sizeof(num), "%03d", (int)(needle * 100 + 0.5f));
+	const float big = 1.1f, cell = 19;
+	uiMonoS(cx - 1.5f * cell - 5, cy - 46, big, cell, uiCol[live ? COL_TEXT : COL_DIM], num);
+	uiMonoS(cx + 1.5f * cell - 3, cy - 30, S_MONO, MONO_W, uiCol[COL_DIM], "%");
+	uiMonoS(cx - 3 * MONO_W, cy - 62, S_MONO, MONO_W, uiCol[COL_ACCENT], "SIGNAL");
+	uiMonoS(cx - R - 4, cy + 6, S_MONO, MONO_W, uiCol[COL_DIM], "MIN");
+	uiMonoS(cx + R + 4 - 3 * MONO_W, cy + 6, S_MONO, MONO_W, uiCol[COL_DIM], "MAX");
 	float lvl, empty;
 	lvl = fieldLevel(&empty);
-	if (live && lvl > 0) uiTextCenter(cx, cy + 26, 0.36f, uiCol[COL_DIM], "field %.0f (empty %.0f)", lvl, empty);
-	else uiTextCenter(cx, cy + 26, 0.36f, uiCol[COL_DIM], "put a card on the reader");
-	return R + 46;
+	char st[40];
+	if (live && lvl > 0) snprintf(st, sizeof(st), "FLD %03.0f / %03.0f", lvl, empty);
+	else snprintf(st, sizeof(st), "NO FIELD - PLACE CARD");
+	uiMonoS(cx - strlen(st) * MONO_W / 2, cy + 6, S_MONO, MONO_W, uiCol[live ? COL_KEYB : COL_WARN], st);
+	return R + 44; // one log line left under it
 }
 
 static void menuTune(void)
