@@ -716,7 +716,7 @@ static float tuneView(float x, float y, float w)
 {
 	static float needle, peak;
 	static u64 peakAt;
-	y -= SMALL_H + 2; // up into the progress row: no op line, only the clock at its right end
+	y -= 4; // up into the empty op row, the arc (cursor R + 16 above cy) still clear of the title bar
 	bool live = false;
 	float target = fieldGauge(&live);
 	if (!live) target = 0;
