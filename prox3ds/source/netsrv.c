@@ -574,6 +574,7 @@ static Result handleCard(u8 op, const u8 *in, u32 inLen, u8 *out, u16 *outLen)
 		if (!cardReady()) return 1;
 		MfuInfo info;
 		int r = mfuIdentify(&info);
+		if (r > 0 && mfuWriteAuth(info.type, NULL) < 0) r = -1;
 		if (r > 0) r = mfuWritePage(info.type, in[0], in + 1);
 		if (r == 1) return 0;
 		*outLen = strlen(mfuWhy());

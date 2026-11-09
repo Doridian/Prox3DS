@@ -285,6 +285,27 @@ int mfuIdentify(MfuInfo *in)
 	return 1;
 }
 
+int mfuWriteAuth(const MfuType *t, const MfuDump *d)
+{
+	int r;
+	if (t == &mfuTypeULC) {
+		u8 key[16];
+		bool has = false;
+		if (d && d->info.type == &mfuTypeULC) {
+			if (d->pwdOk) has = true, memcpy(key, d->key, 16);
+			else has = mfuUlcDumpKey(d, key);
+		}
+		if (has && (r = mfuUlcAuth(key)) != 0) return r;
+		return mfuUlcFindKey(key); // no lockout counter on the UL-C: safe
+	}
+	// PWD_AUTH counts toward AUTHLIM when wrong: only the password that read this very card
+	if (!t->pwd || !d || !d->pwdOk || d->info.type != t || card.uidLen != 7) return 0;
+	u8 uid[7] = { d->data[0][0], d->data[0][1], d->data[0][2], d->data[1][0], d->data[1][1], d->data[1][2], d->data[1][3] };
+	if (memcmp(uid, card.uid, 7)) return 0;
+	u8 pack[2];
+	return mfuPwdAuth(d->key, pack);
+}
+
 int mfuWritePage(const MfuType *t, u8 page, const u8 data[4])
 {
 	if (page < 4 || page >= t->userEnd) FAIL(0, "page %d is not user memory", page);
@@ -540,6 +561,7 @@ int mfuRestore(const MfuDump *d, int *written)
 	if (end > d->pages) end = d->pages;
 	if (!t->userEnd) FAIL(0, "unknown card type");
 	if (end > t->userEnd) FAIL(0, "the dump has %d user pages, the card %d", end - 4, t->userEnd - 4);
+	if (mfuWriteAuth(t, d) < 0) return -1;
 	u8 buf[16];
 	progOp("Writing pages");
 	for (int p = 4; p < end; p += 4) {

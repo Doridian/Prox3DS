@@ -67,6 +67,11 @@ int mfuUlcFindKey(u8 key[16]);
 // takes it. 1 = done, 0 = refused (mfuWhy), -1 = monitor error. WRITES THE CARD: a key half written
 // (the card pulled away) is a key nobody knows.
 int mfuUlcSetKey(const u8 cur[16], const u8 key[16]);
+// Before writing pages from AUTH0 on: authenticate with what dump d (NULL = none) knows. UL-C: d's key
+// (the one that read it, else its key pages), then the dictionary. EV1 / NTAG21x: d's password, only if
+// it read this same card (UID), since a wrong PWD_AUTH counts toward AUTHLIM. 1 = authenticated, 0 =
+// not (write on: an unprotected card needs none), -1 = monitor error. A NAKed write drops the auth.
+int mfuWriteAuth(const MfuType *t, const MfuDump *d);
 // Writes one user memory page (4 .. userEnd-1; anything else is refused unsent: lock bits and OTP
 // are one-way, config pages can lock the card) and reads it back. 1 = verified. WRITES THE CARD.
 int mfuWritePage(const MfuType *t, u8 page, const u8 data[4]);

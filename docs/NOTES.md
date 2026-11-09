@@ -2121,3 +2121,29 @@ On the spare EV3 (real UID 044D426A9F2390, the user's "touchy" test card).
   166-167. An ellipse fit (separate I / Q gains) is no better than the circle (axes within 1 %, sd 1.1 vs 1.3),
   so it is the field strength itself (surroundings), not the phase. Single reads now and then dip the length
   by 3-6 (Q jumps). Meter: a median of 5 before the smoothing, and a deadzone of 8 below the baseline.
+
+## Ultralight C: a real MF0ICU2 (issue #6) + authenticated writes -- 2026-11-08
+- Card: UID 04096EEA817C81, genuine NXP (pm3 `hf mfu info`: PRNG genuine, likely MF0ICU2), factory key
+  BREAKMEIFYOUCAN! (49454D4B41455242214E4143554F5946), AUTH0 30, AUTH1 00. Left exactly like that.
+- Raw answers (pm3 `hf 14a raw` + tools/exp/tear/ulccfg.py over the monitor): GET_VERSION NAK 0. READ 2A
+  returns 2A, 2B, then pages 0-1 (the read wraps after 2B, it never shows the key). READ 2C-2F and
+  anything past it: NAK 0, EVEN AFTER A GOOD AUTH (the GTU reads them in clear, pm3 sim gives zeros).
+  Wrong key: NAK in step 2.
+- AUTH1 bit 0: 1 = only WRITES from AUTH0 on need the auth, 0 (factory) = reads AND writes. A new AUTH0 /
+  AUTH1 takes effect at the next power-up, not in the session that wrote it (reads stayed open until
+  the field was cycled).
+- AUTH0 10 / AUTH1 1: unauthenticated WRITE 15 ok, WRITE 16 NAK 0. AUTH0 10 / AUTH1 0: READ 0-F ok,
+  READ 10 on NAK 0. App dump (dictionary, factory key): all 48 pages, 1.8 s. Custom key not in the
+  dictionary: 0-F read, 10-2F unread (not zeros), 2.2 s with 10 dictionary keys. Explicit key: wrong one
+  "(refused)", right one reads all, key pages filled from it.
+- Key change from the UI (Y -> Change the 3DES key) on the real card: new key works, old refused.
+- FIX: no write path authenticated first, so every write from AUTH0 on was NAKed (UL-C, and EV1 /
+  NTAG21x with PROT). mfuWriteAuth (mfu.c) runs before the editor's page write, mfuRestore (write a dump
+  to the card) and net op 0x1F: UL-C = the dump's key (the one it read with, else its key pages), then
+  the dictionary (no lockout); EV1 / NTAG21x = the dump's password only if the dump is of this same UID
+  (a wrong PWD_AUTH counts toward AUTHLIM). Verified on the read-protected card with a key the app
+  didn't know: editor page write and "Write user pages to card" both authenticated with the dump's key
+  (restore even needs it for its read pass); net write (dictionary only) gave NAK 0, as it should.
+- ulccfg.py: dump [KEY] (field cycled first), cfg AUTH0 AUTH1 [KEY], setkey NEW CUR. The app still can't
+  set AUTH0 / AUTH1 itself, and the card screen says "No config pages" for a UL-C (doesn't show them).
+- known.txt now remembers 59454D4B... for 04096EEA817C81 (a key it had during the test): stale, harmless.

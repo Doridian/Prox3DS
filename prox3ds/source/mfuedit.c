@@ -139,6 +139,7 @@ static void runWritePage(void)
 	if (!cardWait()) return;
 	MfuInfo info;
 	wpResult = mfuIdentify(&info);
+	if (wpResult > 0 && mfuWriteAuth(info.type, &d) < 0) wpResult = -1;
 	if (wpResult > 0) wpResult = mfuWritePage(info.type, wpPage, wpData);
 	snprintf(wpWhy, sizeof(wpWhy), "%s", mfuWhy());
 	iso14aParity(true);
