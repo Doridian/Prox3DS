@@ -12,13 +12,13 @@ system's NFC service offers.
 **[Latest release](https://github.com/Doridian/Prox3DS/releases/latest)**: get `Prox3DS.3dsx` or `Prox3DS.cia`.
 
 Every version is listed on the [releases page](https://github.com/Doridian/Prox3DS/releases).
-CI builds them from the repository's tags. Each release has two builds, each as a `.3dsx` (Homebrew Launcher)
-and a `.cia` (installed to the HOME menu):
+CI builds them from the repository's tags. Each release has these files:
 
 | File | For |
 | --- | --- |
-| `Prox3DS.3dsx` / `Prox3DS.cia` | Everyone. The normal build. |
-| `Prox3DS-debug.3dsx` / `Prox3DS-debug.cia` | Development: also runs a TCP debug server on port 8020 and writes a log file to the SD card. |
+| `Prox3DS.3dsx` | Everyone. The normal build, for the Homebrew Launcher. |
+| `Prox3DS.cia` | The same build, to install to the HOME menu. |
+| `Prox3DS-debug.3dsx` | Development: also runs a TCP debug server on port 8020 and writes a log file to the SD card. |
 
 ## Requirements
 
@@ -31,8 +31,7 @@ and a `.cia` (installed to the HOME menu):
 ## Install
 
 1. Either copy `Prox3DS.3dsx` to `sdmc:/3ds/` on the SD card and start it from the Homebrew Launcher,
-   or install `Prox3DS.cia` (e.g. with FBI) and start it from the HOME menu. The debug and normal
-   CIAs are separate titles and can be installed side by side.
+   or install `Prox3DS.cia` (e.g. with FBI) and start it from the HOME menu.
 3. Put a card on the bottom screen, roughly in the middle of the touch screen, where the reader is.
 
 Prox3DS creates `sdmc:/prox3ds/` on first start and keeps everything there (see [Files](#files-on-the-sd-card)).
@@ -169,11 +168,11 @@ You need [devkitPro](https://devkitpro.org/wiki/Getting_Started) with **devkitAR
 make -C chip              # the NFC chip patches -> prox3ds/data/*_ncd.bin
 make -C prox3ds           # debug build:   prox3ds/prox3ds.3dsx
 make -C prox3ds release   # release build: prox3ds/prox3ds-release.3dsx
-make -C prox3ds cia release-cia   # the same as CIAs: prox3ds/prox3ds.cia, prox3ds/prox3ds-release.cia
+make -C prox3ds cia       # release build, also as a CIA: prox3ds/prox3ds-release.{3dsx,cia}
 ```
 
 The chip must be built first: `prox3ds/data/` isn't in git. The build needs no Nintendo or Broadcom files.
-The CIAs also need [makerom](https://github.com/3DSGuy/Project_CTR/releases) and
+The CIA also needs [makerom](https://github.com/3DSGuy/Project_CTR/releases) and
 [bannertool](https://github.com/diasurgical/bannertool/releases) on the `PATH` (or `MAKEROM=` / `BANNERTOOL=`).
 The CIA's title info and permissions are in `prox3ds/meta/prox3ds.rsf`; the icon (`prox3ds/icon.png`, also used
 by the `.3dsx`), HOME menu banner and banner jingle are drawn by `prox3ds/meta/make_art.py`.
@@ -181,7 +180,7 @@ by the `.3dsx`), HOME menu banner and banner jingle are drawn by `prox3ds/meta/m
 
 The **debug build** writes its log to `sdmc:/prox3ds.log` and listens on TCP 8020 while Wi-Fi is up.
 `tools/nfcnet.py HOST ...` uses that port to run card operations from a PC, copy files onto the SD card,
-grab screenshots, press buttons and update the app in place (`.3dsx` only). The release build has neither: its log stays
+grab screenshots, press buttons and update the app in place. The release build has neither: its log stays
 in RAM, and Log → Y saves it.
 
 ### UI simulator
@@ -207,7 +206,7 @@ make -C prox3ds/sim run   # -> prox3ds/sim/out/*.png + report.txt
 ### Releases
 
 Pushing a tag `v*` (e.g. `git tag v1.0.0 && git push origin v1.0.0`) makes CI build both versions and
-publish them as a GitHub release, named `Prox3DS.3dsx` / `.cia` and `Prox3DS-debug.3dsx` / `.cia`. Every push to `main` also
+publish them as a GitHub release, named `Prox3DS.3dsx`, `Prox3DS.cia` and `Prox3DS-debug.3dsx`. Every push to `main` also
 builds both and keeps them as workflow artifacts.
 
 ## License

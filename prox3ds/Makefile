@@ -57,14 +57,10 @@ CFLAGS	+=	$(INCLUDE) -D__3DS__
 APP_TITLE	:=	Prox3DS (Debug)
 APP_DESCRIPTION	:=	Proxmark-style NFC tool: read, crack, clone, emulate
 APP_AUTHOR	:=	Doridian
-# make cia / make release-cia: the same builds as installable CIAs (makerom + bannertool on the PATH,
-# or MAKEROM= / BANNERTOOL=). Debug and release are separate titles, so both can be installed.
-APP_UNIQUE_ID	:=	0xF7D3E
-APP_PRODUCT_CODE	:=	CTR-H-PXDB
+# make cia: the release build as an installable CIA, prox3ds-release.cia (makerom + bannertool on the
+# PATH, or MAKEROM= / BANNERTOOL=). There is no debug CIA.
 ifneq ($(RELEASE),)
 APP_TITLE	:=	Prox3DS
-APP_UNIQUE_ID	:=	0xF7D3D
-APP_PRODUCT_CODE	:=	CTR-H-PX3D
 CFLAGS	+=	-DPROX3DS_RELEASE
 NOT_BUILT	:=	netsrv.c
 endif
@@ -177,7 +173,7 @@ ifneq ($(ROMFS),)
 	export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: all clean release cia release-cia
+.PHONY: all clean release cia
 
 #---------------------------------------------------------------------------------
 all: $(BUILD) $(GFXBUILD) $(DEPSDIR) $(ROMFS_T3XFILES) $(T3XHFILES)
@@ -186,18 +182,19 @@ all: $(BUILD) $(GFXBUILD) $(DEPSDIR) $(ROMFS_T3XFILES) $(T3XHFILES)
 release:
 	@$(MAKE) --no-print-directory RELEASE=1 BUILD=build-release TARGET=$(TARGET)-release
 
-release-cia:
-	@$(MAKE) --no-print-directory RELEASE=1 BUILD=build-release TARGET=$(TARGET)-release cia
-
 # HOME menu banner (meta/banner.png + jingle) and icon (icon.png, as for the .3dsx); meta/make_art.py draws them
+ifeq ($(RELEASE),)
+cia:
+	@$(MAKE) --no-print-directory RELEASE=1 BUILD=build-release TARGET=$(TARGET)-release cia
+else
 cia: all
 	@$(BANNERTOOL) makebanner -i $(TOPDIR)/meta/banner.png -a $(TOPDIR)/meta/banner.wav -o $(BUILD)/banner.bnr
 	@$(BANNERTOOL) makesmdh -s "$(APP_TITLE)" -l "$(APP_DESCRIPTION)" -p "$(APP_AUTHOR)" \
 		-i $(APP_ICON) -o $(BUILD)/icon.icn
 	@$(MAKEROM) -f cia -o $(OUTPUT).cia -target t -exefslogo -elf $(OUTPUT).elf -rsf $(TOPDIR)/meta/prox3ds.rsf \
-		-banner $(BUILD)/banner.bnr -icon $(BUILD)/icon.icn \
-		-DAPP_PRODUCT_CODE="$(APP_PRODUCT_CODE)" -DAPP_UNIQUE_ID="$(APP_UNIQUE_ID)"
+		-banner $(BUILD)/banner.bnr -icon $(BUILD)/icon.icn
 	@echo built ... $(notdir $(OUTPUT).cia)
+endif
 
 $(BUILD):
 	@mkdir -p $@
@@ -215,7 +212,7 @@ endif
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).cia $(OUTPUT).smdh $(TARGET).elf $(GFXBUILD)
+	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(GFXBUILD)
 	@rm -fr build-release $(TARGET)-release.3dsx $(TARGET)-release.cia $(TARGET)-release.smdh $(TARGET)-release.elf
 
 #---------------------------------------------------------------------------------

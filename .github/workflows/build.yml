@@ -23,7 +23,7 @@ jobs:
       - name: Install python3
         run: command -v python3 || (apt-get update && apt-get install -y --no-install-recommends python3)
       - name: Install makerom, bannertool
-        # for the CIAs; not part of devkitPro. Pinned and checksummed. makerom is built from source: its
+        # for the CIA; not part of devkitPro. Pinned and checksummed. makerom is built from source: its
         # prebuilt Linux binary needs a newer glibc than this container has.
         run: |
           command -v gcc && command -v g++ || (apt-get update && apt-get install -y --no-install-recommends build-essential)
@@ -42,16 +42,15 @@ jobs:
       - name: Chip patches
         run: make -C chip
       - name: Prox3DS (debug)
+        run: make -C prox3ds -j"$(nproc)"
+      - name: Prox3DS (release, .3dsx and .cia)
         run: make -C prox3ds -j"$(nproc)" cia
-      - name: Prox3DS (release)
-        run: make -C prox3ds -j"$(nproc)" release-cia
       - uses: actions/upload-artifact@v7
         with:
           name: Prox3DS
           path: |
             prox3ds/prox3ds.3dsx
             prox3ds/prox3ds-release.3dsx
-            prox3ds/prox3ds.cia
             prox3ds/prox3ds-release.cia
 
   # The UI on the host (prox3ds/sim): every scene rendered and its text layout checked.
@@ -79,7 +78,7 @@ jobs:
             prox3ds/sim/out/*.png
             prox3ds/sim/out/*.txt
 
-  # A v* tag: both builds (.3dsx and .cia) as a GitHub release.
+  # A v* tag: both builds as a GitHub release, plus the release build as a CIA.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [Prox3DS, uisim]
@@ -95,7 +94,6 @@ jobs:
           mv prox3ds-release.3dsx Prox3DS.3dsx
           mv prox3ds.3dsx Prox3DS-debug.3dsx
           mv prox3ds-release.cia Prox3DS.cia
-          mv prox3ds.cia Prox3DS-debug.cia
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
@@ -103,4 +101,3 @@ jobs:
             Prox3DS.3dsx
             Prox3DS-debug.3dsx
             Prox3DS.cia
-            Prox3DS-debug.cia

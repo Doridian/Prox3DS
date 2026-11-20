@@ -1,5 +1,4 @@
-# makerom spec for the CIA build (make cia / make release-cia). The Makefile passes
-# APP_PRODUCT_CODE and APP_UNIQUE_ID with -D (debug and release are separate titles).
+# makerom spec for the CIA (make cia). Only the release build is packaged as a CIA.
 #
 # A .3dsx inherits the Homebrew Launcher's access; a CIA only gets what is listed here. Prox3DS needs
 # more than a usual app: it kills the nfc module (pm:app, svcGetProcessList / svcOpenProcess /
@@ -7,7 +6,7 @@
 
 BasicInfo:
   Title                   : Prox3DS
-  ProductCode             : $(APP_PRODUCT_CODE)
+  ProductCode             : CTR-H-PX3D
   Logo                    : Homebrew
 
 RomFs:
@@ -15,7 +14,7 @@ RomFs:
 
 TitleInfo:
   Category                : Application
-  UniqueId                : $(APP_UNIQUE_ID)
+  UniqueId                : 0xF7D3D
 
 Option:
   UseOnSD                 : true
