@@ -23,18 +23,22 @@ jobs:
       - name: Install python3
         run: command -v python3 || (apt-get update && apt-get install -y --no-install-recommends python3)
       - name: Install makerom, bannertool
-        # for the CIAs; not part of devkitPro. Pinned and checksummed.
+        # for the CIAs; not part of devkitPro. Pinned and checksummed. makerom is built from source: its
+        # prebuilt Linux binary needs a newer glibc than this container has.
         run: |
+          command -v gcc && command -v g++ || (apt-get update && apt-get install -y --no-install-recommends build-essential)
           mkdir -p "$RUNNER_TEMP/ctrtools" && cd "$RUNNER_TEMP/ctrtools"
-          curl -fsSLo makerom.zip https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.19.0/makerom-v0.19.0-ubuntu_x86_64.zip
+          curl -fsSLo ctr.tar.gz https://github.com/3DSGuy/Project_CTR/archive/refs/tags/makerom-v0.19.0.tar.gz
           curl -fsSLo bannertool.zip https://github.com/diasurgical/bannertool/releases/download/1.2.0/bannertool.zip
           sha256sum -c - <<'SUMS'
-          287b809dec064e0ad597e3d272c49ecb7eed41693d5ee6fef9d8a8aa24c2497e  makerom.zip
+          446bd23919b7e9fa10540a784202d388a0b93ef4d7165f3990481edd2aa2f946  ctr.tar.gz
           69768596f836acb3e3aeaa66e47c6ba560dde813c6dfcd33c8afc25fe29b7524  bannertool.zip
           SUMS
-          python3 -m zipfile -e makerom.zip makerom
+          tar xzf ctr.tar.gz
+          make -C Project_CTR-makerom-v0.19.0/makerom -j"$(nproc)" deps
+          make -C Project_CTR-makerom-v0.19.0/makerom -j"$(nproc)" program
           python3 -m zipfile -e bannertool.zip bannertool
-          install -m755 makerom/makerom bannertool/linux-x86_64/bannertool /usr/local/bin/
+          install -m755 Project_CTR-makerom-v0.19.0/makerom/bin/makerom bannertool/linux-x86_64/bannertool /usr/local/bin/
       - name: Chip patches
         run: make -C chip
       - name: Prox3DS (debug)
