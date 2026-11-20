@@ -921,6 +921,7 @@ static Result handleUpdate(u8 op, const u8 *in, u32 inLen)
 {
 	char tmp[sizeof(appPath) + 4];
 	snprintf(tmp, sizeof(tmp), "%s.new", appPath);
+	if (!envIsHomebrew()) return -7; // installed as a CIA: there is no .3dsx to replace
 	if (inLen < 4) return -3;
 	u32 n;
 	memcpy(&n, in, 4);

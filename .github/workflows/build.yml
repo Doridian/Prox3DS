@@ -22,18 +22,33 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install python3
         run: command -v python3 || (apt-get update && apt-get install -y --no-install-recommends python3)
+      - name: Install makerom, bannertool
+        # for the CIAs; not part of devkitPro. Pinned and checksummed.
+        run: |
+          mkdir -p "$RUNNER_TEMP/ctrtools" && cd "$RUNNER_TEMP/ctrtools"
+          curl -fsSLo makerom.zip https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.19.0/makerom-v0.19.0-ubuntu_x86_64.zip
+          curl -fsSLo bannertool.zip https://github.com/diasurgical/bannertool/releases/download/1.2.0/bannertool.zip
+          sha256sum -c - <<'SUMS'
+          287b809dec064e0ad597e3d272c49ecb7eed41693d5ee6fef9d8a8aa24c2497e  makerom.zip
+          69768596f836acb3e3aeaa66e47c6ba560dde813c6dfcd33c8afc25fe29b7524  bannertool.zip
+          SUMS
+          python3 -m zipfile -e makerom.zip makerom
+          python3 -m zipfile -e bannertool.zip bannertool
+          install -m755 makerom/makerom bannertool/linux-x86_64/bannertool /usr/local/bin/
       - name: Chip patches
         run: make -C chip
       - name: Prox3DS (debug)
-        run: make -C prox3ds -j"$(nproc)"
+        run: make -C prox3ds -j"$(nproc)" cia
       - name: Prox3DS (release)
-        run: make -C prox3ds -j"$(nproc)" release
+        run: make -C prox3ds -j"$(nproc)" release-cia
       - uses: actions/upload-artifact@v7
         with:
           name: Prox3DS
           path: |
             prox3ds/prox3ds.3dsx
             prox3ds/prox3ds-release.3dsx
+            prox3ds/prox3ds.cia
+            prox3ds/prox3ds-release.cia
 
   # The UI on the host (prox3ds/sim): every scene rendered and its text layout checked.
   uisim:
@@ -60,7 +75,7 @@ jobs:
             prox3ds/sim/out/*.png
             prox3ds/sim/out/*.txt
 
-  # A v* tag: both builds as a GitHub release.
+  # A v* tag: both builds (.3dsx and .cia) as a GitHub release.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [Prox3DS, uisim]
@@ -75,9 +90,13 @@ jobs:
         run: |
           mv prox3ds-release.3dsx Prox3DS.3dsx
           mv prox3ds.3dsx Prox3DS-debug.3dsx
+          mv prox3ds-release.cia Prox3DS.cia
+          mv prox3ds.cia Prox3DS-debug.cia
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
             Prox3DS.3dsx
             Prox3DS-debug.3dsx
+            Prox3DS.cia
+            Prox3DS-debug.cia

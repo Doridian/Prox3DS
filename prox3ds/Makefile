@@ -57,11 +57,19 @@ CFLAGS	+=	$(INCLUDE) -D__3DS__
 APP_TITLE	:=	Prox3DS (Debug)
 APP_DESCRIPTION	:=	Proxmark-style NFC tool: read, crack, clone, emulate
 APP_AUTHOR	:=	Doridian
+# make cia / make release-cia: the same builds as installable CIAs (makerom + bannertool on the PATH,
+# or MAKEROM= / BANNERTOOL=). Debug and release are separate titles, so both can be installed.
+APP_UNIQUE_ID	:=	0xF7D3E
+APP_PRODUCT_CODE	:=	CTR-H-PXDB
 ifneq ($(RELEASE),)
 APP_TITLE	:=	Prox3DS
+APP_UNIQUE_ID	:=	0xF7D3D
+APP_PRODUCT_CODE	:=	CTR-H-PX3D
 CFLAGS	+=	-DPROX3DS_RELEASE
 NOT_BUILT	:=	netsrv.c
 endif
+MAKEROM		?=	makerom
+BANNERTOOL	?=	bannertool
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
@@ -169,7 +177,7 @@ ifneq ($(ROMFS),)
 	export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: all clean release
+.PHONY: all clean release cia release-cia
 
 #---------------------------------------------------------------------------------
 all: $(BUILD) $(GFXBUILD) $(DEPSDIR) $(ROMFS_T3XFILES) $(T3XHFILES)
@@ -177,6 +185,19 @@ all: $(BUILD) $(GFXBUILD) $(DEPSDIR) $(ROMFS_T3XFILES) $(T3XHFILES)
 
 release:
 	@$(MAKE) --no-print-directory RELEASE=1 BUILD=build-release TARGET=$(TARGET)-release
+
+release-cia:
+	@$(MAKE) --no-print-directory RELEASE=1 BUILD=build-release TARGET=$(TARGET)-release cia
+
+# HOME menu banner (meta/banner.png + jingle) and icon (icon.png, as for the .3dsx); meta/make_art.py draws them
+cia: all
+	@$(BANNERTOOL) makebanner -i $(TOPDIR)/meta/banner.png -a $(TOPDIR)/meta/banner.wav -o $(BUILD)/banner.bnr
+	@$(BANNERTOOL) makesmdh -s "$(APP_TITLE)" -l "$(APP_DESCRIPTION)" -p "$(APP_AUTHOR)" \
+		-i $(APP_ICON) -o $(BUILD)/icon.icn
+	@$(MAKEROM) -f cia -o $(OUTPUT).cia -target t -exefslogo -elf $(OUTPUT).elf -rsf $(TOPDIR)/meta/prox3ds.rsf \
+		-banner $(BUILD)/banner.bnr -icon $(BUILD)/icon.icn \
+		-DAPP_PRODUCT_CODE="$(APP_PRODUCT_CODE)" -DAPP_UNIQUE_ID="$(APP_UNIQUE_ID)"
+	@echo built ... $(notdir $(OUTPUT).cia)
 
 $(BUILD):
 	@mkdir -p $@
@@ -194,8 +215,8 @@ endif
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(GFXBUILD)
-	@rm -fr build-release $(TARGET)-release.3dsx $(TARGET)-release.smdh $(TARGET)-release.elf
+	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).cia $(OUTPUT).smdh $(TARGET).elf $(GFXBUILD)
+	@rm -fr build-release $(TARGET)-release.3dsx $(TARGET)-release.cia $(TARGET)-release.smdh $(TARGET)-release.elf
 
 #---------------------------------------------------------------------------------
 $(GFXBUILD)/%.t3x	$(BUILD)/%.h	:	%.t3s
