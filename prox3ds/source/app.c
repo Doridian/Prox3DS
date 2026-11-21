@@ -18,6 +18,7 @@
 #include "field.h"
 #include "probe.h"
 #include "ui.h"
+#include "version.h" // the Makefile writes it into build/
 
 #define MS(x) ((s64)(x) * 1000000LL)
 
@@ -463,7 +464,7 @@ void menuInput(Menu *m, u32 kDown, u32 kRepeat)
 void menuDraw(Menu *m)
 {
 #ifdef PROX3DS_RELEASE
-	uiHeader(m->title, NULL);
+	uiHeader(m->title, APP_VERSION_TAGGED ? APP_VERSION : NULL); // a tagged release says which
 #else
 	uiHeader(m->title, *netAddr ? netAddr : "no network");
 #endif

@@ -91,6 +91,27 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
 export TOPDIR	:=	$(CURDIR)
 
+# The version, into $(BUILD)/version.h (rewritten only when it changes, so a new commit or tag rebuilds what
+# includes it): APP_VERSION is git describe ("v0.3.0", "v0.3.0-2-g1234abc", "-dirty" with local changes);
+# APP_VERSION_TAGGED is 1 when HEAD is exactly a tag with no local changes. safe.directory: the CI container
+# runs as another user than the checkout's owner. Without git, GitHub's own variables, else "unknown".
+GIT		:=	git -c safe.directory='*' -C $(CURDIR)
+APP_VERSION	:=	$(shell $(GIT) describe --tags --always --dirty 2>/dev/null)
+APP_TAG		:=	$(shell $(GIT) describe --tags --exact-match --dirty 2>/dev/null)
+ifeq ($(APP_VERSION),)
+ifeq ($(GITHUB_REF_TYPE),tag)
+APP_VERSION	:=	$(GITHUB_REF_NAME)
+APP_TAG		:=	$(GITHUB_REF_NAME)
+else
+APP_VERSION	:=	$(or $(shell echo '$(GITHUB_SHA)' | cut -c1-7),unknown)
+endif
+endif
+APP_VERSION_TAGGED := $(if $(APP_TAG),$(if $(filter %-dirty,$(APP_TAG)),0,1),0)
+$(shell mkdir -p $(BUILD) && printf '#define APP_VERSION "%s"\n#define APP_VERSION_TAGGED %s\n' \
+	'$(APP_VERSION)' $(APP_VERSION_TAGGED) > $(BUILD)/version.h.new && \
+	{ cmp -s $(BUILD)/version.h.new $(BUILD)/version.h && rm -f $(BUILD)/version.h.new || \
+	mv -f $(BUILD)/version.h.new $(BUILD)/version.h; })
+
 export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
 			$(foreach dir,$(GRAPHICS),$(CURDIR)/$(dir)) \
 			$(foreach dir,$(DATA),$(CURDIR)/$(dir))
