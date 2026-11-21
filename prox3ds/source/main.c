@@ -15,6 +15,7 @@
 #include "mfc.h"
 #include "probe.h"
 #include "ui.h"
+#include "version.h" // the Makefile writes it into build/
 
 #define LOG_PATH     "sdmc:/prox3ds.log" // debug build only; the release keeps the log in RAM (Log: save)
 #define MS(x)        ((s64)(x) * 1000000LL)
@@ -491,7 +492,7 @@ int main(int argc, char *argv[])
 #ifndef PROX3DS_RELEASE
 	logFile = fopen(LOG_PATH, "a");
 #endif
-	logp("--- Prox3DS (built " __DATE__ " " __TIME__ ") ---\n");
+	logp("--- Prox3DS " APP_VERSION " (built " __DATE__ " " __TIME__ ") ---\n");
 	time_t now = time(NULL);
 	struct tm *tm = gmtime(&now);
 	logp("app: %s, console clock %04d-%02d-%02d %02d:%02d\n", appPath, tm->tm_year + 1900, tm->tm_mon + 1,
